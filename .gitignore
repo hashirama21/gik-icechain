@@ -10,7 +10,12 @@ dist/
 build/
 .coverage
 coverage.xml
-results/
+results/*.csv
+results/*.png
+results/*.json
+results/**/*.csv
+results/**/*.png
+results/**/*.json
 data/
 .DS_Store
 .idea/
