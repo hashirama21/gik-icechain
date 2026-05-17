@@ -1,0 +1,61 @@
+cff-version: 1.2.0
+message: "If you use GIK-IceChain in your research or operations, please cite it as below."
+type: software
+title: "GIK-IceChain v2.0: Zero-Cost Cloud-Native Pipeline for Retrospective Flood Risk Decision Support in East Africa"
+abstract: >
+  GIK-IceChain v2.0 transforms the ECMWF IFS ensemble archive (>1 PB of GRIB2 data)
+  into an operational flood risk decision-support system for East Africa, at near-zero
+  storage cost, using IceChunk Zarr v3 virtual stores, adaptive GEV exceedance thresholds,
+  and the ICPAC CRMA Bayesian Network with Dynamic BN extensions.
+version: "2.0.0"
+date-released: "2026-08-31"
+license: Apache-2.0
+url: "https://github.com/code4earth-2026/gik-icechain"
+repository-code: "https://github.com/code4earth-2026/gik-icechain"
+
+keywords:
+  - ECMWF
+  - IFS ensemble
+  - flood risk
+  - East Africa
+  - cloud-native
+  - Zarr
+  - IceChunk
+  - VirtualiZarr
+  - GRIB2
+  - Bayesian network
+  - CRMA
+  - ICPAC
+  - anticipatory action
+
+contact:
+  - name: "Code for Earth 2026 Team"
+
+references:
+  - type: article
+    title: "CRMA: Continuous Risk Monitoring and Assessment for East Africa"
+    authors:
+      - family-names: Kalladath
+        given-names: Nishadh
+    year: 2026
+    notes: "EGU General Assembly 2026, abstract EGU26-18323"
+
+  - type: article
+    title: "Antecedent Precipitation Index for flood risk in East Africa"
+    authors:
+      - family-names: White
+        given-names: Christopher J.
+    year: 2021
+    journal: "Journal of Hydrometeorology"
+
+  - type: software
+    title: "icpac-igad/grib-index-kerchunk: GIK pipeline"
+    url: "https://github.com/icpac-igad/grib-index-kerchunk"
+
+  - type: software
+    title: "zarr-developers/VirtualiZarr"
+    url: "https://github.com/zarr-developers/VirtualiZarr"
+
+  - type: software
+    title: "IceChunk: ACID-transactional Zarr v3 store"
+    url: "https://icechunk.io"

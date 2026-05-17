@@ -1,0 +1,179 @@
+# .github/workflows/daily_update.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Daily Pipeline Update
+#
+# Runs at 08:00 UTC every day (after ECMWF 00Z run is archived on S3).
+# Ingests the previous day's GIK Parquet batch and commits a new
+# IceChunk snapshot, extending the time-travel audit trail.
+#
+# This is the core of Innovation 1 (IceChunk Time-Travel Audit Trail):
+# each daily run produces a tagged IceChunk snapshot that captures the
+# exact forecast data available on that date.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Daily Pipeline Update
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # 08:00 UTC daily
+  workflow_dispatch:       # Allow manual trigger
+    inputs:
+      target_date:
+        description: "Date to process (YYYY-MM-DD, default: yesterday)"
+        required: false
+        default: ""
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+
+  #  C1: Ingest new GIK Parquet batch → IceChunk commit
+  ingest-daily-gik:
+    name: "C1: Ingest GIK → IceChunk commit"
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      processed_date: ${{ steps.ingest.outputs.processed_date }}
+      commit_hash:    ${{ steps.ingest.outputs.commit_hash }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Ingest GIK batch
+        id: ingest
+        run: |
+          TARGET_DATE="${{ inputs.target_date }}"
+          if [ -z "$TARGET_DATE" ]; then
+            TARGET_DATE=$(date -u -d "yesterday" +%Y-%m-%d)
+          fi
+          echo "Processing date: $TARGET_DATE"
+
+          python -m gik_icechain convert \
+            --hf-dataset E4DRR/gik-ecmwf-par \
+            --output-store ${{ secrets.GIK_ICECHUNK_STORE_URI }} \
+            --start "$TARGET_DATE" \
+            --end "$TARGET_DATE" \
+            --mode append \
+            --output-json /tmp/ingest_result.json
+
+          COMMIT_HASH=$(python -c "import json; d=json.load(open('/tmp/ingest_result.json')); print(d['commit_hash'])")
+          echo "processed_date=$TARGET_DATE" >> $GITHUB_OUTPUT
+          echo "commit_hash=$COMMIT_HASH"    >> $GITHUB_OUTPUT
+          echo "Commit: $COMMIT_HASH"
+
+  #  C2: Update exceedance Zarr for the new day
+  update-exceedance:
+    name: "C2: Update exceedance Zarr"
+    runs-on: ubuntu-latest
+    needs: ingest-daily-gik
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[cloud]"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Compute exceedance for new day
+        run: |
+          python -m gik_icechain exceedance \
+            --store ${{ secrets.GIK_ICECHUNK_STORE_URI }} \
+            --thresholds s3://${{ secrets.GIK_BUCKET }}/cmorph_thresholds/ \
+            --output ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
+            --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
+            --end   ${{ needs.ingest-daily-gik.outputs.processed_date }} \
+            --region east_africa \
+            --mode append
+
+  #  C3: Update admin-1 risk for the new day
+  update-risk:
+    name: "C3: Update admin-1 risk"
+    runs-on: ubuntu-latest
+    needs: update-exceedance
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[cloud]"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Compute admin-1 risk
+        run: |
+          python -m gik_icechain risk \
+            --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
+            --output s3://${{ secrets.GIK_BUCKET }}/admin1_risk/ \
+            --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
+            --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
+
+  #  Dashboard: regenerate calendar summary for new day
+  update-dashboard:
+    name: "Dashboard: update calendar data"
+    runs-on: ubuntu-latest
+    needs: update-risk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[viz]"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Generate calendar summary JSON
+        run: |
+          python dashboard/storymaps/generate_storymaps.py \
+            --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
+            --risk-dir s3://${{ secrets.GIK_BUCKET }}/admin1_risk/ \
+            --output dashboard/calendar_map/data/ \
+            --date ${{ needs.ingest-daily-gik.outputs.processed_date }}
+
+      - name: Commit dashboard data update
+        run: |
+          git config user.name  "gik-icechain-bot"
+          git config user.email "bot@gik-icechain.earth"
+          git add dashboard/calendar_map/data/
+          git diff --staged --quiet || \
+            git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
+          git push
+
+  #  Notify on failure
+  notify-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [ingest-daily-gik, update-exceedance, update-risk, update-dashboard]
+    if: failure()
+    steps:
+      - name: Send failure alert
+        run: |
+          echo "Daily pipeline failed for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
+          # Add Slack/email notification here

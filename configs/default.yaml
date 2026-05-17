@@ -1,0 +1,168 @@
+# configs/default.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# GIK-IceChain v2.0 — Default Pipeline Configuration
+#
+# Override specific values using configs/east_africa.yaml or by passing
+# --config path/to/custom.yaml to any CLI command.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#  Data sources
+sources:
+  # GIK Parquet manifests (HuggingFace)
+  gik_hf_dataset: "E4DRR/gik-ecmwf-par"
+  gik_catalog_file: "catalog.parquet"
+
+  # ECMWF S3 archive (byte-range reads only)
+  ecmwf_s3_bucket: "ecmwf-forecasts"
+  ecmwf_s3_region: "eu-west-1"
+  ecmwf_s3_no_sign: true   # Public bucket — no authentication needed
+
+  # CMORPH return-period thresholds
+  cmorph_thresholds_path: "data/cmorph_thresholds/"
+
+  # GPM IMERG v7
+  gpm_imerg_path: "data/gpm_imerg/"
+
+  # EM-DAT flood catalogue
+  emdat_path: "data/emdat/east_africa_floods.csv"
+
+  # Admin-1 boundaries
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
+
+
+#  Output locations
+outputs:
+  # Component 1: IceChunk virtual store
+  icechunk_store_uri: "s3://your-bucket/gik-icechain-store"
+
+  # Component 2: Exceedance probabilities Zarr
+  exceedance_store_uri: "s3://your-bucket/exceedance-zarr"
+
+  # Component 3: Admin-1 risk GeoJSON
+  risk_output_dir: "results/admin1_risk/"
+
+  # Dashboard data
+  dashboard_data_dir: "dashboard/calendar_map/data/"
+
+
+#  Component 1 — Conversion
+component1:
+  # ECMWF run hours to process (00Z recommended for most applications)
+  run_hours: [0]
+
+  # Variables to include (all GRIB2 shortNames)
+  # Defaults to flood-relevant variables only for storage efficiency
+  variables:
+    - "tp"     # total precipitation (primary)
+    - "2t"     # 2m temperature
+    - "10u"    # 10m U-wind
+    - "10v"    # 10m V-wind
+    - "sro"    # surface runoff
+    - "ssro"   # sub-surface runoff
+
+  # IceChunk store settings
+  icechunk:
+    branch: "main"
+    commit_message_template: "GIK ingest: {date}T{run_hour:02d}Z"
+    tag_format: "{date}T{run_hour:02d}Z"
+
+  # Gap-fill settings (for May 2023 – Feb 2024 archive gap)
+  gap_fill:
+    enabled: true
+    cloud_run_job: "deploy/cloud_run/job_c1.yaml"
+    lithops_config: "deploy/cloud_run/lithops_config.yaml"
+    workers: 50   # Parallel Cloud Run instances
+
+
+#  Component 2 — Exceedance Analysis
+component2:
+  # Accumulation windows in hours
+  windows_h: [3, 6, 12, 24, 48, 72, 168]
+
+  # Return periods in years
+  return_periods: [2, 5, 10, 20, 40, 100]
+
+  # Adaptive GEV threshold settings (Innovation 2)
+  thresholds:
+    adaptive: true    # false → use static climatological percentiles
+    enso_iod_index_path: "data/enso_iod_index.csv"
+    fit_from_cmorph: false   # true → fit from raw CMORPH (slow), false → load pre-computed
+
+  # AIFS parallel track (Innovation 3)
+  aifs_track:
+    enabled: true
+    aifs_store_uri: ""   # Set to AIFS ENS IceChunk store URI when available
+
+  # Dask computation settings
+  dask:
+    scheduler: "distributed"
+    n_workers: 16
+    threads_per_worker: 2
+    memory_limit: "8GB"
+    dashboard_address: ":8787"
+    chunk_dims:
+      time: 10
+      lat: 100
+      lon: 100
+
+  # Output Zarr chunking
+  output_chunks:
+    date: 30
+    lat: 100
+    lon: 100
+    window: -1         # -1 = no chunking (small dimension)
+    return_period: -1
+
+
+#  Component 3 — Risk Assessment (CRMA-Live)
+component3:
+  # CRMA Bayesian Network settings
+  crma:
+    cpt_path: null          # null → use expert priors; set path to use refined CPTs
+    use_refined_cpts: false  # true → load from cpt_path after EM-DAT refinement
+
+  # Dynamic BN — API persistence (Innovation 4)
+  api:
+    enabled: true
+    decay_factor: 0.8       # API(t) = observed(t) + decay_factor * API(t-1)
+    initial_api_mm: 20.0    # Starting API value for first day of run
+
+  # EM-DAT CPT refinement (Innovation 5)
+  emdat_refinement:
+    enabled: true
+    laplace_alpha: 1.0
+    negative_sample_ratio: 3.0
+    output_cpt_path: "results/validation/refined_cpts.json"
+
+  # Admin-1 spatial aggregation
+  aggregation:
+    method: "mean"           # mean | area_weighted | max
+    min_coverage_fraction: 0.5   # Skip admin-1 units with < 50% coverage
+
+  # Output settings
+  output:
+    geojson: true
+    zarr: true
+    eahw_export: true        # Export to East Africa Hazard Watch Portal format
+
+
+#  Dashboard
+dashboard:
+  titiler:
+    endpoint: "https://titiler.lambda.your-domain.com"
+    cog_bucket: "your-bucket"
+
+  calendar_map:
+    signal_threshold_yellow: 0.15   # Exceedance prob → yellow cell
+    signal_threshold_orange: 0.30   # → orange cell
+    signal_threshold_red:    0.50   # → red cell
+
+  veda_ui:
+    base_url: "https://code4earth-2026.github.io/gik-icechain/storymaps"
+
+
+#  Logging
+logging:
+  level: "INFO"
+  format: "json"            # json | console
+  output: "stderr"

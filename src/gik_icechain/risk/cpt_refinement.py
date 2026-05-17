@@ -1,0 +1,295 @@
+"""EM-DAT CPT refinement for the CRMA Bayesian Network.
+
+Refines the Risk_State leaf CPT using historical EM-DAT flood events as
+labeled ground truth via Maximum Likelihood Estimation with Laplace smoothing.
+
+Positive samples: EM-DAT flood event days → Risk_State = Red (3).
+Negative samples: randomly drawn non-event days → Risk_State ≤ Yellow (≤1).
+Root-node CPTs (expert priors) are left unchanged.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import structlog
+
+from gik_icechain.risk.crma_model import CRMAEvidence
+
+log = structlog.get_logger(__name__)
+
+try:
+    from pgmpy.estimators import MaximumLikelihoodEstimator
+    from pgmpy.models import BayesianNetwork
+
+    PGMPY_AVAILABLE = True
+except ImportError:
+    PGMPY_AVAILABLE = False
+
+
+_EAST_AFRICA_ISO3 = {
+    "KEN", "ETH", "UGA", "TZA", "SOM",
+    "SDN", "SSD", "RWA", "BDI", "COD", "ERI",
+}
+
+_EVIDENCE_COLS = [
+    "Forecast_Hazard", "Obs_Antecedent", "Temporal_Persist",
+    "Spatial_Coverage", "Data_Confidence", "API_State", "Risk_State",
+]
+
+_STATE_NAMES: dict[str, list[int]] = {
+    "Forecast_Hazard":  [0, 1, 2],
+    "Obs_Antecedent":   [0, 1, 2],
+    "Temporal_Persist": [0, 1],
+    "Spatial_Coverage": [0, 1, 2],
+    "Data_Confidence":  [0, 1, 2],
+    "API_State":        [0, 1, 2],
+    "Compound_Risk":    [0, 1, 2, 3],
+    "Risk_State":       [0, 1, 2, 3],
+}
+
+
+@dataclass
+class EMDATFloodRecord:
+    """A single EM-DAT flood event relevant to East Africa."""
+
+    event_id:      str
+    country:       str
+    admin1_name:   str
+    admin1_pcode:  str
+    start_date:    pd.Timestamp
+    end_date:      pd.Timestamp
+    deaths:        int | None
+    affected:      int | None
+    disaster_type: str = "Flood"
+
+
+def load_emdat_east_africa(csv_path: Path) -> list[EMDATFloodRecord]:
+    """Load and filter EM-DAT flood records for East Africa (from May 2023).
+
+    Expects a CSV export from emdat.be filtered for Disaster Type=Flood,
+    Continent=Africa. Returns records with admin-1 attribution.
+    """
+    df = pd.read_csv(csv_path, parse_dates=["Start Date", "End Date"])
+    df = df[
+        (df["Disaster Type"] == "Flood")
+        & (df["ISO"].isin(_EAST_AFRICA_ISO3))
+        & (df["Start Date"] >= "2023-05-01")
+    ].copy()
+
+    records = [
+        EMDATFloodRecord(
+            event_id=str(row.get("DisNo.", "")),
+            country=str(row.get("Country", "")),
+            admin1_name=str(row.get("Admin1", "")),
+            admin1_pcode=str(row.get("Admin1 Code", "")),
+            start_date=pd.Timestamp(row["Start Date"]),
+            end_date=pd.Timestamp(row.get("End Date", row["Start Date"])),
+            deaths=int(row["Total Deaths"]) if pd.notna(row.get("Total Deaths")) else None,
+            affected=int(row["No. Affected"]) if pd.notna(row.get("No. Affected")) else None,
+        )
+        for _, row in df.iterrows()
+    ]
+
+    log.info(
+        "emdat_loaded",
+        n_events=len(records),
+        date_range=f"{df['Start Date'].min().date()} to {df['Start Date'].max().date()}",
+        countries=df["Country"].value_counts().to_dict(),
+    )
+    return records
+
+
+def _col_or_default(df: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    if df.empty or col not in df.columns:
+        return default
+    return float(df[col].iloc[0])
+
+
+def build_training_dataset(
+    emdat_records: list[EMDATFloodRecord],
+    exceedance_df: pd.DataFrame,
+    gpm_df: pd.DataFrame,
+    api_df: pd.DataFrame,
+    negative_sample_ratio: float = 3.0,
+) -> pd.DataFrame:
+    """Build a labeled training dataset for CPT refinement.
+
+    Args:
+        emdat_records:         EM-DAT flood events.
+        exceedance_df:         Columns: date, admin1_pcode, exceedance_prob_24h_5y,
+                               exceedance_prob_72h_5y, spatial_coverage_fraction,
+                               consecutive_signal_days.
+        gpm_df:                Columns: date, admin1_pcode, gpm_obs_24h.
+        api_df:                Columns: date, admin1_pcode, api_mm.
+        negative_sample_ratio: Ratio of negative to positive samples.
+
+    Returns:
+        DataFrame with discretised evidence columns and a Risk_State label.
+    """
+    rows: list[dict] = []
+
+    for record in emdat_records:
+        for offset in range(3):
+            event_date = record.start_date + pd.Timedelta(days=offset)
+            pcode = record.admin1_pcode
+
+            exc_row = exceedance_df[
+                (exceedance_df["date"] == event_date.date())
+                & (exceedance_df["admin1_pcode"] == pcode)
+            ]
+            gpm_row = gpm_df[
+                (gpm_df["date"] == event_date.date())
+                & (gpm_df["admin1_pcode"] == pcode)
+            ]
+            api_row = api_df[
+                (api_df["date"] == event_date.date())
+                & (api_df["admin1_pcode"] == pcode)
+            ]
+
+            if exc_row.empty or gpm_row.empty:
+                continue
+
+            evidence = CRMAEvidence(
+                exceedance_prob_24h_5y=float(exc_row["exceedance_prob_24h_5y"].iloc[0]),
+                exceedance_prob_72h_5y=_col_or_default(exc_row, "exceedance_prob_72h_5y"),
+                exceedance_prob_7d_5y=_col_or_default(exc_row, "exceedance_prob_7d_5y"),
+                gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
+                api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 20.0,
+                spatial_coverage_fraction=_col_or_default(exc_row, "spatial_coverage_fraction", 0.5),
+                consecutive_signal_days=int(_col_or_default(exc_row, "consecutive_signal_days", 1.0)),
+            )
+
+            rows.append({
+                "Forecast_Hazard":  evidence.forecast_hazard_state,
+                "Obs_Antecedent":   evidence.obs_antecedent_state,
+                "Temporal_Persist": evidence.temporal_persistence_state,
+                "Spatial_Coverage": evidence.spatial_coverage_state,
+                "Data_Confidence":  evidence.data_confidence_state,
+                "API_State":        evidence.api_state,
+                "Risk_State":       3,
+                "source":           "emdat_positive",
+                "event_id":         record.event_id,
+                "date":             event_date.date(),
+                "admin1_pcode":     pcode,
+            })
+
+    n_positive = len(rows)
+    log.info("positive_examples_built", n=n_positive)
+
+    n_negative = int(n_positive * negative_sample_ratio)
+    flood_day_pcodes = {(r.start_date.date(), r.admin1_pcode) for r in emdat_records}
+
+    neg_pool = exceedance_df[
+        ~exceedance_df.apply(
+            lambda row: (row["date"], row["admin1_pcode"]) in flood_day_pcodes,
+            axis=1,
+        )
+    ]
+    neg_sample = neg_pool.sample(min(n_negative, len(neg_pool)), random_state=42)
+
+    for _, row in neg_sample.iterrows():
+        gpm_row = gpm_df[
+            (gpm_df["date"] == row["date"])
+            & (gpm_df["admin1_pcode"] == row["admin1_pcode"])
+        ]
+        api_row = api_df[
+            (api_df["date"] == row["date"])
+            & (api_df["admin1_pcode"] == row["admin1_pcode"])
+        ]
+        if gpm_row.empty:
+            continue
+
+        evidence = CRMAEvidence(
+            exceedance_prob_24h_5y=float(row.get("exceedance_prob_24h_5y", 0.0)),
+            exceedance_prob_72h_5y=float(row.get("exceedance_prob_72h_5y", 0.0)),
+            exceedance_prob_7d_5y=float(row.get("exceedance_prob_7d_5y", 0.0)),
+            gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
+            api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
+            spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
+            consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
+        )
+
+        rows.append({
+            "Forecast_Hazard":  evidence.forecast_hazard_state,
+            "Obs_Antecedent":   evidence.obs_antecedent_state,
+            "Temporal_Persist": evidence.temporal_persistence_state,
+            "Spatial_Coverage": evidence.spatial_coverage_state,
+            "Data_Confidence":  evidence.data_confidence_state,
+            "API_State":        evidence.api_state,
+            "Risk_State":       min(evidence.forecast_hazard_state, 1),
+            "source":           "negative_sample",
+            "event_id":         None,
+            "date":             row["date"],
+            "admin1_pcode":     row["admin1_pcode"],
+        })
+
+    df = pd.DataFrame(rows)
+    log.info(
+        "training_dataset_built",
+        n_positive=n_positive,
+        n_negative=len(df) - n_positive,
+        risk_state_distribution=df["Risk_State"].value_counts().to_dict(),
+    )
+    return df
+
+
+def refine_cpts_with_emdat(
+    model: "BayesianNetwork",
+    training_df: pd.DataFrame,
+    laplace_alpha: float = 1.0,
+    output_path: Path | None = None,
+) -> "BayesianNetwork":
+    """Refine the Risk_State CPT using MLE on the EM-DAT training dataset.
+
+    Only the Risk_State leaf node is updated — root node priors are kept
+    as the expert elicitation values.
+
+    Args:
+        model:         The CRMA BayesianNetwork instance.
+        training_df:   Labeled data from build_training_dataset().
+        laplace_alpha: Laplace smoothing parameter (1.0 = add-one smoothing).
+        output_path:   If given, saves all CPTs to this JSON path.
+
+    Returns:
+        Updated BayesianNetwork with refined Risk_State CPT.
+    """
+    if not PGMPY_AVAILABLE:
+        raise ImportError("pgmpy is required: pip install pgmpy")
+
+    estimator = MaximumLikelihoodEstimator(
+        model,
+        training_df[_EVIDENCE_COLS].copy(),
+        state_names=_STATE_NAMES,
+    )
+
+    refined_cpd = estimator.estimate_cpd(
+        "Risk_State",
+        prior_type="dirichlet",
+        pseudo_counts=laplace_alpha,
+    )
+    model.remove_cpds(model.get_cpds("Risk_State"))
+    model.add_cpds(refined_cpd)
+
+    if not model.check_model():
+        raise ValueError("Refined model failed validation")
+
+    if output_path is not None:
+        cpts = {
+            node: model.get_cpds(node).values.tolist()
+            for node in model.nodes()
+            if model.get_cpds(node) is not None
+        }
+        output_path.write_text(json.dumps(cpts, indent=2))
+        log.info("refined_cpts_saved", path=str(output_path))
+
+    log.info(
+        "cpts_refined_with_emdat",
+        n_training_samples=len(training_df),
+        laplace_alpha=laplace_alpha,
+    )
+    return model
