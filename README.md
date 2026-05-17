@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.jpg" alt="GIK-IceChain" width="520"/>
+</p>
+
 # GIK-IceChain v2.0
 
 **Zero-Cost Cloud-Native Pipeline for Retrospective Flood Risk  
@@ -152,7 +156,7 @@ calendar-map storymaps and exportable to the
 
 ```bash
 # Clone
-git clone https://github.com/code4earth-2026/gik-icechain.git
+git clone https://github.com/hashirama21/gik-icechain.git
 cd gik-icechain
 
 # Create environment
@@ -196,7 +200,7 @@ python -m gik_icechain dashboard --port 8080
 
 ```bash
 # 1. Clone
-git clone https://github.com/code4earth-2026/gik-icechain.git
+git clone https://github.com/hashirama21/gik-icechain.git
 cd gik-icechain
 
 # 2. Install with all dependencies
@@ -336,7 +340,7 @@ Benchmark notebook: [`notebooks/04_benchmark_report.ipynb`](notebooks/04_benchma
 ## Dashboard
 
 The interactive calendar-map is deployed at:
-**https://code4earth-2026.github.io/gik-icechain/**
+**https://hashirama21.github.io/gik-icechain/**
 
 - Each cell = one forecast day, coloured by peak East Africa exceedance signal
 - Click any day → VEDA-UI storymap showing:
@@ -376,7 +380,7 @@ make lint
              Retrospective Flood Risk Decision Support in East Africa},
   author  = {{Code for Earth 2026 Team}},
   year    = {2026},
-  url     = {https://github.com/code4earth-2026/gik-icechain},
+  url     = {https://github.com/hashirama21/gik-icechain},
   license = {Apache-2.0},
   note    = {ECMWF Code for Earth 2026 — Challenge 41, Africa Stream (ArcX)}
 }
