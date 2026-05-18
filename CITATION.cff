@@ -10,8 +10,8 @@ abstract: >
 version: "2.0.0"
 date-released: "2026-08-31"
 license: Apache-2.0
-url: "https://github.com/code4earth-2026/gik-icechain"
-repository-code: "https://github.com/code4earth-2026/gik-icechain"
+url: "https://github.com/hashirama21/gik-icechain"
+repository-code: "https://github.com/hashirama21/gik-icechain"
 
 keywords:
   - ECMWF
