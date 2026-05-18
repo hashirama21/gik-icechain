@@ -10,7 +10,7 @@ inference result alongside the updated :class:`DynamicBNState`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TYPE_CHECKING
 
 import structlog
@@ -27,14 +27,7 @@ _SIGNAL_THRESHOLD    = 0.15
 
 @dataclass
 class DynamicBNState:
-    """Persistent state carried between consecutive forecast days.
-
-    Attributes:
-        api_mm:           Current API value in mm.
-        consecutive_days: Number of consecutive days with an exceedance signal
-                          (p_24h >= _SIGNAL_THRESHOLD).
-        last_risk_state:  Risk state integer (0–3) from the previous step.
-    """
+    """Persistent state carried between consecutive forecast days."""
 
     api_mm:           float
     consecutive_days: int
@@ -80,8 +73,6 @@ def step(
         Tuple of (result_dict, new_state) where result_dict is the output
         of ``CRMAModel.infer()``.
     """
-    from dataclasses import replace
-
     evidence_with_state = replace(
         evidence,
         api_mm=state.api_mm,

@@ -15,30 +15,25 @@ Output Zarr schema::
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import structlog
-
-if TYPE_CHECKING:
-    import xarray as xr
+import xarray as xr
 
 log = structlog.get_logger(__name__)
-
-_WINDOWS_H: list[int] = [3, 6, 12, 24, 48, 72, 168]
-_RETURN_PERIODS: list[int] = [2, 5, 10, 20, 40, 100]
 
 _DEFAULT_CHUNKS: dict[str, int | None] = {
     "date":          30,
     "latitude":      100,
     "longitude":     100,
-    "window":        None,   # small dimension — no chunking
+    "window":        None,
     "return_period": None,
 }
 
 
 def write_exceedance_store(
-    exceedance_dict: "dict[date, xr.DataArray]",
+    exceedance_dict: dict[date, xr.DataArray],
     output_uri: str,
     chunks: dict | None = None,
     append: bool = True,
@@ -55,8 +50,6 @@ def write_exceedance_store(
         append:          If True, append along the ``date`` dimension when
                          the store already exists; otherwise overwrite.
     """
-    import xarray as xr
-
     if not exceedance_dict:
         log.warning("write_exceedance_store_empty")
         return
@@ -88,7 +81,7 @@ def write_exceedance_store(
 
 
 def build_exceedance_dataset(
-    results: "dict[tuple[int, int], xr.DataArray]",
+    results: dict[tuple[int, int], xr.DataArray],
     forecast_date: date,
 ) -> "xr.DataArray":
     """Assemble per-(window, return_period) DataArrays into a single DataArray.
@@ -100,9 +93,6 @@ def build_exceedance_dataset(
     Returns:
         DataArray with dimensions (latitude, longitude, window, return_period).
     """
-    import xarray as xr
-    import pandas as pd
-
     windows = sorted({w for w, _ in results})
     rps     = sorted({rp for _, rp in results})
 
@@ -126,13 +116,7 @@ def build_exceedance_dataset(
     return stacked.astype(np.float32)
 
 
-def _build_dataset(
-    exceedance_dict: "dict[date, xr.DataArray]",
-) -> "xr.Dataset":
-    """Concatenate per-date DataArrays and wrap in a Dataset."""
-    import xarray as xr
-    import pandas as pd
-
+def _build_dataset(exceedance_dict: dict[date, xr.DataArray]) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
     arrays = [exceedance_dict[d] for d in sorted_dates]
 

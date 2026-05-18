@@ -14,7 +14,6 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -189,20 +188,18 @@ def _extract_references(
         data = raw.read()
 
     buf = io.BytesIO(data)
-    messages = cfgrib.open_fileobj(buf, indexing_time="validtime")
-
-    for msg in messages:
-        short_name = msg.attrs.get("GRIB_shortName", "")
+    for ds in cfgrib.open_datasets(buf):
+        short_name = ds.attrs.get("GRIB_shortName", "")
         if short_name not in variables:
             continue
         rows.append({
             "uri":         grib_uri,
-            "byte_offset": msg.attrs.get("GRIB_offset", 0),
-            "byte_length": msg.attrs.get("GRIB_length", 0),
+            "byte_offset": ds.attrs.get("GRIB_offset", 0),
+            "byte_length": ds.attrs.get("GRIB_length", 0),
             "variable":    short_name,
-            "level":       msg.attrs.get("GRIB_typeOfLevel", None),
-            "step":        msg.attrs.get("GRIB_stepRange", "0"),
-            "member":      msg.attrs.get("GRIB_perturbationNumber", 0),
+            "level":       ds.attrs.get("GRIB_typeOfLevel", None),
+            "step":        ds.attrs.get("GRIB_stepRange", "0"),
+            "member":      ds.attrs.get("GRIB_perturbationNumber", 0),
         })
     return rows
 

@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 import structlog
-
-if TYPE_CHECKING:
-    import xarray as xr
+import xarray as xr
 
 log = structlog.get_logger(__name__)
 
@@ -23,7 +21,7 @@ _GPM_PATTERNS = (
 _PRECIP_VARS = ("precipitationCal", "precipitation", "HQprecipitation")
 
 
-def load_gpm_daily(gpm_dir: Path, day: date) -> "xr.DataArray | None":
+def load_gpm_daily(gpm_dir: Path, day: date) -> xr.DataArray | None:
     """Load GPM IMERG v7 daily precipitation for a single date.
 
     Tries standard HDF5 and nc4 naming conventions then falls back to glob.
@@ -36,8 +34,6 @@ def load_gpm_daily(gpm_dir: Path, day: date) -> "xr.DataArray | None":
         ``precipitationCal`` DataArray in mm/day, squeezed to (lat, lon),
         or None if no file is found.
     """
-    import xarray as xr
-
     date_str = day.strftime("%Y%m%d")
     for pattern_tpl in _GPM_PATTERNS:
         pattern = pattern_tpl.format(date_str=date_str)
@@ -56,7 +52,7 @@ def load_gpm_daily(gpm_dir: Path, day: date) -> "xr.DataArray | None":
     return None
 
 
-def load_gpm_range(gpm_dir: Path, start: date, end: date) -> "xr.Dataset":
+def load_gpm_range(gpm_dir: Path, start: date, end: date) -> xr.Dataset:
     """Load and concatenate GPM daily files into a Dataset along the ``time`` axis.
 
     Missing dates are silently skipped; the resulting Dataset may not cover
@@ -70,10 +66,7 @@ def load_gpm_range(gpm_dir: Path, start: date, end: date) -> "xr.Dataset":
     Returns:
         Dataset with variable ``precipitationCal`` and dimension ``time``.
     """
-    import xarray as xr
-    import pandas as pd
-
-    arrays: list["xr.DataArray"] = []
+    arrays: list[xr.DataArray] = []
     dates: list[date] = []
 
     current = start
@@ -99,7 +92,7 @@ def load_gpm_range(gpm_dir: Path, start: date, end: date) -> "xr.Dataset":
 
 
 def compute_api_series(
-    gpm_ds: "xr.Dataset",
+    gpm_ds: xr.Dataset,
     decay: float = 0.8,
     initial_mm: float = 20.0,
     precip_var: str = "precipitationCal",
@@ -120,8 +113,6 @@ def compute_api_series(
     Returns:
         DataArray of API values with dims (time, lat, lon).
     """
-    import xarray as xr
-
     if precip_var not in gpm_ds:
         raise KeyError(f"Variable '{precip_var}' not found in dataset")
 

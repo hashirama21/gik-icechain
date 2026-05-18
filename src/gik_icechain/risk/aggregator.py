@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TYPE_CHECKING
+from typing import Any, Literal
 
+import geopandas as gpd
 import numpy as np
+import pandas as pd
+import regionmask
 import structlog
-
-if TYPE_CHECKING:
-    import geopandas as gpd
-    import pandas as pd
-    import xarray as xr
+import xarray as xr
 
 log = structlog.get_logger(__name__)
 
 
 def aggregate_to_admin1(
-    da: "xr.DataArray",
-    admin_gdf: "gpd.GeoDataFrame",
+    da: xr.DataArray,
+    admin_gdf: gpd.GeoDataFrame,
     stat: Literal["mean", "max", "area_weighted"] = "mean",
     min_coverage: float = 0.5,
     pcode_col: str = "admin1_pcode",
@@ -40,9 +39,6 @@ def aggregate_to_admin1(
     Returns:
         Series indexed by *pcode_col* with one value per admin-1 unit.
     """
-    import pandas as pd
-    import regionmask
-
     results: dict[str, float] = {}
 
     for _, unit in admin_gdf.iterrows():
@@ -79,8 +75,8 @@ def aggregate_to_admin1(
 
 
 def coverage_fraction(
-    da: "xr.DataArray",
-    admin_gdf: "gpd.GeoDataFrame",
+    da: xr.DataArray,
+    admin_gdf: gpd.GeoDataFrame,
     threshold: float,
     pcode_col: str = "admin1_pcode",
 ) -> "pd.Series":
@@ -95,9 +91,6 @@ def coverage_fraction(
     Returns:
         Series indexed by *pcode_col* with values in [0, 1].
     """
-    import pandas as pd
-    import regionmask
-
     results: dict[str, float] = {}
 
     for _, unit in admin_gdf.iterrows():
@@ -123,7 +116,7 @@ def coverage_fraction(
     return pd.Series(results, name="coverage_fraction")
 
 
-def _find_dim(da: "xr.DataArray", candidates: tuple[str, ...]) -> str:
+def _find_dim(da: xr.DataArray, candidates: tuple[str, ...]) -> str:
     """Return the first dimension name from *candidates* that exists in *da*."""
     for c in candidates:
         if c in da.dims or c in da.coords:
@@ -131,12 +124,11 @@ def _find_dim(da: "xr.DataArray", candidates: tuple[str, ...]) -> str:
     raise KeyError(f"None of {candidates} found in DataArray dims/coords: {list(da.dims)}")
 
 
-def _area_weighted_mean(da: "xr.DataArray", geom: Any) -> float:
-    """Compute cosine-latitude-weighted mean of *da* within *geom*."""
+def _area_weighted_mean(da: xr.DataArray, geom: Any) -> float:
+    """Cosine-latitude-weighted mean within *geom*."""
     lat_name = _find_dim(da, ("latitude", "lat"))
     lat_vals = da[lat_name].values
     weights = np.cos(np.deg2rad(lat_vals))
-    # Broadcast weights over longitude axis
     if da.ndim == 2:
         weights_2d = np.broadcast_to(weights[:, None], da.shape)
     else:

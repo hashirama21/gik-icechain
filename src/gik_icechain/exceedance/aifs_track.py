@@ -10,26 +10,22 @@ benchmark AI-NWP forecast quality for East Africa flood events.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Callable, TYPE_CHECKING
+from typing import Callable
 
 import numpy as np
 import pandas as pd
 import structlog
+import xarray as xr
 
-if TYPE_CHECKING:
-    import xarray as xr
-
-from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds, ClimateMode
-from gik_icechain.exceedance.accumulations import compute_rolling_accumulations, WINDOWS_H
+from gik_icechain.exceedance.accumulations import WINDOWS_H, compute_rolling_accumulations
 from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
-from gik_icechain.exceedance.writer import write_exceedance_store, build_exceedance_dataset
 from gik_icechain.exceedance.loader import open_aifs_store
+from gik_icechain.exceedance.thresholds import RETURN_PERIODS, AdaptiveGEVThresholds, ClimateMode
+from gik_icechain.exceedance.writer import build_exceedance_dataset, write_exceedance_store
 
 log = structlog.get_logger(__name__)
-
-_RETURN_PERIODS: list[int] = [2, 5, 10, 20, 40, 100]
 
 
 def run_aifs_exceedance(
@@ -40,7 +36,7 @@ def run_aifs_exceedance(
     end: date,
     climate_mode_fn: Callable[[date], ClimateMode],
     n_workers: int = 16,
-    return_periods: list[int] = _RETURN_PERIODS,
+    return_periods: list[int] = RETURN_PERIODS,
     windows_h: list[int] = WINDOWS_H,
 ) -> None:
     """Compute exceedance probabilities from AIFS ENS and write to a Zarr store.
@@ -59,8 +55,6 @@ def run_aifs_exceedance(
         return_periods:   Return periods in years.
         windows_h:        Accumulation windows in hours.
     """
-    from datetime import timedelta
-
     try:
         from dask.distributed import Client
         client: object | None = Client(n_workers=n_workers, threads_per_worker=2, silence_logs=True)
@@ -70,11 +64,11 @@ def run_aifs_exceedance(
     ds = open_aifs_store(aifs_store_uri)
     acc_ds = compute_rolling_accumulations(ds, windows_h=windows_h)
 
-    results: dict[date, "xr.DataArray"] = {}
+    results: dict[date, xr.DataArray] = {}
     current = start
     while current <= end:
         mode = climate_mode_fn(current)
-        day_results: dict[tuple[int, int], "xr.DataArray"] = {}
+        day_results: dict[tuple[int, int], xr.DataArray] = {}
 
         for w in windows_h:
             for rp in return_periods:
@@ -169,12 +163,8 @@ def _make_threshold_dataset(
     window_h: int,
     return_period: int,
     mode: ClimateMode,
-) -> "xr.Dataset":
-    """Wrap a single threshold DataArray in a Dataset for exceedance.py API."""
-    import xarray as xr
-
-    da = thresholds.get(window_h, return_period, mode)
-    return xr.Dataset({f"rp_{return_period}y": da})
+) -> xr.Dataset:
+    return xr.Dataset({f"rp_{return_period}y": thresholds.get(window_h, return_period, mode)})
 
 
 def _brier_skill_score(reference: np.ndarray, forecast: np.ndarray) -> float:
@@ -192,8 +182,6 @@ def _fractions_skill_score(
     forecast: np.ndarray,
     threshold: float = 0.15,
 ) -> float:
-    """Fraction Skill Score: fraction of cells where |forecast - reference| < threshold."""
     if len(reference) == 0:
         return 0.0
-    close = np.abs(forecast - reference) < threshold
-    return float(close.mean())
+    return float((np.abs(forecast - reference) < threshold).mean())

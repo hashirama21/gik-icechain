@@ -63,7 +63,7 @@ def write_daily_geojson(
 
     out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
     out_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features}, indent=None)
+        json.dumps({"type": "FeatureCollection", "features": features})
     )
     log.info("geojson_written", date=day, n_features=len(features), path=str(out_path))
     return out_path
@@ -116,7 +116,7 @@ def export_eahw_format(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": eahw_features}, indent=None)
+        json.dumps({"type": "FeatureCollection", "features": eahw_features})
     )
     log.info("eahw_export_written", source=str(geojson_path), output=str(output_path))
 

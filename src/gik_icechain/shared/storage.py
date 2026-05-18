@@ -20,9 +20,8 @@ def get_s3_filesystem(
     """
     import s3fs
 
-    anon = no_sign
     return s3fs.S3FileSystem(
-        anon=anon,
+        anon=no_sign,
         client_kwargs={"region_name": region},
     )
 

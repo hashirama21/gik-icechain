@@ -10,12 +10,8 @@ than a rolling sum.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import structlog
-
-if TYPE_CHECKING:
-    import xarray as xr
+import xarray as xr
 
 log = structlog.get_logger(__name__)
 
@@ -25,7 +21,7 @@ _IFS_STEP_HOURS = 6  # IFS ENS is archived at 6-hourly steps
 
 
 def compute_rolling_accumulations(
-    ds: "xr.Dataset",
+    ds: xr.Dataset,
     windows_h: list[int] = WINDOWS_H,
     precip_var: str = "tp",
     step_hours: int = _IFS_STEP_HOURS,
@@ -44,15 +40,13 @@ def compute_rolling_accumulations(
         (same spatial dimensions as *ds*, time axis dropped to a single
         coordinate ``window_start``).
     """
-    import xarray as xr
-
     if precip_var not in ds:
         raise KeyError(
             f"Variable '{precip_var}' not found in Dataset. "
             f"Available: {list(ds.data_vars)}"
         )
 
-    accum_vars: dict[str, "xr.DataArray"] = {}
+    accum_vars: dict[str, xr.DataArray] = {}
     for w in windows_h:
         accum_vars[f"tp_{w}h"] = accumulation_for_window(
             ds[precip_var], window_h=w, step_hours=step_hours
@@ -69,7 +63,7 @@ def compute_rolling_accumulations(
 
 
 def accumulation_for_window(
-    da: "xr.DataArray",
+    da: xr.DataArray,
     window_h: int,
     step_hours: int = _IFS_STEP_HOURS,
 ) -> "xr.DataArray":
@@ -107,9 +101,7 @@ def accumulation_for_window(
     )
     window_accum = (current - lagged).clip(min=0.0)
 
-    # Prepend the raw values for the initial n_back steps (no prior window)
-    import xarray as xr
-
+    # Prepend raw values for the initial n_back steps where no prior window exists
     prefix = da.isel({step_dim: slice(0, n_back)})
     result = xr.concat([prefix, window_accum], dim=step_dim)
     result.attrs.update(da.attrs)
@@ -117,7 +109,7 @@ def accumulation_for_window(
     return result
 
 
-def _find_time_dim(da: "xr.DataArray") -> str:
+def _find_time_dim(da: xr.DataArray) -> str:
     """Return the name of the step/time dimension in *da*."""
     for candidate in ("step", "time", "forecast_period"):
         if candidate in da.dims:

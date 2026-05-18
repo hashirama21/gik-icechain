@@ -15,6 +15,7 @@ Expected exceedance store schema:
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -62,12 +63,12 @@ def run_risk_batch(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    admin    = gpd.read_file(admin_boundaries_path)
-    exc_ds   = xr.open_zarr(exceedance_store_uri, consolidated=False)
+    admin  = gpd.read_file(admin_boundaries_path)
+    exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
 
-    pcodes              = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
-    api_state:          dict[str, float] = {p: _INITIAL_API_MM for p in pcodes}
-    consecutive_days:   dict[str, int]   = {p: 0               for p in pcodes}
+    pcodes            = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
+    api_state         = {p: _INITIAL_API_MM for p in pcodes}
+    consecutive_days  = {p: 0 for p in pcodes}
 
     written: list[Path] = []
     current = start
@@ -106,56 +107,39 @@ def _process_day(
     exc_7d  = exc_day["exceedance_prob"].sel(window=168, return_period=_RP_SIGNAL)
     gpm_da  = load_gpm_daily(gpm_dir, day)
 
+    p_24h_s = aggregate_to_admin1(exc_24h, admin)
+    p_72h_s = aggregate_to_admin1(exc_72h, admin)
+    p_7d_s  = aggregate_to_admin1(exc_7d,  admin)
+    cov_s   = coverage_fraction(exc_24h, admin, _SIGNAL_THRESHOLD)
+    gpm_s   = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+
     features = []
     for _, unit in admin.iterrows():
-        pcode = str(unit["admin1_pcode"])
-        geom  = unit.geometry
-
-        p_24h    = _scalar_mean(exc_24h, admin.iloc[[admin.index.get_loc(unit.name)]])
-        p_72h    = _scalar_mean(exc_72h, admin.iloc[[admin.index.get_loc(unit.name)]])
-        p_7d     = _scalar_mean(exc_7d,  admin.iloc[[admin.index.get_loc(unit.name)]])
-        cov      = _scalar_coverage(exc_24h, admin.iloc[[admin.index.get_loc(unit.name)]])
-        gpm_24h  = _scalar_mean(gpm_da, admin.iloc[[admin.index.get_loc(unit.name)]]) if gpm_da is not None else 0.0
-        cur_api  = api_state[pcode]
+        pcode   = str(unit["admin1_pcode"])
+        cur_api = api_state[pcode]
+        p_24h   = _safe(p_24h_s.get(pcode, 0.0))
+        gpm_24h = _safe(gpm_s.get(pcode, 0.0))
 
         evidence = CRMAEvidence(
             exceedance_prob_24h_5y=p_24h,
-            exceedance_prob_72h_5y=p_72h,
-            exceedance_prob_7d_5y=p_7d,
+            exceedance_prob_72h_5y=_safe(p_72h_s.get(pcode, 0.0)),
+            exceedance_prob_7d_5y=_safe(p_7d_s.get(pcode, 0.0)),
             gpm_obs_24h=gpm_24h,
             api_mm=cur_api,
-            spatial_coverage_fraction=cov,
+            spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
             consecutive_signal_days=consecutive_days[pcode],
         )
         result = crma_model.infer(evidence)
 
-        api_state[pcode]       = gpm_24h + api_decay * cur_api
-        consecutive_days[pcode] = (
-            consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
-        )
+        api_state[pcode]        = gpm_24h + api_decay * cur_api
+        consecutive_days[pcode] = consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
         features.append(build_feature(unit, result, evidence, day))
 
     out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
-    out_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features})
-    )
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
     log.info("risk_day_written", date=day, n_units=len(features))
     return out_path
 
 
-def _scalar_mean(da: xr.DataArray | None, unit_gdf: gpd.GeoDataFrame) -> float:
-    """Spatial mean within the single admin-1 unit in *unit_gdf*."""
-    if da is None:
-        return 0.0
-    series = aggregate_to_admin1(da, unit_gdf, stat="mean")
-    val = series.iloc[0] if len(series) > 0 else 0.0
-    import math
-    return 0.0 if not math.isfinite(val) else float(val)
-
-
-def _scalar_coverage(da: xr.DataArray, unit_gdf: gpd.GeoDataFrame) -> float:
-    """Coverage fraction within the single admin-1 unit in *unit_gdf*."""
-    series = coverage_fraction(da, unit_gdf, threshold=_SIGNAL_THRESHOLD)
-    val = series.iloc[0] if len(series) > 0 else 0.0
-    import math
+def _safe(val: float) -> float:
     return 0.0 if not math.isfinite(val) else float(val)

@@ -32,7 +32,6 @@ def open_icechunk_store(
     Returns:
         Dask-backed xr.Dataset with the IFS ensemble precipitation variables.
     """
-    import xarray as xr
     from gik_icechain.conversion.icechunk_writer import IceChainStore
 
     effective_chunks = chunks or _DEFAULT_CHUNKS

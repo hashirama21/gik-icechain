@@ -12,7 +12,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
-import yaml
 
 
 _DEFAULT_CONFIG = Path(__file__).parents[4] / "configs" / "default.yaml"
@@ -198,5 +197,6 @@ def load_config(path: Path | None = None) -> GIKConfig:
     if path is None:
         return GIKConfig()
 
-    raw = yaml.safe_load(path.read_text())
-    return GIKConfig.model_validate(raw)
+    import yaml
+
+    return GIKConfig.model_validate(yaml.safe_load(path.read_text()))
