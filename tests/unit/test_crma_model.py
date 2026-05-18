@@ -13,8 +13,8 @@ from gik_icechain.risk.crma_model import (
 
 # ── CRMAEvidence discretisation ───────────────────────────────────────────────
 
-class TestCRMAEvidenceDiscretisation:
 
+class TestCRMAEvidenceDiscretisation:
     def _make_evidence(self, **kwargs) -> CRMAEvidence:
         defaults = dict(
             exceedance_prob_24h_5y=0.0,
@@ -87,6 +87,7 @@ class TestCRMAEvidenceDiscretisation:
 
 # ── CRMAModel inference ────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def built_model():
     """Build the CRMA model once for all tests (slow to construct)."""
@@ -97,7 +98,6 @@ def built_model():
 
 
 class TestCRMAModelInference:
-
     def _make_evidence(self, **kwargs) -> CRMAEvidence:
         defaults = dict(
             exceedance_prob_24h_5y=0.0,
@@ -115,9 +115,7 @@ class TestCRMAModelInference:
         """No signal at all → should return Green or Yellow."""
         evidence = self._make_evidence()
         result = built_model.infer(evidence)
-        assert result["risk_state"] in (0, 1), (
-            f"Expected low risk, got {result['risk_label']}"
-        )
+        assert result["risk_state"] in (0, 1), f"Expected low risk, got {result['risk_label']}"
 
     def test_high_risk_scenario(self, built_model):
         """Severe signal across all nodes → should return Orange or Red."""
@@ -125,14 +123,12 @@ class TestCRMAModelInference:
             exceedance_prob_24h_5y=0.80,
             exceedance_prob_72h_5y=0.75,
             gpm_obs_24h=50.0,
-            api_mm=120.0,             # saturated
+            api_mm=120.0,  # saturated
             spatial_coverage_fraction=0.90,
             consecutive_signal_days=5,
         )
         result = built_model.infer(evidence)
-        assert result["risk_state"] in (2, 3), (
-            f"Expected high risk, got {result['risk_label']}"
-        )
+        assert result["risk_state"] in (2, 3), f"Expected high risk, got {result['risk_label']}"
 
     def test_probabilities_sum_to_one(self, built_model):
         evidence = self._make_evidence(exceedance_prob_24h_5y=0.3, gpm_obs_24h=15.0)
@@ -142,13 +138,13 @@ class TestCRMAModelInference:
 
     def test_risk_monotonic_with_hazard(self, built_model):
         """Higher forecast hazard → should produce higher expected risk state."""
-        low  = self._make_evidence(exceedance_prob_24h_5y=0.05)
+        low = self._make_evidence(exceedance_prob_24h_5y=0.05)
         high = self._make_evidence(exceedance_prob_24h_5y=0.80)
 
-        result_low  = built_model.infer(low)
+        result_low = built_model.infer(low)
         result_high = built_model.infer(high)
 
-        expected_low  = result_low["p_orange"]  + result_low["p_red"]
+        expected_low = result_low["p_orange"] + result_low["p_red"]
         expected_high = result_high["p_orange"] + result_high["p_red"]
 
         assert expected_high > expected_low, (
@@ -166,15 +162,19 @@ class TestCRMAModelInference:
         risk_dry = result_dry["p_orange"] + result_dry["p_red"]
         risk_sat = result_sat["p_orange"] + result_sat["p_red"]
 
-        assert risk_sat >= risk_dry, (
-            "Saturated soil should not reduce flood risk"
-        )
+        assert risk_sat >= risk_dry, "Saturated soil should not reduce flood risk"
 
     def test_result_keys(self, built_model):
         evidence = self._make_evidence()
         result = built_model.infer(evidence)
         expected_keys = {
-            "risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red", "evidence"
+            "risk_state",
+            "risk_label",
+            "p_green",
+            "p_yellow",
+            "p_orange",
+            "p_red",
+            "evidence",
         }
         assert expected_keys.issubset(result.keys())
 

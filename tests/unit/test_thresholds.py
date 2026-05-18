@@ -22,6 +22,7 @@ from gik_icechain.exceedance.thresholds import (
 
 # ── Season classification ──────────────────────────────────────────────────────
 
+
 class TestGetSeason:
     def test_mam_months(self):
         for month in (3, 4, 5):
@@ -47,10 +48,11 @@ class TestGetSeason:
 
 # ── ENSO classification ────────────────────────────────────────────────────────
 
+
 class TestClassifyENSO:
     def test_el_nino(self):
-        assert classify_enso(0.5)  == ENSOPhase.EL_NINO
-        assert classify_enso(2.0)  == ENSOPhase.EL_NINO
+        assert classify_enso(0.5) == ENSOPhase.EL_NINO
+        assert classify_enso(2.0) == ENSOPhase.EL_NINO
         assert classify_enso(0.51) == ENSOPhase.EL_NINO
 
     def test_la_nina(self):
@@ -58,8 +60,8 @@ class TestClassifyENSO:
         assert classify_enso(-1.5) == ENSOPhase.LA_NINA
 
     def test_neutral(self):
-        assert classify_enso(0.0)  == ENSOPhase.NEUTRAL
-        assert classify_enso(0.4)  == ENSOPhase.NEUTRAL
+        assert classify_enso(0.0) == ENSOPhase.NEUTRAL
+        assert classify_enso(0.4) == ENSOPhase.NEUTRAL
         assert classify_enso(-0.4) == ENSOPhase.NEUTRAL
 
     def test_custom_threshold(self):
@@ -68,6 +70,7 @@ class TestClassifyENSO:
 
 
 # ── IOD classification ─────────────────────────────────────────────────────────
+
 
 class TestClassifyIOD:
     def test_positive_iod(self):
@@ -79,12 +82,13 @@ class TestClassifyIOD:
         assert classify_iod(-0.9) == IODPhase.NEGATIVE
 
     def test_neutral_iod(self):
-        assert classify_iod(0.0)  == IODPhase.NEUTRAL
-        assert classify_iod(0.3)  == IODPhase.NEUTRAL
+        assert classify_iod(0.0) == IODPhase.NEUTRAL
+        assert classify_iod(0.3) == IODPhase.NEUTRAL
         assert classify_iod(-0.3) == IODPhase.NEUTRAL
 
 
 # ── ClimateMode ────────────────────────────────────────────────────────────────
+
 
 class TestClimateMode:
     def test_key_format(self):
@@ -103,6 +107,7 @@ class TestClimateMode:
 
 
 # ── AdaptiveGEVThresholds ──────────────────────────────────────────────────────
+
 
 @pytest.fixture
 def minimal_thresholds():
@@ -155,7 +160,7 @@ class TestAdaptiveGEVThresholds:
 
     def test_higher_rp_gives_higher_threshold(self, minimal_thresholds):
         mode = ClimateMode(Season.OND, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
-        t5  = minimal_thresholds.get(window_h=24, return_period=5,  mode=mode)
+        t5 = minimal_thresholds.get(window_h=24, return_period=5, mode=mode)
         t10 = minimal_thresholds.get(window_h=24, return_period=10, mode=mode)
         assert float(t10.mean()) > float(t5.mean())
 

@@ -57,6 +57,7 @@ def run_aifs_exceedance(
     """
     try:
         from dask.distributed import Client
+
         client: object | None = Client(n_workers=n_workers, threads_per_worker=2, silence_logs=True)
     except ImportError:
         client = None
@@ -84,7 +85,10 @@ def run_aifs_exceedance(
                 except Exception as exc_err:
                     log.warning(
                         "aifs_exceedance_failed",
-                        date=current, window=w, rp=rp, error=str(exc_err),
+                        date=current,
+                        window=w,
+                        rp=rp,
+                        error=str(exc_err),
                     )
 
         if day_results:
@@ -122,10 +126,10 @@ def compare_ifs_vs_aifs(
     """
     import xarray as xr
 
-    ifs_ds  = xr.open_zarr(ifs_store_uri,  consolidated=False)
+    ifs_ds = xr.open_zarr(ifs_store_uri, consolidated=False)
     aifs_ds = xr.open_zarr(aifs_store_uri, consolidated=False)
 
-    ifs_exc  = ifs_ds["exceedance_prob"].sel(
+    ifs_exc = ifs_ds["exceedance_prob"].sel(
         window=window_h, return_period=return_period, **region_slice
     )
     aifs_exc = aifs_ds["exceedance_prob"].sel(
@@ -139,15 +143,15 @@ def compare_ifs_vs_aifs(
 
     rows: list[dict] = []
     for d_str in common_dates:
-        ifs_day  = ifs_exc.sel(date=pd.Timestamp(d_str)).values.ravel()
+        ifs_day = ifs_exc.sel(date=pd.Timestamp(d_str)).values.ravel()
         aifs_day = aifs_exc.sel(date=pd.Timestamp(d_str)).values.ravel()
 
         mask = np.isfinite(ifs_day) & np.isfinite(aifs_day)
         if mask.sum() == 0:
             continue
 
-        bss  = _brier_skill_score(ifs_day[mask], aifs_day[mask])
-        fss  = _fractions_skill_score(ifs_day[mask], aifs_day[mask])
+        bss = _brier_skill_score(ifs_day[mask], aifs_day[mask])
+        fss = _fractions_skill_score(ifs_day[mask], aifs_day[mask])
         rows.append({"date": d_str, "bss_aifs": bss, "fss_aifs": fss})
 
     df = pd.DataFrame(rows)

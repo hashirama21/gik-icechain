@@ -31,10 +31,10 @@ ACCUMULATION_WINDOWS_H = [3, 6, 12, 24, 48, 72, 168]
 class Season(StrEnum):
     """East Africa rainfall seasons."""
 
-    MAM  = "MAM"   # March–April–May (long rains)
-    OND  = "OND"   # October–November–December (short rains)
+    MAM = "MAM"  # March–April–May (long rains)
+    OND = "OND"  # October–November–December (short rains)
     JJAS = "JJAS"  # June–July–August–September
-    DJF  = "DJF"   # December–January–February
+    DJF = "DJF"  # December–January–February
 
 
 class ENSOPhase(StrEnum):
@@ -45,7 +45,7 @@ class ENSOPhase(StrEnum):
 
 class IODPhase(StrEnum):
     POSITIVE = "positive"
-    NEUTRAL  = "neutral"
+    NEUTRAL = "neutral"
     NEGATIVE = "negative"
 
 
@@ -53,9 +53,9 @@ class IODPhase(StrEnum):
 class ClimateMode:
     """Current climate mode used to select the appropriate GEV threshold."""
 
-    season:     Season
+    season: Season
     enso_phase: ENSOPhase
-    iod_phase:  IODPhase
+    iod_phase: IODPhase
 
     @property
     def key(self) -> str:
@@ -63,10 +63,10 @@ class ClimateMode:
 
 
 _SEASON_MONTHS: dict[Season, list[int]] = {
-    Season.MAM:  [3, 4, 5],
-    Season.OND:  [10, 11, 12],
+    Season.MAM: [3, 4, 5],
+    Season.OND: [10, 11, 12],
     Season.JJAS: [6, 7, 8, 9],
-    Season.DJF:  [12, 1, 2],
+    Season.DJF: [12, 1, 2],
 }
 
 
@@ -190,13 +190,12 @@ class AdaptiveGEVThresholds:
                 ds = xr.Dataset(
                     {f"rp_{rp}y": da for rp, da in rp_dict.items()},
                     attrs={
-                        "mode_key":    mode_key,
-                        "window_h":    window_h,
-                        "units":       "mm",
-                        "source":      "CMORPH v1.0 + GEV fit",
+                        "mode_key": mode_key,
+                        "window_h": window_h,
+                        "units": "mm",
+                        "source": "CMORPH v1.0 + GEV fit",
                         "description": (
-                            f"GEV return-period thresholds for {mode_key}, "
-                            f"{window_h}h accumulation"
+                            f"GEV return-period thresholds for {mode_key}, {window_h}h accumulation"
                         ),
                     },
                 )
@@ -223,6 +222,7 @@ class AdaptiveGEVThresholds:
         Returns:
             xr.DataArray (lat × lon) of threshold values in mm.
         """
+
         def _lookup(key: str) -> xr.DataArray | None:
             windows = self._thresholds.get(key, {})
             rp_dict = windows.get(window_h, {})
@@ -239,8 +239,7 @@ class AdaptiveGEVThresholds:
             return result
 
         raise KeyError(
-            f"No threshold for mode={mode.key}, window={window_h}h, "
-            f"return_period={return_period}y."
+            f"No threshold for mode={mode.key}, window={window_h}h, return_period={return_period}y."
         )
 
     @staticmethod
@@ -285,9 +284,7 @@ class AdaptiveGEVThresholds:
             try:
                 c, loc, scale = genextreme.fit(valid, f0=0)  # f0=0 constrains to Gumbel
                 # P(X > x) = 1/T  →  x = Q(1 − 1/T)
-                return genextreme.ppf(
-                    [1.0 - 1.0 / rp for rp in return_periods], c, loc, scale
-                )
+                return genextreme.ppf([1.0 - 1.0 / rp for rp in return_periods], c, loc, scale)
             except Exception:
                 return np.full(len(return_periods), np.nan)
 
@@ -306,12 +303,12 @@ class AdaptiveGEVThresholds:
         for i, rp in enumerate(return_periods):
             da = all_thresholds.isel(return_period=i).rename(f"threshold_rp{rp}y_{window_h}h")
             da.attrs = {
-                "units":         "mm",
-                "window_h":      window_h,
+                "units": "mm",
+                "window_h": window_h,
                 "return_period": rp,
-                "mode_key":      mode_key,
-                "distribution":  "GEV (Gumbel, c=0)",
-                "source":        "CMORPH v1.0 climatology",
+                "mode_key": mode_key,
+                "distribution": "GEV (Gumbel, c=0)",
+                "source": "CMORPH v1.0 climatology",
             }
             result[rp] = da
 

@@ -4,12 +4,14 @@ conversion/virtualizer.py
 VirtualiZarr integration: convert GIK Parquet byte-range references
 into a virtual xarray DataTree ready for IceChunk commit.
 """
+
 from __future__ import annotations
 
 import structlog
 import xarray as xr
 
 log = structlog.get_logger(__name__)
+
 
 def parquet_to_virtual_dataset(
     parquet_paths: list[str],

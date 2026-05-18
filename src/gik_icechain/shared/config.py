@@ -50,9 +50,7 @@ class GapFillConfig(BaseModel):
 
 class Component1Config(BaseModel):
     run_hours: list[int] = Field(default_factory=lambda: [0])
-    variables: list[str] = Field(
-        default_factory=lambda: ["tp", "2t", "10u", "10v", "sro", "ssro"]
-    )
+    variables: list[str] = Field(default_factory=lambda: ["tp", "2t", "10u", "10v", "sro", "ssro"])
     icechunk: IceChunkConfig = Field(default_factory=IceChunkConfig)
     gap_fill: GapFillConfig = Field(default_factory=GapFillConfig)
 
@@ -74,9 +72,7 @@ class DaskConfig(BaseModel):
     threads_per_worker: int = 2
     memory_limit: str = "8GB"
     dashboard_address: str = ":8787"
-    chunk_dims: dict[str, Any] = Field(
-        default_factory=lambda: {"time": 10, "lat": 100, "lon": 100}
-    )
+    chunk_dims: dict[str, Any] = Field(default_factory=lambda: {"time": 10, "lat": 100, "lon": 100})
 
 
 class Component2Config(BaseModel):
@@ -87,7 +83,11 @@ class Component2Config(BaseModel):
     dask: DaskConfig = Field(default_factory=DaskConfig)
     output_chunks: dict[str, Any] = Field(
         default_factory=lambda: {
-            "date": 30, "lat": 100, "lon": 100, "window": -1, "return_period": -1
+            "date": 30,
+            "lat": 100,
+            "lon": 100,
+            "window": -1,
+            "return_period": -1,
         }
     )
 
@@ -181,6 +181,7 @@ class GIKConfig(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         from pydantic_settings.main import YamlConfigSettingsSource
+
         return (init_settings, YamlConfigSettingsSource(settings_cls))
 
 

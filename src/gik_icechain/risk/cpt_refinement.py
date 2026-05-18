@@ -31,24 +31,38 @@ except ImportError:
 
 
 _EAST_AFRICA_ISO3 = {
-    "KEN", "ETH", "UGA", "TZA", "SOM",
-    "SDN", "SSD", "RWA", "BDI", "COD", "ERI",
+    "KEN",
+    "ETH",
+    "UGA",
+    "TZA",
+    "SOM",
+    "SDN",
+    "SSD",
+    "RWA",
+    "BDI",
+    "COD",
+    "ERI",
 }
 
 _EVIDENCE_COLS = [
-    "Forecast_Hazard", "Obs_Antecedent", "Temporal_Persist",
-    "Spatial_Coverage", "Data_Confidence", "API_State", "Risk_State",
+    "Forecast_Hazard",
+    "Obs_Antecedent",
+    "Temporal_Persist",
+    "Spatial_Coverage",
+    "Data_Confidence",
+    "API_State",
+    "Risk_State",
 ]
 
 _STATE_NAMES: dict[str, list[int]] = {
-    "Forecast_Hazard":  [0, 1, 2],
-    "Obs_Antecedent":   [0, 1, 2],
+    "Forecast_Hazard": [0, 1, 2],
+    "Obs_Antecedent": [0, 1, 2],
     "Temporal_Persist": [0, 1],
     "Spatial_Coverage": [0, 1, 2],
-    "Data_Confidence":  [0, 1, 2],
-    "API_State":        [0, 1, 2],
-    "Compound_Risk":    [0, 1, 2, 3],
-    "Risk_State":       [0, 1, 2, 3],
+    "Data_Confidence": [0, 1, 2],
+    "API_State": [0, 1, 2],
+    "Compound_Risk": [0, 1, 2, 3],
+    "Risk_State": [0, 1, 2, 3],
 }
 
 
@@ -56,14 +70,14 @@ _STATE_NAMES: dict[str, list[int]] = {
 class EMDATFloodRecord:
     """A single EM-DAT flood event relevant to East Africa."""
 
-    event_id:      str
-    country:       str
-    admin1_name:   str
-    admin1_pcode:  str
-    start_date:    pd.Timestamp
-    end_date:      pd.Timestamp
-    deaths:        int | None
-    affected:      int | None
+    event_id: str
+    country: str
+    admin1_name: str
+    admin1_pcode: str
+    start_date: pd.Timestamp
+    end_date: pd.Timestamp
+    deaths: int | None
+    affected: int | None
     disaster_type: str = "Flood"
 
 
@@ -142,12 +156,10 @@ def build_training_dataset(
                 & (exceedance_df["admin1_pcode"] == pcode)
             ]
             gpm_row = gpm_df[
-                (gpm_df["date"] == event_date.date())
-                & (gpm_df["admin1_pcode"] == pcode)
+                (gpm_df["date"] == event_date.date()) & (gpm_df["admin1_pcode"] == pcode)
             ]
             api_row = api_df[
-                (api_df["date"] == event_date.date())
-                & (api_df["admin1_pcode"] == pcode)
+                (api_df["date"] == event_date.date()) & (api_df["admin1_pcode"] == pcode)
             ]
 
             if exc_row.empty or gpm_row.empty:
@@ -167,19 +179,21 @@ def build_training_dataset(
                 ),
             )
 
-            rows.append({
-                "Forecast_Hazard":  evidence.forecast_hazard_state,
-                "Obs_Antecedent":   evidence.obs_antecedent_state,
-                "Temporal_Persist": evidence.temporal_persistence_state,
-                "Spatial_Coverage": evidence.spatial_coverage_state,
-                "Data_Confidence":  evidence.data_confidence_state,
-                "API_State":        evidence.api_state,
-                "Risk_State":       3,
-                "source":           "emdat_positive",
-                "event_id":         record.event_id,
-                "date":             event_date.date(),
-                "admin1_pcode":     pcode,
-            })
+            rows.append(
+                {
+                    "Forecast_Hazard": evidence.forecast_hazard_state,
+                    "Obs_Antecedent": evidence.obs_antecedent_state,
+                    "Temporal_Persist": evidence.temporal_persistence_state,
+                    "Spatial_Coverage": evidence.spatial_coverage_state,
+                    "Data_Confidence": evidence.data_confidence_state,
+                    "API_State": evidence.api_state,
+                    "Risk_State": 3,
+                    "source": "emdat_positive",
+                    "event_id": record.event_id,
+                    "date": event_date.date(),
+                    "admin1_pcode": pcode,
+                }
+            )
 
     n_positive = len(rows)
     log.info("positive_examples_built", n=n_positive)
@@ -197,12 +211,10 @@ def build_training_dataset(
 
     for _, row in neg_sample.iterrows():
         gpm_row = gpm_df[
-            (gpm_df["date"] == row["date"])
-            & (gpm_df["admin1_pcode"] == row["admin1_pcode"])
+            (gpm_df["date"] == row["date"]) & (gpm_df["admin1_pcode"] == row["admin1_pcode"])
         ]
         api_row = api_df[
-            (api_df["date"] == row["date"])
-            & (api_df["admin1_pcode"] == row["admin1_pcode"])
+            (api_df["date"] == row["date"]) & (api_df["admin1_pcode"] == row["admin1_pcode"])
         ]
         if gpm_row.empty:
             continue
@@ -217,19 +229,21 @@ def build_training_dataset(
             consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
         )
 
-        rows.append({
-            "Forecast_Hazard":  evidence.forecast_hazard_state,
-            "Obs_Antecedent":   evidence.obs_antecedent_state,
-            "Temporal_Persist": evidence.temporal_persistence_state,
-            "Spatial_Coverage": evidence.spatial_coverage_state,
-            "Data_Confidence":  evidence.data_confidence_state,
-            "API_State":        evidence.api_state,
-            "Risk_State":       min(evidence.forecast_hazard_state, 1),
-            "source":           "negative_sample",
-            "event_id":         None,
-            "date":             row["date"],
-            "admin1_pcode":     row["admin1_pcode"],
-        })
+        rows.append(
+            {
+                "Forecast_Hazard": evidence.forecast_hazard_state,
+                "Obs_Antecedent": evidence.obs_antecedent_state,
+                "Temporal_Persist": evidence.temporal_persistence_state,
+                "Spatial_Coverage": evidence.spatial_coverage_state,
+                "Data_Confidence": evidence.data_confidence_state,
+                "API_State": evidence.api_state,
+                "Risk_State": min(evidence.forecast_hazard_state, 1),
+                "source": "negative_sample",
+                "event_id": None,
+                "date": row["date"],
+                "admin1_pcode": row["admin1_pcode"],
+            }
+        )
 
     df = pd.DataFrame(rows)
     log.info(

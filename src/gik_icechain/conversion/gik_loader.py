@@ -33,13 +33,13 @@ FLOOD_RELEVANT_VARS = ["tp", "2t", "10u", "10v", "sro", "ssro"]
 class GIKManifestEntry(BaseModel):
     """A single GIK reference entry pointing at one GRIB2 message."""
 
-    date:        date
-    run_hour:    int
-    step:        int         # forecast step in hours (0–360)
-    member:      int         # 0 = control, 1–50 = perturbed members
-    variable:    str
-    level:       int | None  # pressure level in hPa; None for surface fields
-    s3_uri:      str
+    date: date
+    run_hour: int
+    step: int  # forecast step in hours (0–360)
+    member: int  # 0 = control, 1–50 = perturbed members
+    variable: str
+    level: int | None  # pressure level in hPa; None for surface fields
+    s3_uri: str
     byte_offset: int
     byte_length: int
 
@@ -142,10 +142,7 @@ class GIKCatalog:
             log.warning("no_parquet_files_found", start=start, end=end, run_hours=run_hours)
             return []
 
-        paths = [
-            f"hf://datasets/{self.hf_dataset}/{row['path']}"
-            for _, row in filtered.iterrows()
-        ]
+        paths = [f"hf://datasets/{self.hf_dataset}/{row['path']}" for _, row in filtered.iterrows()]
         log.info("parquet_paths_resolved", count=len(paths), date_range=f"{start} to {end}")
         return paths
 
@@ -172,12 +169,12 @@ def load_gik_parquet(
     rename_map = {
         "shortName": "variable",
         "levelType": "level_type",
-        "level":     "level",
+        "level": "level",
         "stepRange": "step",
-        "number":    "member",
-        "uri":       "uri",
-        "offset":    "byte_offset",
-        "length":    "byte_length",
+        "number": "member",
+        "uri": "uri",
+        "offset": "byte_offset",
+        "length": "byte_length",
     }
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     log.debug("parquet_loaded", rows=len(df), variables=df["variable"].unique().tolist())

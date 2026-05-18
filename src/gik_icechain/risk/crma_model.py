@@ -43,14 +43,14 @@ RISK_LEVELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red"}
 N_RISK_LEVELS = len(RISK_LEVELS)
 
 NODE_CARDS: dict[str, int] = {
-    "Forecast_Hazard":  3,  # Low / Medium / High
-    "Obs_Antecedent":   3,  # Below normal / Normal / Above normal
+    "Forecast_Hazard": 3,  # Low / Medium / High
+    "Obs_Antecedent": 3,  # Below normal / Normal / Above normal
     "Temporal_Persist": 2,  # No / Yes
     "Spatial_Coverage": 3,  # Local / Regional / Extensive
-    "Data_Confidence":  3,  # Low / Medium / High
-    "API_State":        3,  # Dry / Normal / Saturated
-    "Compound_Risk":    4,  # None / Low / Moderate / High
-    "Risk_State":       4,  # Green / Yellow / Orange / Red
+    "Data_Confidence": 3,  # Low / Medium / High
+    "API_State": 3,  # Dry / Normal / Saturated
+    "Compound_Risk": 4,  # None / Low / Moderate / High
+    "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
 
 
@@ -58,14 +58,14 @@ NODE_CARDS: dict[str, int] = {
 class CRMAEvidence:
     """Evidence observed on a given day for one admin-1 unit."""
 
-    exceedance_prob_24h_5y:    float
-    exceedance_prob_72h_5y:    float
-    exceedance_prob_7d_5y:     float
-    gpm_obs_24h:               float
-    api_mm:                    float
+    exceedance_prob_24h_5y: float
+    exceedance_prob_72h_5y: float
+    exceedance_prob_7d_5y: float
+    gpm_obs_24h: float
+    api_mm: float
     spatial_coverage_fraction: float
-    consecutive_signal_days:   int
-    gpm_quality:               int = 2
+    consecutive_signal_days: int
+    gpm_quality: int = 2
 
     @property
     def forecast_hazard_state(self) -> int:
@@ -132,13 +132,13 @@ class CRMAModel:
     def build(self) -> None:
         """Construct the Bayesian Network structure and CPTs."""
         edges = [
-            ("Forecast_Hazard",  "Compound_Risk"),
-            ("Obs_Antecedent",   "Compound_Risk"),
+            ("Forecast_Hazard", "Compound_Risk"),
+            ("Obs_Antecedent", "Compound_Risk"),
             ("Temporal_Persist", "Compound_Risk"),
             ("Spatial_Coverage", "Compound_Risk"),
-            ("Data_Confidence",  "Compound_Risk"),
-            ("API_State",        "Compound_Risk"),
-            ("Compound_Risk",    "Risk_State"),
+            ("Data_Confidence", "Compound_Risk"),
+            ("API_State", "Compound_Risk"),
+            ("Compound_Risk", "Risk_State"),
         ]
 
         self._model = pgm.BayesianNetwork(edges)
@@ -188,8 +188,14 @@ class CRMAModel:
         )
 
         self._model.add_cpds(
-            cpd_forecast, cpd_obs, cpd_persist, cpd_spatial,
-            cpd_confidence, cpd_api, cpd_compound, cpd_risk,
+            cpd_forecast,
+            cpd_obs,
+            cpd_persist,
+            cpd_spatial,
+            cpd_confidence,
+            cpd_api,
+            cpd_compound,
+            cpd_risk,
         )
 
         if not self._model.check_model():
@@ -208,12 +214,12 @@ class CRMAModel:
             raise RuntimeError("Model not built. Call build() first.")
 
         obs = {
-            "Forecast_Hazard":  evidence.forecast_hazard_state,
-            "Obs_Antecedent":   evidence.obs_antecedent_state,
+            "Forecast_Hazard": evidence.forecast_hazard_state,
+            "Obs_Antecedent": evidence.obs_antecedent_state,
             "Temporal_Persist": evidence.temporal_persistence_state,
             "Spatial_Coverage": evidence.spatial_coverage_state,
-            "Data_Confidence":  evidence.data_confidence_state,
-            "API_State":        evidence.api_state,
+            "Data_Confidence": evidence.data_confidence_state,
+            "API_State": evidence.api_state,
         }
 
         risk_dist = self._inference.query(
@@ -227,11 +233,11 @@ class CRMAModel:
         return {
             "risk_state": risk_state,
             "risk_label": RISK_LEVELS[risk_state],
-            "p_green":    float(probs[0]),
-            "p_yellow":   float(probs[1]),
-            "p_orange":   float(probs[2]),
-            "p_red":      float(probs[3]),
-            "evidence":   obs,
+            "p_green": float(probs[0]),
+            "p_yellow": float(probs[1]),
+            "p_orange": float(probs[2]),
+            "p_red": float(probs[3]),
+            "evidence": obs,
         }
 
     def _build_compound_risk_cpd(self) -> TabularCPD:
@@ -242,12 +248,12 @@ class CRMAModel:
         3×3×2×3×3×3 = 486 parent state combinations.
         """
         parent_cards = [
-            NODE_CARDS["Forecast_Hazard"],   # 3
-            NODE_CARDS["Obs_Antecedent"],     # 3
-            NODE_CARDS["Temporal_Persist"],   # 2
-            NODE_CARDS["Spatial_Coverage"],   # 3
-            NODE_CARDS["Data_Confidence"],    # 3
-            NODE_CARDS["API_State"],          # 3
+            NODE_CARDS["Forecast_Hazard"],  # 3
+            NODE_CARDS["Obs_Antecedent"],  # 3
+            NODE_CARDS["Temporal_Persist"],  # 2
+            NODE_CARDS["Spatial_Coverage"],  # 3
+            NODE_CARDS["Data_Confidence"],  # 3
+            NODE_CARDS["API_State"],  # 3
         ]
         n_combinations = 1
         for c in parent_cards:
@@ -255,15 +261,11 @@ class CRMAModel:
 
         cpt = np.zeros((4, n_combinations))
         for idx in range(n_combinations):
-            f_hazard, obs_ant, t_persist, spatial, confidence, api = (
-                self._idx_to_states(idx, parent_cards)
+            f_hazard, obs_ant, t_persist, spatial, confidence, api = self._idx_to_states(
+                idx, parent_cards
             )
             score = (
-                f_hazard * 2.0
-                + obs_ant * 1.5
-                + t_persist * 1.5
-                + spatial * 1.0
-                + api * 1.5
+                f_hazard * 2.0 + obs_ant * 1.5 + t_persist * 1.5 + spatial * 1.0 + api * 1.5
             ) * [0.5, 0.8, 1.0][confidence]
 
             if score <= 1.5:
@@ -280,8 +282,12 @@ class CRMAModel:
             variable_card=4,
             values=cpt,
             evidence=[
-                "Forecast_Hazard", "Obs_Antecedent", "Temporal_Persist",
-                "Spatial_Coverage", "Data_Confidence", "API_State",
+                "Forecast_Hazard",
+                "Obs_Antecedent",
+                "Temporal_Persist",
+                "Spatial_Coverage",
+                "Data_Confidence",
+                "API_State",
             ],
             evidence_card=parent_cards,
         )

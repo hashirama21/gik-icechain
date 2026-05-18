@@ -49,22 +49,24 @@ def write_daily_geojson(
     for _, unit in admin_gdf.iterrows():
         pcode = str(unit.get("admin1_pcode", ""))
         props = pcode_to_result.get(pcode, {})
-        props.update({
-            "admin1_pcode": pcode,
-            "admin1_name":  str(unit.get("admin1_name", "")),
-            "country":      str(unit.get("adm0_name",   "")),
-            "date":         day.isoformat(),
-        })
-        features.append({
-            "type":       "Feature",
-            "geometry":   unit.geometry.__geo_interface__,
-            "properties": props,
-        })
+        props.update(
+            {
+                "admin1_pcode": pcode,
+                "admin1_name": str(unit.get("admin1_name", "")),
+                "country": str(unit.get("adm0_name", "")),
+                "date": day.isoformat(),
+            }
+        )
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": unit.geometry.__geo_interface__,
+                "properties": props,
+            }
+        )
 
     out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
-    out_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features})
-    )
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
     log.info("geojson_written", date=day, n_features=len(features), path=str(out_path))
     return out_path
 
@@ -90,34 +92,34 @@ def export_eahw_format(
 
     eahw_features: list[dict[str, Any]] = []
     for feat in raw.get("features", []):
-        src  = feat["properties"]
+        src = feat["properties"]
         risk = int(src.get("risk_state", 0))
         prob_key = ["p_green", "p_yellow", "p_orange", "p_red"][risk]
         probability = round(float(src.get(prob_key, 0.0)) * 100)
 
-        eahw_features.append({
-            "type":     "Feature",
-            "geometry": feat["geometry"],
-            "properties": {
-                "hazard_type":   _EAHW_HAZARD_TYPE,
-                "issue_date":    valid_date,
-                "valid_date":    valid_date,
-                "admin1_pcode":  src.get("admin1_pcode", ""),
-                "admin1_name":   src.get("admin1_name",  ""),
-                "country_code":  src.get("country",      ""),
-                "risk_level":    risk + 1,
-                "risk_label":    _EAHW_RISK_LABELS.get(risk, "Unknown"),
-                "probability":   probability,
-                "exceedance_24h_5y": src.get("exceedance_24h_5y", 0.0),
-                "exceedance_72h_5y": src.get("exceedance_72h_5y", 0.0),
-                "api_mm":        src.get("api_mm", 0.0),
-            },
-        })
+        eahw_features.append(
+            {
+                "type": "Feature",
+                "geometry": feat["geometry"],
+                "properties": {
+                    "hazard_type": _EAHW_HAZARD_TYPE,
+                    "issue_date": valid_date,
+                    "valid_date": valid_date,
+                    "admin1_pcode": src.get("admin1_pcode", ""),
+                    "admin1_name": src.get("admin1_name", ""),
+                    "country_code": src.get("country", ""),
+                    "risk_level": risk + 1,
+                    "risk_label": _EAHW_RISK_LABELS.get(risk, "Unknown"),
+                    "probability": probability,
+                    "exceedance_24h_5y": src.get("exceedance_24h_5y", 0.0),
+                    "exceedance_72h_5y": src.get("exceedance_72h_5y", 0.0),
+                    "api_mm": src.get("api_mm", 0.0),
+                },
+            }
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": eahw_features})
-    )
+    output_path.write_text(json.dumps({"type": "FeatureCollection", "features": eahw_features}))
     log.info("eahw_export_written", source=str(geojson_path), output=str(output_path))
 
 
@@ -142,19 +144,19 @@ def build_feature(
         "type": "Feature",
         "geometry": unit.geometry.__geo_interface__,
         "properties": {
-            "admin1_pcode":      str(unit.get("admin1_pcode", "")),
-            "admin1_name":       str(unit.get("admin1_name", "")),
-            "country":           str(unit.get("adm0_name", "")),
-            "date":              day.isoformat(),
-            "risk_state":        result["risk_state"],
-            "risk_label":        result["risk_label"],
-            "p_green":           result["p_green"],
-            "p_yellow":          result["p_yellow"],
-            "p_orange":          result["p_orange"],
-            "p_red":             result["p_red"],
+            "admin1_pcode": str(unit.get("admin1_pcode", "")),
+            "admin1_name": str(unit.get("admin1_name", "")),
+            "country": str(unit.get("adm0_name", "")),
+            "date": day.isoformat(),
+            "risk_state": result["risk_state"],
+            "risk_label": result["risk_label"],
+            "p_green": result["p_green"],
+            "p_yellow": result["p_yellow"],
+            "p_orange": result["p_orange"],
+            "p_red": result["p_red"],
             "exceedance_24h_5y": evidence.exceedance_prob_24h_5y,
             "exceedance_72h_5y": evidence.exceedance_prob_72h_5y,
-            "api_mm":            evidence.api_mm,
-            "spatial_coverage":  evidence.spatial_coverage_fraction,
+            "api_mm": evidence.api_mm,
+            "spatial_coverage": evidence.spatial_coverage_fraction,
         },
     }

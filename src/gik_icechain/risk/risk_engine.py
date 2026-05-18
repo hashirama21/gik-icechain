@@ -31,9 +31,9 @@ from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
 
-_RP_SIGNAL        = 5
+_RP_SIGNAL = 5
 _SIGNAL_THRESHOLD = 0.15
-_INITIAL_API_MM   = 20.0
+_INITIAL_API_MM = 20.0
 
 
 def run_risk_batch(
@@ -63,19 +63,26 @@ def run_risk_batch(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    admin  = gpd.read_file(admin_boundaries_path)
+    admin = gpd.read_file(admin_boundaries_path)
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
 
-    pcodes            = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
-    api_state         = {p: _INITIAL_API_MM for p in pcodes}
-    consecutive_days  = {p: 0 for p in pcodes}
+    pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
+    api_state = {p: _INITIAL_API_MM for p in pcodes}
+    consecutive_days = {p: 0 for p in pcodes}
 
     written: list[Path] = []
     current = start
     while current <= end:
         path = _process_day(
-            current, exc_ds, gpm_dir, admin, crma_model,
-            output_dir, api_state, consecutive_days, api_decay,
+            current,
+            exc_ds,
+            gpm_dir,
+            admin,
+            crma_model,
+            output_dir,
+            api_state,
+            consecutive_days,
+            api_decay,
         )
         if path is not None:
             written.append(path)
@@ -102,22 +109,22 @@ def _process_day(
         log.warning("exceedance_date_missing", date=day)
         return None
 
-    exc_24h = exc_day["exceedance_prob"].sel(window=24,  return_period=_RP_SIGNAL)
-    exc_72h = exc_day["exceedance_prob"].sel(window=72,  return_period=_RP_SIGNAL)
-    exc_7d  = exc_day["exceedance_prob"].sel(window=168, return_period=_RP_SIGNAL)
-    gpm_da  = load_gpm_daily(gpm_dir, day)
+    exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=_RP_SIGNAL)
+    exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=_RP_SIGNAL)
+    exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=_RP_SIGNAL)
+    gpm_da = load_gpm_daily(gpm_dir, day)
 
     p_24h_s = aggregate_to_admin1(exc_24h, admin)
     p_72h_s = aggregate_to_admin1(exc_72h, admin)
-    p_7d_s  = aggregate_to_admin1(exc_7d,  admin)
-    cov_s   = coverage_fraction(exc_24h, admin, _SIGNAL_THRESHOLD)
-    gpm_s   = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+    p_7d_s = aggregate_to_admin1(exc_7d, admin)
+    cov_s = coverage_fraction(exc_24h, admin, _SIGNAL_THRESHOLD)
+    gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     features = []
     for _, unit in admin.iterrows():
-        pcode   = str(unit["admin1_pcode"])
+        pcode = str(unit["admin1_pcode"])
         cur_api = api_state[pcode]
-        p_24h   = _safe(p_24h_s.get(pcode, 0.0))
+        p_24h = _safe(p_24h_s.get(pcode, 0.0))
         gpm_24h = _safe(gpm_s.get(pcode, 0.0))
 
         evidence = CRMAEvidence(
@@ -131,7 +138,7 @@ def _process_day(
         )
         result = crma_model.infer(evidence)
 
-        api_state[pcode]        = gpm_24h + api_decay * cur_api
+        api_state[pcode] = gpm_24h + api_decay * cur_api
         consecutive_days[pcode] = consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
         features.append(build_feature(unit, result, evidence, day))
 

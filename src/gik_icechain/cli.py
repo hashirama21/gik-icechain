@@ -88,10 +88,9 @@ def _run_exceedance(
     thresholds = AdaptiveGEVThresholds.load(Path(cfg.sources.cmorph_thresholds_path))
     acc_ds = compute_rolling_accumulations(ds, windows_h=cfg.component2.windows_h)
 
-    enso_iod = (
-        pd.read_csv(cfg.component2.thresholds.enso_iod_index_path, parse_dates=["date"])
-        .set_index("date")
-    )
+    enso_iod = pd.read_csv(
+        cfg.component2.thresholds.enso_iod_index_path, parse_dates=["date"]
+    ).set_index("date")
 
     def _mode_for(d: date) -> ClimateMode:
         season = get_season(d.month)
@@ -188,6 +187,7 @@ def exceedance(
     if workers > 1:
         try:
             from dask.distributed import Client
+
             Client(n_workers=workers, threads_per_worker=2, silence_logs=True)
         except ImportError:
             pass
@@ -265,8 +265,7 @@ def dashboard(
         uvicorn.run(create_app(cfg), host="0.0.0.0", port=port)
     except ImportError:
         typer.echo(
-            "Dashboard dependencies not installed. "
-            "Run: pip install gik-icechain[dashboard]",
+            "Dashboard dependencies not installed. Run: pip install gik-icechain[dashboard]",
             err=True,
         )
         sys.exit(1)
