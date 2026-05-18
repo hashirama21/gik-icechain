@@ -19,7 +19,7 @@ from typing import Any
 import pandas as pd
 import structlog
 
-from gik_icechain.conversion.gik_loader import GIKCatalog, FLOOD_RELEVANT_VARS
+from gik_icechain.conversion.gik_loader import FLOOD_RELEVANT_VARS, GIKCatalog
 from gik_icechain.shared.storage import get_s3_filesystem, list_s3_objects
 
 log = structlog.get_logger(__name__)
@@ -88,7 +88,7 @@ def fill_one_day(
         URI of the written Parquet file.
     """
     try:
-        import cfgrib  # type: ignore[import-untyped]
+        import cfgrib  # type: ignore[import-untyped]  # noqa: F401
     except ImportError as exc:
         raise RuntimeError("cfgrib is required for gap_filler.fill_one_day") from exc
 

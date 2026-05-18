@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -20,7 +20,7 @@ _EAHW_HAZARD_TYPE = "Flood"
 
 def write_daily_geojson(
     day: date,
-    admin_gdf: "gpd.GeoDataFrame",
+    admin_gdf: gpd.GeoDataFrame,
     risk_results: list[dict[str, Any]],
     output_dir: Path,
 ) -> Path:
@@ -93,7 +93,7 @@ def export_eahw_format(
         src  = feat["properties"]
         risk = int(src.get("risk_state", 0))
         prob_key = ["p_green", "p_yellow", "p_orange", "p_red"][risk]
-        probability = int(round(float(src.get(prob_key, 0.0)) * 100))
+        probability = round(float(src.get(prob_key, 0.0)) * 100)
 
         eahw_features.append({
             "type":     "Feature",

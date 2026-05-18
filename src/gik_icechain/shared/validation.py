@@ -19,7 +19,7 @@ def validate_date_range(start: date, end: date) -> None:
         raise ValueError(f"start={start} is in the future")
 
 
-def validate_ensemble_dims(ds: "xr.Dataset", required_dims: list[str]) -> None:
+def validate_ensemble_dims(ds: xr.Dataset, required_dims: list[str]) -> None:
     """Raise ValueError if any of *required_dims* is absent from *ds*.
 
     Args:
@@ -34,7 +34,7 @@ def validate_ensemble_dims(ds: "xr.Dataset", required_dims: list[str]) -> None:
         )
 
 
-def validate_exceedance_array(da: "xr.DataArray") -> None:
+def validate_exceedance_array(da: xr.DataArray) -> None:
     """Raise ValueError if *da* contains values outside [0, 1].
 
     Ignores NaN values (they are allowed — masked ocean / no-data cells).
@@ -53,7 +53,7 @@ def validate_exceedance_array(da: "xr.DataArray") -> None:
 
 
 def validate_admin_gdf(
-    gdf: "gpd.GeoDataFrame",
+    gdf: gpd.GeoDataFrame,
     required_cols: list[str],
 ) -> None:
     """Raise ValueError if any of *required_cols* is absent from *gdf*.

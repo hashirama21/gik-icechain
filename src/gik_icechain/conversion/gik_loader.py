@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 import structlog
-from huggingface_hub import HfFileSystem, snapshot_download
+from huggingface_hub import HfFileSystem
 from pydantic import BaseModel, field_validator
 
 log = structlog.get_logger(__name__)

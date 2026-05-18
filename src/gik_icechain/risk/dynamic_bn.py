@@ -11,7 +11,7 @@ inference result alongside the updated :class:`DynamicBNState`.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -50,8 +50,8 @@ def init_state(initial_api_mm: float = _DEFAULT_INITIAL_API) -> DynamicBNState:
 
 def step(
     state: DynamicBNState,
-    evidence: "CRMAEvidence",
-    model: "CRMAModel",
+    evidence: CRMAEvidence,
+    model: CRMAModel,
     api_decay: float = _DEFAULT_API_DECAY,
     gpm_obs_mm: float = 0.0,
 ) -> tuple[dict[str, Any], DynamicBNState]:
@@ -103,8 +103,8 @@ def step(
 
 
 def run_temporal_sequence(
-    evidences: "list[CRMAEvidence]",
-    model: "CRMAModel",
+    evidences: list[CRMAEvidence],
+    model: CRMAModel,
     api_decay: float = _DEFAULT_API_DECAY,
     initial_api_mm: float = _DEFAULT_INITIAL_API,
     gpm_obs_series: list[float] | None = None,
@@ -127,7 +127,7 @@ def run_temporal_sequence(
 
     obs_series = gpm_obs_series or [0.0] * len(evidences)
 
-    for evidence, gpm_obs in zip(evidences, obs_series):
+    for evidence, gpm_obs in zip(evidences, obs_series, strict=True):
         result, state = step(
             state, evidence, model, api_decay=api_decay, gpm_obs_mm=gpm_obs
         )

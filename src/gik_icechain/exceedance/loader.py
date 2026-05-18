@@ -19,7 +19,7 @@ def open_icechunk_store(
     store_uri: str,
     as_of_date: date | None = None,
     chunks: dict | None = None,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Open the GIK IceChunk virtual store as a lazy Dask-backed Dataset.
 
     Args:
@@ -52,7 +52,7 @@ def open_icechunk_store(
 def open_aifs_store(
     store_uri: str,
     chunks: dict | None = None,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Open an AIFS ENS Zarr store for parallel exceedance computation.
 
     Expects the same schema as the IFS IceChunk store (variable ``tp``,

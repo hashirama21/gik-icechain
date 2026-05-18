@@ -3,8 +3,9 @@ tests/unit/test_thresholds.py
 Comprehensive unit tests for the adaptive GEV threshold module.
 """
 
+import dataclasses
+
 import numpy as np
-import pandas as pd
 import pytest
 import xarray as xr
 
@@ -18,7 +19,6 @@ from gik_icechain.exceedance.thresholds import (
     classify_iod,
     get_season,
 )
-
 
 # ── Season classification ──────────────────────────────────────────────────────
 
@@ -93,8 +93,8 @@ class TestClimateMode:
 
     def test_immutability(self):
         mode = ClimateMode(Season.OND, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
-        with pytest.raises(Exception):   # frozen dataclass
-            mode.season = Season.MAM  # type: ignore
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            mode.season = Season.MAM  # type: ignore[misc]
 
     def test_equality(self):
         a = ClimateMode(Season.MAM, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)

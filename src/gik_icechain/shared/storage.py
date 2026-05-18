@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 def get_s3_filesystem(
     no_sign: bool = True,
     region: str = "eu-west-1",
-) -> "s3fs.S3FileSystem":
+) -> s3fs.S3FileSystem:
     """Return a configured S3FileSystem.
 
     Args:
@@ -30,7 +30,7 @@ def open_byte_range(
     uri: str,
     offset: int,
     length: int,
-    fs: "s3fs.S3FileSystem | None" = None,
+    fs: s3fs.S3FileSystem | None = None,
 ) -> bytes:
     """Read *length* bytes starting at *offset* from a remote file.
 
@@ -54,7 +54,7 @@ def open_byte_range(
 def list_s3_objects(
     bucket: str,
     prefix: str,
-    fs: "s3fs.S3FileSystem | None" = None,
+    fs: s3fs.S3FileSystem | None = None,
 ) -> list[str]:
     """List all object keys under *bucket/prefix*.
 

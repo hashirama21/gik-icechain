@@ -13,9 +13,8 @@ regimes (Finney et al., 2020; White et al., 2021; Nana et al., 2025).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -29,7 +28,7 @@ RETURN_PERIODS = [2, 5, 10, 20, 40, 100]
 ACCUMULATION_WINDOWS_H = [3, 6, 12, 24, 48, 72, 168]
 
 
-class Season(str, Enum):
+class Season(StrEnum):
     """East Africa rainfall seasons."""
 
     MAM  = "MAM"   # March–April–May (long rains)
@@ -38,13 +37,13 @@ class Season(str, Enum):
     DJF  = "DJF"   # December–January–February
 
 
-class ENSOPhase(str, Enum):
+class ENSOPhase(StrEnum):
     EL_NINO = "el_nino"
     NEUTRAL = "neutral"
     LA_NINA = "la_nina"
 
 
-class IODPhase(str, Enum):
+class IODPhase(StrEnum):
     POSITIVE = "positive"
     NEUTRAL  = "neutral"
     NEGATIVE = "negative"
@@ -119,7 +118,7 @@ class AdaptiveGEVThresholds:
         enso_iod_index: pd.DataFrame,
         windows_h: list[int] = ACCUMULATION_WINDOWS_H,
         return_periods: list[int] = RETURN_PERIODS,
-    ) -> "AdaptiveGEVThresholds":
+    ) -> AdaptiveGEVThresholds:
         """Fit GEV distributions to CMORPH climatology, stratified by climate mode.
 
         Args:
@@ -163,7 +162,7 @@ class AdaptiveGEVThresholds:
         return instance
 
     @classmethod
-    def load(cls, directory: Path) -> "AdaptiveGEVThresholds":
+    def load(cls, directory: Path) -> AdaptiveGEVThresholds:
         """Load pre-computed thresholds from a directory of NetCDF files."""
         instance = cls()
         threshold_files = sorted(directory.glob("thresholds_*.nc"))

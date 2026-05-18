@@ -9,9 +9,9 @@ For each forecast day, grid cell, accumulation window, and return-period:
 This is the primary metric for flood early warning signal detection.
 """
 from __future__ import annotations
-import xarray as xr
-import numpy as np
+
 import structlog
+import xarray as xr
 
 log = structlog.get_logger(__name__)
 

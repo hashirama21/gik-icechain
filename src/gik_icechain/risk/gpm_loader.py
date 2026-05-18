@@ -96,7 +96,7 @@ def compute_api_series(
     decay: float = 0.8,
     initial_mm: float = 20.0,
     precip_var: str = "precipitationCal",
-) -> "xr.DataArray":
+) -> xr.DataArray:
     """Compute the Antecedent Precipitation Index day-by-day over a gridded dataset.
 
     ``API(t) = obs(t) + decay * API(t-1)``
