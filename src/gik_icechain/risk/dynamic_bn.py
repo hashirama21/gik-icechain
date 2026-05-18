@@ -20,18 +20,18 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_API_DECAY   = 0.8
+_DEFAULT_API_DECAY = 0.8
 _DEFAULT_INITIAL_API = 20.0
-_SIGNAL_THRESHOLD    = 0.15
+_SIGNAL_THRESHOLD = 0.15
 
 
 @dataclass
 class DynamicBNState:
     """Persistent state carried between consecutive forecast days."""
 
-    api_mm:           float
+    api_mm: float
     consecutive_days: int
-    last_risk_state:  int
+    last_risk_state: int
 
 
 def init_state(initial_api_mm: float = _DEFAULT_INITIAL_API) -> DynamicBNState:
@@ -84,7 +84,7 @@ def step(
     new_api = gpm_obs_mm + api_decay * state.api_mm
     has_signal = evidence.exceedance_prob_24h_5y >= _SIGNAL_THRESHOLD
     new_consecutive = state.consecutive_days + 1 if has_signal else 0
-    new_risk_state  = int(result["risk_state"])
+    new_risk_state = int(result["risk_state"])
 
     new_state = DynamicBNState(
         api_mm=new_api,
@@ -128,9 +128,7 @@ def run_temporal_sequence(
     obs_series = gpm_obs_series or [0.0] * len(evidences)
 
     for evidence, gpm_obs in zip(evidences, obs_series, strict=True):
-        result, state = step(
-            state, evidence, model, api_decay=api_decay, gpm_obs_mm=gpm_obs
-        )
+        result, state = step(state, evidence, model, api_decay=api_decay, gpm_obs_mm=gpm_obs)
         results.append(result)
 
     return results

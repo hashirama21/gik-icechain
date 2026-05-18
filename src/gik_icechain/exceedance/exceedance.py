@@ -8,12 +8,14 @@ For each forecast day, grid cell, accumulation window, and return-period:
 
 This is the primary metric for flood early warning signal detection.
 """
+
 from __future__ import annotations
 
 import structlog
 import xarray as xr
 
 log = structlog.get_logger(__name__)
+
 
 def compute_exceedance_probabilities(
     ensemble_ds: xr.Dataset,
@@ -40,18 +42,16 @@ def compute_exceedance_probabilities(
     threshold = thresholds_ds[f"rp_{return_period}y"]
 
     n_steps = window_h // 6  # IFS forecast steps are 6-hourly
-    tp_window = (
-        ensemble_ds["tp"]
-        .isel(step=slice(0, n_steps))
-        .sum(dim="step")
-    )
+    tp_window = ensemble_ds["tp"].isel(step=slice(0, n_steps)).sum(dim="step")
 
     exceedance = (tp_window > threshold).mean(dim=member_dim)
-    exceedance.attrs.update({
-        "long_name": f"Exceedance probability ({window_h}h, {return_period}-year RP)",
-        "units": "1",
-        "window_h": window_h,
-        "return_period": return_period,
-    })
+    exceedance.attrs.update(
+        {
+            "long_name": f"Exceedance probability ({window_h}h, {return_period}-year RP)",
+            "units": "1",
+            "window_h": window_h,
+            "return_period": return_period,
+        }
+    )
 
     return exceedance

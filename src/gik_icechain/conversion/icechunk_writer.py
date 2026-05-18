@@ -115,14 +115,19 @@ class IceChainStore:
             message=message or f"GIK ingest: {tag}",
             metadata={
                 "forecast_date": forecast_date.isoformat(),
-                "run_hour":      str(run_hour),
-                "commit_time":   datetime.now(tz=UTC).isoformat(),
-                "source":        "gik-icechain",
+                "run_hour": str(run_hour),
+                "commit_time": datetime.now(tz=UTC).isoformat(),
+                "source": "gik-icechain",
             },
         )
         self._repo.create_tag(tag, commit_hash)
-        log.info("icechunk_commit", date=forecast_date.isoformat(), run_hour=run_hour,
-                 commit=commit_hash[:12], tag=tag)
+        log.info(
+            "icechunk_commit",
+            date=forecast_date.isoformat(),
+            run_hour=run_hour,
+            commit=commit_hash[:12],
+            tag=tag,
+        )
         return commit_hash
 
     def checkout_as_of(self, as_of_date: date) -> xr.Dataset:
@@ -149,14 +154,16 @@ class IceChainStore:
 
         if not valid_tags:
             earliest = min(t[:10] for t in all_tags)
-            raise ValueError(
-                f"No commits on or before {as_of_date}. Earliest: {earliest}"
-            )
+            raise ValueError(f"No commits on or before {as_of_date}. Earliest: {earliest}")
 
         latest_tag = sorted(valid_tags)[-1]
         snapshot_id = self._repo.get_tag(latest_tag)
-        log.info("time_travel_checkout", as_of_date=as_of_date.isoformat(),
-                 resolved_tag=latest_tag, snapshot=snapshot_id[:12])
+        log.info(
+            "time_travel_checkout",
+            as_of_date=as_of_date.isoformat(),
+            resolved_tag=latest_tag,
+            snapshot=snapshot_id[:12],
+        )
 
         session = self._repo.readonly_session(snapshot=snapshot_id)
         return xr.open_zarr(session.store, consolidated=False)
@@ -178,13 +185,15 @@ class IceChainStore:
         for tag in sorted(self._repo.list_tags()):
             commit_hash = self._repo.get_tag(tag)
             meta = self._repo.get_commit_metadata(commit_hash)
-            snapshots.append({
-                "tag":           tag,
-                "commit":        commit_hash[:12],
-                "forecast_date": meta.get("forecast_date", ""),
-                "commit_time":   meta.get("commit_time", ""),
-                "message":       meta.get("message", ""),
-            })
+            snapshots.append(
+                {
+                    "tag": tag,
+                    "commit": commit_hash[:12],
+                    "forecast_date": meta.get("forecast_date", ""),
+                    "commit_time": meta.get("commit_time", ""),
+                    "message": meta.get("message", ""),
+                }
+            )
         return snapshots
 
     def validate(self) -> dict[str, Any]:
@@ -197,7 +206,6 @@ class IceChainStore:
 
         gaps: list[str] = []
         if committed_dates:
-
             current = date.fromisoformat(committed_dates[0])
             for ds_date in committed_dates[1:]:
                 next_d = date.fromisoformat(ds_date)
@@ -206,15 +214,14 @@ class IceChainStore:
                 current = next_d
 
         result: dict[str, Any] = {
-            "committed_days":    n_days,
-            "date_range":        (
-                f"{committed_dates[0]} to {committed_dates[-1]}"
-                if committed_dates else "empty"
+            "committed_days": n_days,
+            "date_range": (
+                f"{committed_dates[0]} to {committed_dates[-1]}" if committed_dates else "empty"
             ),
-            "gaps_detected":     len(gaps),
-            "gap_details":       gaps[:10],
+            "gaps_detected": len(gaps),
+            "gap_details": gaps[:10],
             "variables_present": list(ds.data_vars) if ds else [],
-            "total_snapshots":   len(snapshots),
+            "total_snapshots": len(snapshots),
         }
         log.info("store_validation", **{k: v for k, v in result.items() if k != "gap_details"})
         return result

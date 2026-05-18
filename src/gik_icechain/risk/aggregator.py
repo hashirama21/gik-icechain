@@ -43,16 +43,16 @@ def aggregate_to_admin1(
 
     for _, unit in admin_gdf.iterrows():
         pcode = str(unit[pcode_col])
-        geom  = unit.geometry
+        geom = unit.geometry
         try:
             mask = regionmask.Regions([geom]).mask(
                 da,
                 lon_name=_find_dim(da, ("longitude", "lon")),
-                lat_name=_find_dim(da, ("latitude",  "lat")),
+                lat_name=_find_dim(da, ("latitude", "lat")),
             )
             inside = da.where(mask == 0)
-            total  = int((mask == 0).sum())
-            valid  = int(inside.count())
+            total = int((mask == 0).sum())
+            valid = int(inside.count())
             if total == 0 or (valid / total) < min_coverage:
                 results[pcode] = float("nan")
                 continue
@@ -95,15 +95,15 @@ def coverage_fraction(
 
     for _, unit in admin_gdf.iterrows():
         pcode = str(unit[pcode_col])
-        geom  = unit.geometry
+        geom = unit.geometry
         try:
-            mask  = regionmask.Regions([geom]).mask(
+            mask = regionmask.Regions([geom]).mask(
                 da,
                 lon_name=_find_dim(da, ("longitude", "lon")),
-                lat_name=_find_dim(da, ("latitude",  "lat")),
+                lat_name=_find_dim(da, ("latitude", "lat")),
             )
             inside = da.where(mask == 0)
-            total  = int((mask == 0).sum())
+            total = int((mask == 0).sum())
             if total == 0:
                 results[pcode] = 0.0
                 continue
@@ -134,6 +134,4 @@ def _area_weighted_mean(da: xr.DataArray, geom: Any) -> float:
     mask_valid = np.isfinite(arr)
     if not mask_valid.any():
         return float("nan")
-    return float(
-        np.sum(arr[mask_valid] * weights_2d[mask_valid]) / np.sum(weights_2d[mask_valid])
-    )
+    return float(np.sum(arr[mask_valid] * weights_2d[mask_valid]) / np.sum(weights_2d[mask_valid]))

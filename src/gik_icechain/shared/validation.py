@@ -29,8 +29,7 @@ def validate_ensemble_dims(ds: xr.Dataset, required_dims: list[str]) -> None:
     missing = [d for d in required_dims if d not in ds.dims]
     if missing:
         raise ValueError(
-            f"Dataset is missing required dimensions: {missing}. "
-            f"Available: {list(ds.dims)}"
+            f"Dataset is missing required dimensions: {missing}. Available: {list(ds.dims)}"
         )
 
 

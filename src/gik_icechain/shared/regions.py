@@ -14,19 +14,21 @@ EAST_AFRICA_BBOX: dict[str, tuple[float, float]] = {
     "lon": (22.0, 52.0),
 }
 
-EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset({
-    "BDI",  # Burundi
-    "DJI",  # Djibouti
-    "ERI",  # Eritrea
-    "ETH",  # Ethiopia
-    "KEN",  # Kenya
-    "MDG",  # Madagascar
-    "RWA",  # Rwanda
-    "SOM",  # Somalia
-    "SSD",  # South Sudan
-    "TZA",  # Tanzania
-    "UGA",  # Uganda
-})
+EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
+    {
+        "BDI",  # Burundi
+        "DJI",  # Djibouti
+        "ERI",  # Eritrea
+        "ETH",  # Ethiopia
+        "KEN",  # Kenya
+        "MDG",  # Madagascar
+        "RWA",  # Rwanda
+        "SOM",  # Somalia
+        "SSD",  # South Sudan
+        "TZA",  # Tanzania
+        "UGA",  # Uganda
+    }
+)
 
 
 def get_ea_slice() -> dict[str, slice]:

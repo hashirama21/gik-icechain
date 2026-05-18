@@ -29,15 +29,15 @@ _DYNAMICAL_STORE_FULL_GB = 242_000.0
 
 @dataclass
 class BenchmarkResult:
-    approach:             str
-    n_days:               int
-    domain:               str
-    store_size_gb:        float
+    approach: str
+    n_days: int
+    domain: str
+    store_size_gb: float
     time_to_first_byte_s: float
-    full_scan_elapsed_s:  float
-    data_read_gb:         float
+    full_scan_elapsed_s: float
+    data_read_gb: float
     estimated_egress_usd: float
-    n_workers:            int
+    n_workers: int
 
 
 def run_benchmark(
@@ -125,9 +125,7 @@ def _measure_full_scan(
     try:
         from dask.distributed import Client
 
-        client: object | None = Client(
-            n_workers=n_workers, threads_per_worker=2, silence_logs=True
-        )
+        client: object | None = Client(n_workers=n_workers, threads_per_worker=2, silence_logs=True)
     except ImportError:
         client = None
 

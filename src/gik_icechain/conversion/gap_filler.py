@@ -29,18 +29,18 @@ _ECMWF_REGION = "eu-west-1"
 _GRIB2_PREFIX_TEMPLATE = "{year}/{month:02d}/{date_str}/{run_hour:02d}z/"
 
 _DEFAULT_GAP_START = date(2023, 5, 1)
-_DEFAULT_GAP_END   = date(2024, 2, 29)
+_DEFAULT_GAP_END = date(2024, 2, 29)
 
 
 @dataclass
 class GapFillConfig:
-    s3_source:          str   = f"s3://{_ECMWF_BUCKET}"
-    output_parquet_uri: str   = ""
-    start:              date  = field(default_factory=lambda: _DEFAULT_GAP_START)
-    end:                date  = field(default_factory=lambda: _DEFAULT_GAP_END)
-    run_hours:          list[int] = field(default_factory=lambda: [0])
-    variables:          list[str] = field(default_factory=lambda: FLOOD_RELEVANT_VARS)
-    workers:            int   = 50
+    s3_source: str = f"s3://{_ECMWF_BUCKET}"
+    output_parquet_uri: str = ""
+    start: date = field(default_factory=lambda: _DEFAULT_GAP_START)
+    end: date = field(default_factory=lambda: _DEFAULT_GAP_END)
+    run_hours: list[int] = field(default_factory=lambda: [0])
+    variables: list[str] = field(default_factory=lambda: FLOOD_RELEVANT_VARS)
+    workers: int = 50
 
 
 def identify_gap(catalog: GIKCatalog, start: date, end: date) -> list[date]:
@@ -139,8 +139,7 @@ def run_gap_fill(cfg: GapFillConfig) -> list[str]:
         import lithops  # type: ignore[import-untyped]
     except ImportError as exc:
         raise RuntimeError(
-            "lithops is required for run_gap_fill. "
-            "Install it with: pip install lithops"
+            "lithops is required for run_gap_fill. Install it with: pip install lithops"
         ) from exc
 
     catalog = GIKCatalog()
@@ -150,11 +149,7 @@ def run_gap_fill(cfg: GapFillConfig) -> list[str]:
         log.info("gap_fill_no_missing_days")
         return []
 
-    tasks: list[tuple[date, int]] = [
-        (day, rh)
-        for day in missing_days
-        for rh in cfg.run_hours
-    ]
+    tasks: list[tuple[date, int]] = [(day, rh) for day in missing_days for rh in cfg.run_hours]
 
     def _worker_fn(args: tuple[date, int]) -> str:
         day, rh = args
@@ -192,15 +187,17 @@ def _extract_references(
         short_name = ds.attrs.get("GRIB_shortName", "")
         if short_name not in variables:
             continue
-        rows.append({
-            "uri":         grib_uri,
-            "byte_offset": ds.attrs.get("GRIB_offset", 0),
-            "byte_length": ds.attrs.get("GRIB_length", 0),
-            "variable":    short_name,
-            "level":       ds.attrs.get("GRIB_typeOfLevel", None),
-            "step":        ds.attrs.get("GRIB_stepRange", "0"),
-            "member":      ds.attrs.get("GRIB_perturbationNumber", 0),
-        })
+        rows.append(
+            {
+                "uri": grib_uri,
+                "byte_offset": ds.attrs.get("GRIB_offset", 0),
+                "byte_length": ds.attrs.get("GRIB_length", 0),
+                "variable": short_name,
+                "level": ds.attrs.get("GRIB_typeOfLevel", None),
+                "step": ds.attrs.get("GRIB_stepRange", "0"),
+                "member": ds.attrs.get("GRIB_perturbationNumber", 0),
+            }
+        )
     return rows
 
 

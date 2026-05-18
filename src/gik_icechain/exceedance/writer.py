@@ -24,10 +24,10 @@ import xarray as xr
 log = structlog.get_logger(__name__)
 
 _DEFAULT_CHUNKS: dict[str, int | None] = {
-    "date":          30,
-    "latitude":      100,
-    "longitude":     100,
-    "window":        None,
+    "date": 30,
+    "latitude": 100,
+    "longitude": 100,
+    "window": None,
     "return_period": None,
 }
 
@@ -69,9 +69,9 @@ def write_exceedance_store(
             if not new_dates:
                 log.info("write_exceedance_store_no_new_dates")
                 return
-            new_ds = _build_dataset(
-                {d: exceedance_dict[d] for d in new_dates.values()}
-            ).chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
+            new_ds = _build_dataset({d: exceedance_dict[d] for d in new_dates.values()}).chunk(
+                {k: v for k, v in effective_chunks.items() if k in ds.dims}
+            )
             new_ds.to_zarr(output_uri, mode="a", append_dim="date")
             log.info("exceedance_store_appended", n_dates=len(new_dates), uri=output_uri)
             return
@@ -96,7 +96,7 @@ def build_exceedance_dataset(
         DataArray with dimensions (latitude, longitude, window, return_period).
     """
     windows = sorted({w for w, _ in results})
-    rps     = sorted({rp for _, rp in results})
+    rps = sorted({rp for _, rp in results})
 
     stacked = xr.concat(
         [
@@ -108,13 +108,13 @@ def build_exceedance_dataset(
         ],
         dim=xr.DataArray(windows, dims="window", name="window"),
     )
-    stacked = stacked.assign_coords(
-        date=pd.Timestamp(forecast_date)
-    ).expand_dims("date")
-    stacked.attrs.update({
-        "long_name": "Exceedance probability",
-        "units":     "1",
-    })
+    stacked = stacked.assign_coords(date=pd.Timestamp(forecast_date)).expand_dims("date")
+    stacked.attrs.update(
+        {
+            "long_name": "Exceedance probability",
+            "units": "1",
+        }
+    )
     return stacked.astype(np.float32)
 
 
@@ -133,8 +133,8 @@ def _build_dataset(exceedance_dict: dict[date, xr.DataArray]) -> xr.Dataset:
     return xr.Dataset(
         {"exceedance_prob": combined.astype(np.float32)},
         attrs={
-            "title":       "GIK-IceChain exceedance probabilities",
-            "source":      "ECMWF IFS ENS via GIK-IceChain v2.0",
+            "title": "GIK-IceChain exceedance probabilities",
+            "source": "ECMWF IFS ENS via GIK-IceChain v2.0",
             "conventions": "CF-1.8",
         },
     )

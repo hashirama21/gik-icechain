@@ -42,8 +42,7 @@ def compute_rolling_accumulations(
     """
     if precip_var not in ds:
         raise KeyError(
-            f"Variable '{precip_var}' not found in Dataset. "
-            f"Available: {list(ds.data_vars)}"
+            f"Variable '{precip_var}' not found in Dataset. Available: {list(ds.data_vars)}"
         )
 
     accum_vars: dict[str, xr.DataArray] = {}
@@ -54,11 +53,13 @@ def compute_rolling_accumulations(
         log.debug("window_accumulation_computed", window_h=w)
 
     result = xr.Dataset(accum_vars)
-    result.attrs.update({
-        "source_variable":  precip_var,
-        "step_hours":       step_hours,
-        "windows_h":        windows_h,
-    })
+    result.attrs.update(
+        {
+            "source_variable": precip_var,
+            "step_hours": step_hours,
+            "windows_h": windows_h,
+        }
+    )
     return result
 
 
@@ -85,9 +86,7 @@ def accumulation_for_window(
     """
     n_back = window_h // step_hours
     if n_back <= 0:
-        raise ValueError(
-            f"window_h={window_h} must be >= step_hours={step_hours}"
-        )
+        raise ValueError(f"window_h={window_h} must be >= step_hours={step_hours}")
 
     step_dim = _find_time_dim(da)
     n = da.sizes[step_dim]
@@ -96,9 +95,7 @@ def accumulation_for_window(
         return da.copy()
 
     current = da.isel({step_dim: slice(n_back, None)})
-    lagged  = da.isel({step_dim: slice(0, n - n_back)}).assign_coords(
-        {step_dim: current[step_dim]}
-    )
+    lagged = da.isel({step_dim: slice(0, n - n_back)}).assign_coords({step_dim: current[step_dim]})
     window_accum = (current - lagged).clip(min=0.0)
 
     # Prepend raw values for the initial n_back steps where no prior window exists
@@ -114,6 +111,4 @@ def _find_time_dim(da: xr.DataArray) -> str:
     for candidate in ("step", "time", "forecast_period"):
         if candidate in da.dims:
             return candidate
-    raise KeyError(
-        f"Cannot identify a step/time dimension in {list(da.dims)}"
-    )
+    raise KeyError(f"Cannot identify a step/time dimension in {list(da.dims)}")
