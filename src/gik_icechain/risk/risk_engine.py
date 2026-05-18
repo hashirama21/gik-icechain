@@ -15,24 +15,25 @@ Expected exceedance store schema:
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
 
 import geopandas as gpd
-import numpy as np
 import pandas as pd
-import regionmask
 import structlog
 import xarray as xr
 
+from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
 from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
+from gik_icechain.risk.geojson_writer import build_feature
+from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
 
-_RP_SIGNAL = 5
-_SIGNAL_THRESHOLD = 0.15   # exceedance fraction → "signal present" for this cell
-_INITIAL_API_MM = 20.0
+_RP_SIGNAL        = 5
+_SIGNAL_THRESHOLD = 0.15
+_INITIAL_API_MM   = 20.0
 
 
 def run_risk_batch(
@@ -62,12 +63,12 @@ def run_risk_batch(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    admin = gpd.read_file(admin_boundaries_path)
+    admin  = gpd.read_file(admin_boundaries_path)
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
 
-    pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
-    api_state: dict[str, float] = {p: _INITIAL_API_MM for p in pcodes}
-    consecutive_days: dict[str, int] = {p: 0 for p in pcodes}
+    pcodes            = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
+    api_state         = {p: _INITIAL_API_MM for p in pcodes}
+    consecutive_days  = {p: 0 for p in pcodes}
 
     written: list[Path] = []
     current = start
@@ -104,125 +105,41 @@ def _process_day(
     exc_24h = exc_day["exceedance_prob"].sel(window=24,  return_period=_RP_SIGNAL)
     exc_72h = exc_day["exceedance_prob"].sel(window=72,  return_period=_RP_SIGNAL)
     exc_7d  = exc_day["exceedance_prob"].sel(window=168, return_period=_RP_SIGNAL)
-    gpm_da = _load_gpm_day(gpm_dir, day)
+    gpm_da  = load_gpm_daily(gpm_dir, day)
+
+    p_24h_s = aggregate_to_admin1(exc_24h, admin)
+    p_72h_s = aggregate_to_admin1(exc_72h, admin)
+    p_7d_s  = aggregate_to_admin1(exc_7d,  admin)
+    cov_s   = coverage_fraction(exc_24h, admin, _SIGNAL_THRESHOLD)
+    gpm_s   = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     features = []
     for _, unit in admin.iterrows():
-        pcode = str(unit["admin1_pcode"])
-        geom = unit.geometry
-
-        p_24h = _spatial_mean(exc_24h, geom)
-        p_72h = _spatial_mean(exc_72h, geom)
-        p_7d  = _spatial_mean(exc_7d,  geom)
-        coverage = _exceedance_coverage(exc_24h, geom, _SIGNAL_THRESHOLD)
-        gpm_24h = _spatial_mean(gpm_da, geom) if gpm_da is not None else 0.0
-        current_api = api_state[pcode]
+        pcode   = str(unit["admin1_pcode"])
+        cur_api = api_state[pcode]
+        p_24h   = _safe(p_24h_s.get(pcode, 0.0))
+        gpm_24h = _safe(gpm_s.get(pcode, 0.0))
 
         evidence = CRMAEvidence(
             exceedance_prob_24h_5y=p_24h,
-            exceedance_prob_72h_5y=p_72h,
-            exceedance_prob_7d_5y=p_7d,
+            exceedance_prob_72h_5y=_safe(p_72h_s.get(pcode, 0.0)),
+            exceedance_prob_7d_5y=_safe(p_7d_s.get(pcode, 0.0)),
             gpm_obs_24h=gpm_24h,
-            api_mm=current_api,
-            spatial_coverage_fraction=coverage,
+            api_mm=cur_api,
+            spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
             consecutive_signal_days=consecutive_days[pcode],
         )
         result = crma_model.infer(evidence)
 
-        api_state[pcode] = gpm_24h + api_decay * current_api
-        consecutive_days[pcode] = (
-            consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
-        )
-
-        features.append(_build_feature(unit, result, evidence, day))
+        api_state[pcode]        = gpm_24h + api_decay * cur_api
+        consecutive_days[pcode] = consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
+        features.append(build_feature(unit, result, evidence, day))
 
     out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
-    out_path.write_text(
-        json.dumps({"type": "FeatureCollection", "features": features})
-    )
+    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
     log.info("risk_day_written", date=day, n_units=len(features))
     return out_path
 
 
-def _spatial_mean(da: xr.DataArray, geom: Any) -> float:
-    """Spatial mean of a (lat, lon) DataArray within a geometry; 0.0 on failure."""
-    try:
-        mask = regionmask.Regions([geom]).mask(da, lon_name="lon", lat_name="lat")
-        result = float(da.where(mask == 0).mean(skipna=True))
-        return result if np.isfinite(result) else 0.0
-    except Exception:
-        return 0.0
-
-
-def _exceedance_coverage(
-    da: xr.DataArray,
-    geom: Any,
-    threshold: float,
-) -> float:
-    """Fraction of grid cells within a geometry where exceedance > threshold."""
-    try:
-        mask = regionmask.Regions([geom]).mask(da, lon_name="lon", lat_name="lat")
-        inside = da.where(mask == 0)
-        total = int((mask == 0).sum())
-        if total == 0:
-            return 0.0
-        return int((inside > threshold).sum(skipna=True)) / total
-    except Exception:
-        return 0.0
-
-
-def _load_gpm_day(gpm_dir: Path, day: date) -> xr.DataArray | None:
-    """Load GPM IMERG v7 daily precipitation for a given date.
-
-    Tries the standard HDF5 and nc4 file naming conventions; falls back to
-    wildcard glob. Returns precipitationCal in mm/day, or None if not found.
-    """
-    date_str = day.strftime("%Y%m%d")
-    patterns = (
-        f"3B-DAY.MS.MRG.3IMERG.{date_str}-S000000-E235959.1440.V07B.HDF5",
-        f"3B-DAY.MS.MRG.3IMERG.{date_str}.V07B.nc4",
-        f"*{date_str}*.nc4",
-        f"*{date_str}*.HDF5",
-    )
-    for pattern in patterns:
-        matches = list(gpm_dir.glob(f"**/{pattern}"))
-        if not matches:
-            continue
-        for engine in ("netcdf4", "h5netcdf"):
-            try:
-                ds = xr.open_dataset(matches[0], engine=engine)
-                for var in ("precipitationCal", "precipitation", "HQprecipitation"):
-                    if var in ds:
-                        return ds[var].squeeze()
-            except Exception:
-                continue
-    log.debug("gpm_file_not_found", date=day)
-    return None
-
-
-def _build_feature(
-    unit: pd.Series,
-    result: dict[str, Any],
-    evidence: CRMAEvidence,
-    day: date,
-) -> dict[str, Any]:
-    return {
-        "type": "Feature",
-        "geometry": unit.geometry.__geo_interface__,
-        "properties": {
-            "admin1_pcode":      str(unit.get("admin1_pcode", "")),
-            "admin1_name":       str(unit.get("admin1_name", "")),
-            "country":           str(unit.get("adm0_name", "")),
-            "date":              day.isoformat(),
-            "risk_state":        result["risk_state"],
-            "risk_label":        result["risk_label"],
-            "p_green":           result["p_green"],
-            "p_yellow":          result["p_yellow"],
-            "p_orange":          result["p_orange"],
-            "p_red":             result["p_red"],
-            "exceedance_24h_5y": evidence.exceedance_prob_24h_5y,
-            "exceedance_72h_5y": evidence.exceedance_prob_72h_5y,
-            "api_mm":            evidence.api_mm,
-            "spatial_coverage":  evidence.spatial_coverage_fraction,
-        },
-    }
+def _safe(val: float) -> float:
+    return 0.0 if not math.isfinite(val) else float(val)
