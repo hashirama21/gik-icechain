@@ -4,15 +4,12 @@ Unit tests for the CRMA Bayesian Network model.
 """
 
 import pytest
-import numpy as np
 
 from gik_icechain.risk.crma_model import (
+    RISK_LEVELS,
     CRMAEvidence,
     CRMAModel,
-    RISK_LEVELS,
-    NODE_CARDS,
 )
-
 
 # ── CRMAEvidence discretisation ───────────────────────────────────────────────
 
@@ -176,7 +173,9 @@ class TestCRMAModelInference:
     def test_result_keys(self, built_model):
         evidence = self._make_evidence()
         result = built_model.infer(evidence)
-        expected_keys = {"risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red", "evidence"}
+        expected_keys = {
+            "risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red", "evidence"
+        }
         assert expected_keys.issubset(result.keys())
 
     def test_risk_label_matches_state(self, built_model):

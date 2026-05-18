@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -26,7 +26,7 @@ app = typer.Typer(
 _DEFAULT_CONFIG = Path("configs/default.yaml")
 
 
-def _bootstrap(config_path: Path) -> "GIKConfig":  # noqa: F821
+def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
     from gik_icechain.shared.config import load_config
     from gik_icechain.shared.logging import configure_logging
 
@@ -35,7 +35,7 @@ def _bootstrap(config_path: Path) -> "GIKConfig":  # noqa: F821
     return cfg
 
 
-def _run_convert(cfg: "GIKConfig", start: date, end: date) -> None:  # noqa: F821
+def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
     from gik_icechain.conversion.gik_loader import GIKCatalog, load_gik_parquet
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.conversion.virtualizer import parquet_to_virtual_dataset
@@ -61,7 +61,7 @@ def _run_convert(cfg: "GIKConfig", start: date, end: date) -> None:  # noqa: F82
 
 
 def _run_exceedance(
-    cfg: "GIKConfig",  # noqa: F821
+    cfg: GIKConfig,  # noqa: F821
     store_uri: str,
     output_uri: str,
     start: date | None,
@@ -97,7 +97,9 @@ def _run_exceedance(
         season = get_season(d.month)
         try:
             row = enso_iod.loc[pd.Timestamp(d)]
-            return ClimateMode(season, classify_enso(float(row["nino34"])), classify_iod(float(row["dmi"])))
+            return ClimateMode(
+                season, classify_enso(float(row["nino34"])), classify_iod(float(row["dmi"]))
+            )
         except KeyError:
             return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
@@ -131,7 +133,7 @@ def _run_exceedance(
 
 
 def _run_risk(
-    cfg: "GIKConfig",  # noqa: F821
+    cfg: GIKConfig,  # noqa: F821
     exc_uri: str,
     output: Path,
     start: date,
@@ -177,8 +179,8 @@ def exceedance(
     output: Annotated[str, typer.Option(help="URI for the output exceedance Zarr store.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     workers: Annotated[int, typer.Option(help="Dask distributed workers.")] = 16,
-    start: Annotated[Optional[date], typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[Optional[date], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[date | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[date | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
     cfg = _bootstrap(config)
@@ -199,8 +201,8 @@ def risk(
     exceedance_store: Annotated[str, typer.Option(help="URI of the exceedance Zarr store.")],
     output: Annotated[Path, typer.Option(help="Output directory for GeoJSON files.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
-    start: Annotated[Optional[date], typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[Optional[date], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[date | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[date | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Run CRMA Bayesian Network risk inference for all admin-1 units (C3)."""
     import xarray as xr

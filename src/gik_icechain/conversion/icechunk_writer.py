@@ -11,8 +11,7 @@ underlying GRIB2 files on s3://ecmwf-forecasts are never copied.
 
 from __future__ import annotations
 
-import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import structlog
@@ -21,8 +20,8 @@ import xarray as xr
 log = structlog.get_logger(__name__)
 
 try:
-    import icechunk
-    from icechunk import IcechunkStore, Repository, StorageConfig
+    import icechunk  # noqa: F401
+    from icechunk import IcechunkStore, Repository, StorageConfig  # noqa: F401
 
     ICECHUNK_AVAILABLE = True
 except ImportError:
@@ -30,7 +29,7 @@ except ImportError:
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
 try:
-    import virtualizarr
+    import virtualizarr  # noqa: F401
 
     VIRTUALIZARR_AVAILABLE = True
 except ImportError:
@@ -117,7 +116,7 @@ class IceChainStore:
             metadata={
                 "forecast_date": forecast_date.isoformat(),
                 "run_hour":      str(run_hour),
-                "commit_time":   datetime.now(tz=timezone.utc).isoformat(),
+                "commit_time":   datetime.now(tz=UTC).isoformat(),
                 "source":        "gik-icechain",
             },
         )
@@ -198,7 +197,6 @@ class IceChainStore:
 
         gaps: list[str] = []
         if committed_dates:
-            from datetime import timedelta
 
             current = date.fromisoformat(committed_dates[0])
             for ds_date in committed_dates[1:]:

@@ -13,7 +13,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-
 _DEFAULT_CONFIG = Path(__file__).parents[4] / "configs" / "default.yaml"
 
 

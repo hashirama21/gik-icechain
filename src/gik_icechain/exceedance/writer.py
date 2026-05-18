@@ -63,7 +63,9 @@ def write_exceedance_store(
         existing = xr.open_zarr(output_uri, consolidated=False)
         if append:
             existing_dates = set(str(d)[:10] for d in existing["date"].values)
-            new_dates = {d.isoformat(): d for d in exceedance_dict if d.isoformat() not in existing_dates}
+            new_dates = {
+                d.isoformat(): d for d in exceedance_dict if d.isoformat() not in existing_dates
+            }
             if not new_dates:
                 log.info("write_exceedance_store_no_new_dates")
                 return
@@ -83,7 +85,7 @@ def write_exceedance_store(
 def build_exceedance_dataset(
     results: dict[tuple[int, int], xr.DataArray],
     forecast_date: date,
-) -> "xr.DataArray":
+) -> xr.DataArray:
     """Assemble per-(window, return_period) DataArrays into a single DataArray.
 
     Args:

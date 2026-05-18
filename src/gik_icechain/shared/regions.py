@@ -39,7 +39,7 @@ def get_ea_slice() -> dict[str, slice]:
     }
 
 
-def load_admin1_geodataframe(path: Path) -> "gpd.GeoDataFrame":
+def load_admin1_geodataframe(path: Path) -> gpd.GeoDataFrame:
     """Load East Africa admin-1 boundaries from *path*.
 
     Expects columns: ``admin1_pcode``, ``admin1_name``, ``adm0_name``, ``geometry``.

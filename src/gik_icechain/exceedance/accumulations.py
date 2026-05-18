@@ -25,7 +25,7 @@ def compute_rolling_accumulations(
     windows_h: list[int] = WINDOWS_H,
     precip_var: str = "tp",
     step_hours: int = _IFS_STEP_HOURS,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Compute accumulated precipitation for each window.
 
     Args:
@@ -66,7 +66,7 @@ def accumulation_for_window(
     da: xr.DataArray,
     window_h: int,
     step_hours: int = _IFS_STEP_HOURS,
-) -> "xr.DataArray":
+) -> xr.DataArray:
     """Accumulate *da* over *window_h* hours.
 
     IFS ``tp`` is a step-accumulated field: each value is total precipitation

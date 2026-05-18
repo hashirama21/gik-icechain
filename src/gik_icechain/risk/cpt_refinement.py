@@ -14,7 +14,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import structlog
 
@@ -160,8 +159,12 @@ def build_training_dataset(
                 exceedance_prob_7d_5y=_col_or_default(exc_row, "exceedance_prob_7d_5y"),
                 gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
                 api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 20.0,
-                spatial_coverage_fraction=_col_or_default(exc_row, "spatial_coverage_fraction", 0.5),
-                consecutive_signal_days=int(_col_or_default(exc_row, "consecutive_signal_days", 1.0)),
+                spatial_coverage_fraction=_col_or_default(
+                    exc_row, "spatial_coverage_fraction", 0.5
+                ),
+                consecutive_signal_days=int(
+                    _col_or_default(exc_row, "consecutive_signal_days", 1.0)
+                ),
             )
 
             rows.append({
@@ -239,11 +242,11 @@ def build_training_dataset(
 
 
 def refine_cpts_with_emdat(
-    model: "BayesianNetwork",
+    model: BayesianNetwork,
     training_df: pd.DataFrame,
     laplace_alpha: float = 1.0,
     output_path: Path | None = None,
-) -> "BayesianNetwork":
+) -> BayesianNetwork:
     """Refine the Risk_State CPT using MLE on the EM-DAT training dataset.
 
     Only the Risk_State leaf node is updated — root node priors are kept

@@ -24,7 +24,7 @@ def synthetic_cmorph_ds():
 
 @pytest.fixture(scope="session")
 def synthetic_enso_iod_index():
-    """Synthetic ENSO/IOD index for 2000–2022."""
+    """Synthetic ENSO/IOD index for 2000-2022."""
     dates = pd.date_range("2000-01-01", "2022-12-31", freq="D")
     rng   = np.random.default_rng(0)
     return pd.DataFrame({
@@ -36,7 +36,7 @@ def synthetic_enso_iod_index():
 
 @pytest.fixture(scope="session")
 def sample_exceedance_da():
-    """Synthetic exceedance probability DataArray (lat × lon)."""
+    """Synthetic exceedance probability DataArray (lat x lon)."""
     lat = np.arange(-5, 5, 1.0)
     lon = np.arange(35, 42, 1.0)
     data = np.random.uniform(0, 1, (len(lat), len(lon)))

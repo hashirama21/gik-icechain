@@ -5,8 +5,9 @@ VirtualiZarr integration: convert GIK Parquet byte-range references
 into a virtual xarray DataTree ready for IceChunk commit.
 """
 from __future__ import annotations
-import xarray as xr
+
 import structlog
+import xarray as xr
 
 log = structlog.get_logger(__name__)
 
@@ -26,10 +27,10 @@ def parquet_to_virtual_dataset(
         No data is downloaded — only byte-range references are stored.
     """
     try:
-        import virtualizarr
+        import virtualizarr  # noqa: F401
         from virtualizarr import open_virtual_mfdataset
-    except ImportError:
-        raise ImportError("virtualizarr required: pip install virtualizarr")
+    except ImportError as exc:
+        raise ImportError("virtualizarr required: pip install virtualizarr") from exc
 
     log.info("virtualizing_parquets", n_files=len(parquet_paths))
 

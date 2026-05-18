@@ -143,7 +143,7 @@ def _measure_full_scan(
     elapsed = time.perf_counter() - t0
 
     if client is not None:
-        client.close()  # type: ignore[union-attr]
+        client.close()
 
     return elapsed, data_gb
 

@@ -20,7 +20,7 @@ def aggregate_to_admin1(
     stat: Literal["mean", "max", "area_weighted"] = "mean",
     min_coverage: float = 0.5,
     pcode_col: str = "admin1_pcode",
-) -> "pd.Series":
+) -> pd.Series:
     """Aggregate a (lat, lon) DataArray to admin-1 polygon statistics.
 
     Grid cells that fall outside an admin-1 boundary are excluded.
@@ -79,7 +79,7 @@ def coverage_fraction(
     admin_gdf: gpd.GeoDataFrame,
     threshold: float,
     pcode_col: str = "admin1_pcode",
-) -> "pd.Series":
+) -> pd.Series:
     """Fraction of grid cells within each admin-1 boundary exceeding *threshold*.
 
     Args:
@@ -129,10 +129,7 @@ def _area_weighted_mean(da: xr.DataArray, geom: Any) -> float:
     lat_name = _find_dim(da, ("latitude", "lat"))
     lat_vals = da[lat_name].values
     weights = np.cos(np.deg2rad(lat_vals))
-    if da.ndim == 2:
-        weights_2d = np.broadcast_to(weights[:, None], da.shape)
-    else:
-        weights_2d = weights
+    weights_2d = np.broadcast_to(weights[:, None], da.shape) if da.ndim == 2 else weights
     arr = da.values
     mask_valid = np.isfinite(arr)
     if not mask_valid.any():
