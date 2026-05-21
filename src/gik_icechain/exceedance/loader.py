@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date
 from typing import TYPE_CHECKING
-
 import structlog
 
 if TYPE_CHECKING:
@@ -65,8 +64,6 @@ def open_aifs_store(
     Returns:
         Dask-backed xr.Dataset.
     """
-    import xarray as xr
-
     effective_chunks = chunks or _DEFAULT_CHUNKS
     ds = xr.open_zarr(store_uri, consolidated=False, chunks=effective_chunks)
     log.info("aifs_store_opened", uri=store_uri)

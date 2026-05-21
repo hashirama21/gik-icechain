@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-
+import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
@@ -72,7 +72,9 @@ class DaskConfig(BaseModel):
     threads_per_worker: int = 2
     memory_limit: str = "8GB"
     dashboard_address: str = ":8787"
-    chunk_dims: dict[str, Any] = Field(default_factory=lambda: {"time": 10, "lat": 100, "lon": 100})
+    chunk_dims: dict[str, Any] = Field(
+        default_factory=lambda: {"time": 10, "latitude": 100, "longitude": 100}
+    )
 
 
 class Component2Config(BaseModel):
@@ -196,7 +198,5 @@ def load_config(path: Path | None = None) -> GIKConfig:
     """
     if path is None:
         return GIKConfig()
-
-    import yaml
 
     return GIKConfig.model_validate(yaml.safe_load(path.read_text()))

@@ -63,19 +63,19 @@ class IceChainStore:
     def create(self) -> None:
         """Create a new IceChunk repository at storage_uri."""
         self._check_deps()
-        self._repo = Repository.create(StorageConfig.s3_from_env(bucket=self._parse_bucket()))
+        self._repo = Repository.create(self._storage_config())
         log.info("icechunk_store_created", uri=self.storage_uri)
 
     def open(self) -> None:
         """Open an existing IceChunk repository."""
         self._check_deps()
-        self._repo = Repository.open(StorageConfig.s3_from_env(bucket=self._parse_bucket()))
+        self._repo = Repository.open(self._storage_config())
         log.info("icechunk_store_opened", uri=self.storage_uri)
 
     def create_or_open(self) -> None:
         """Open the store if it exists, otherwise create it."""
         self._check_deps()
-        storage = StorageConfig.s3_from_env(bucket=self._parse_bucket())
+        storage = self._storage_config()
         try:
             self._repo = Repository.open(storage)
             log.info("icechunk_store_opened_existing", uri=self.storage_uri)
@@ -109,7 +109,35 @@ class IceChainStore:
 
         tag = f"{forecast_date.isoformat()}T{run_hour:02d}Z"
         session = self._repo.writable_session(self.branch)
-        virtual_ds.virtualize.to_icechunk(session.store)
+        try:
+            virtual_ds.virtualize.to_icechunk(session.store)
+        except Exception as primary_err:
+            log.warning(
+                "virtualizarr_failed_trying_cfgrib_fallback",
+                date=forecast_date.isoformat(),
+                error=str(primary_err),
+            )
+            try:
+                import cfgrib  # type: ignore[import-untyped]
+
+                date_prefix = (
+                    f"s3://ecmwf-forecasts/"
+                    f"{forecast_date.strftime('%Y/%m/%d')}/{run_hour:02d}z/"
+                )
+                fallback_datasets = cfgrib.open_datasets(date_prefix, backend_kwargs={"indexpath": ""})
+                for ds in fallback_datasets:
+                    xr.Dataset(ds).to_zarr(session.store, append_dim="time")
+                log.info("cfgrib_fallback_success", date=forecast_date.isoformat())
+            except Exception as fallback_err:
+                log.error(
+                    "both_parsers_failed",
+                    date=forecast_date.isoformat(),
+                    primary_error=str(primary_err),
+                    fallback_error=str(fallback_err),
+                )
+                raise RuntimeError(
+                    f"Cannot ingest GRIB2 for {forecast_date}: {primary_err}"
+                ) from primary_err
 
         commit_hash = session.commit(
             message=message or f"GIK ingest: {tag}",
@@ -196,6 +224,34 @@ class IceChainStore:
             )
         return snapshots
 
+    def compact(self, keep_snapshots: int = 30) -> dict[str, int]:
+        """Consolidate daily micro-manifests into a single index (monthly maintenance).
+
+        Squashes IceChunk commit history, keeping only the *keep_snapshots* most
+        recent snapshots. Keeps the root manifest index under ~50 MB so that
+        time-to-first-byte stays below 3 seconds for end users.
+
+        Args:
+            keep_snapshots: Number of recent snapshots to preserve (default: 30 = 1 month).
+
+        Returns:
+            Dict with ``snapshots_before`` and ``snapshots_after`` counts.
+        """
+        if self._repo is None:
+            raise RuntimeError("Store not opened. Call create_or_open() first.")
+
+        snapshots_before = len(self.list_snapshots())
+        self._repo.squash_history(keep=keep_snapshots)
+        snapshots_after = len(self.list_snapshots())
+
+        log.info(
+            "icechunk_compacted",
+            snapshots_before=snapshots_before,
+            snapshots_after=snapshots_after,
+            kept=keep_snapshots,
+        )
+        return {"snapshots_before": snapshots_before, "snapshots_after": snapshots_after}
+
     def validate(self) -> dict[str, Any]:
         """Validate store integrity: day count, gaps, and variable accessibility."""
         ds = self.open_latest()
@@ -226,7 +282,14 @@ class IceChainStore:
         log.info("store_validation", **{k: v for k, v in result.items() if k != "gap_details"})
         return result
 
-    def _parse_bucket(self) -> str:
-        if self.storage_uri.startswith("s3://"):
-            return self.storage_uri[5:].split("/")[0]
-        raise ValueError(f"Unsupported storage URI scheme: {self.storage_uri}")
+    def _storage_config(self) -> Any:
+        """Build a StorageConfig from storage_uri, preserving the key prefix."""
+        if not self.storage_uri.startswith("s3://"):
+            raise ValueError(f"Unsupported storage URI scheme: {self.storage_uri}")
+        path = self.storage_uri[5:]
+        parts = path.split("/", 1)
+        bucket = parts[0]
+        prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
+        if prefix:
+            return StorageConfig.s3_from_env(bucket=bucket, prefix=prefix)
+        return StorageConfig.s3_from_env(bucket=bucket)

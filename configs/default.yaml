@@ -100,16 +100,20 @@ component2:
     threads_per_worker: 2
     memory_limit: "8GB"
     dashboard_address: ":8787"
+    # Chunks optimised for exceedance computation: all ensemble members and
+    # forecast steps must be co-located for the IQR/probability reduction.
+    # Spatial blocks of 50×50 give ~80 MB chunks (optimal for Dask tasks).
     chunk_dims:
-      time: 10
-      lat: 100
-      lon: 100
+      number: -1        # all ensemble members in one chunk
+      step: -1          # all forecast steps in one chunk
+      latitude: 50
+      longitude: 50
 
   # Output Zarr chunking
   output_chunks:
     date: 30
-    lat: 100
-    lon: 100
+    latitude: 100
+    longitude: 100
     window: -1         # -1 = no chunking (small dimension)
     return_period: -1
 

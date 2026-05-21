@@ -103,14 +103,12 @@ dev = [
   "nbmake>=1.5",              # notebook tests
 ]
 
-# Cloud deployment
 cloud = [
   "lithops>=2.9",
   "google-cloud-run>=0.10",
   "boto3>=1.34",
 ]
 
-# Full install (all optional groups)
 full = [
   "gik-icechain[viz,dev,cloud]",
 ]
@@ -121,7 +119,7 @@ gik-icechain = "gik_icechain.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/gik_icechain"]
 
-# Ruff (linter + formatter)
+
 [tool.ruff]
 target-version = "py311"
 line-length    = 100

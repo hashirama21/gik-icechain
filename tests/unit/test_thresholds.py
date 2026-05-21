@@ -15,12 +15,11 @@ from gik_icechain.exceedance.thresholds import (
     ENSOPhase,
     IODPhase,
     Season,
+    _SEASON_MONTHS as _SEASON_MONTHS_FOR_TEST,
     classify_enso,
     classify_iod,
     get_season,
 )
-
-# ── Season classification ──────────────────────────────────────────────────────
 
 
 class TestGetSeason:
@@ -29,7 +28,7 @@ class TestGetSeason:
             assert get_season(month) == Season.MAM
 
     def test_ond_months(self):
-        for month in (10, 11, 12):
+        for month in (10, 11):
             assert get_season(month) == Season.OND
 
     def test_jjas_months(self):
@@ -37,16 +36,28 @@ class TestGetSeason:
             assert get_season(month) == Season.JJAS
 
     def test_djf_months(self):
-        for month in (1, 2):
+        for month in (12, 1, 2):
             assert get_season(month) == Season.DJF
+
+    def test_december_is_djf_not_ond(self):
+        # December was erroneously listed in both OND and DJF; it must be DJF only.
+        assert get_season(12) == Season.DJF
+        assert get_season(12) != Season.OND
 
     def test_all_months_covered(self):
         for month in range(1, 13):
             result = get_season(month)
             assert isinstance(result, Season)
 
-
-# ── ENSO classification ────────────────────────────────────────────────────────
+    def test_no_month_maps_to_two_seasons(self):
+        """Each calendar month must map to exactly one season."""
+        seen: dict[int, Season] = {}
+        for season, months in _SEASON_MONTHS_FOR_TEST.items():
+            for m in months:
+                assert m not in seen, (
+                    f"Month {m} appears in both {seen[m]} and {season}"
+                )
+                seen[m] = season
 
 
 class TestClassifyENSO:
@@ -69,8 +80,6 @@ class TestClassifyENSO:
         assert classify_enso(1.0, threshold=1.0) == ENSOPhase.EL_NINO
 
 
-# ── IOD classification ─────────────────────────────────────────────────────────
-
 
 class TestClassifyIOD:
     def test_positive_iod(self):
@@ -87,8 +96,6 @@ class TestClassifyIOD:
         assert classify_iod(-0.3) == IODPhase.NEUTRAL
 
 
-# ── ClimateMode ────────────────────────────────────────────────────────────────
-
 
 class TestClimateMode:
     def test_key_format(self):
@@ -104,9 +111,6 @@ class TestClimateMode:
         a = ClimateMode(Season.MAM, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
         b = ClimateMode(Season.MAM, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
         assert a == b
-
-
-# ── AdaptiveGEVThresholds ──────────────────────────────────────────────────────
 
 
 @pytest.fixture

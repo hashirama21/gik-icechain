@@ -38,7 +38,7 @@ class GIKManifestEntry(BaseModel):
     step: int  # forecast step in hours (0–360)
     member: int  # 0 = control, 1–50 = perturbed members
     variable: str
-    level: int | None  # pressure level in hPa; None for surface fields
+    level: int | None
     s3_uri: str
     byte_offset: int
     byte_length: int
@@ -71,27 +71,55 @@ class GIKCatalog:
         self._fs = HfFileSystem()
 
     def load_catalog(self, cache_dir: Path | None = None) -> pd.DataFrame:
-        """Download and cache the catalog.parquet index."""
+        """Download and optionally cache the catalog.parquet index to disk.
+
+        The HuggingFace catalog schema:
+          date (str "YYYYMMDD"), run (str "HHz"), member (str "control"/"ens_NN"),
+          hf_path (str), filename (str), size_bytes (int).
+
+        Args:
+            cache_dir: If provided, the catalog is written to
+                       ``{cache_dir}/{dataset}_catalog.parquet`` on first fetch
+                       and read from disk on subsequent calls.
+        """
         if self._catalog is not None:
             return self._catalog
 
+        cache_file: Path | None = None
+        if cache_dir is not None:
+            slug = self.hf_dataset.replace("/", "_")
+            cache_file = Path(cache_dir) / f"{slug}_catalog.parquet"
+            if cache_file.exists():
+                catalog = pd.read_parquet(cache_file)
+                self._catalog = catalog
+                log.info("gik_catalog_loaded_from_cache", path=str(cache_file), rows=len(catalog))
+                return catalog
+
         catalog_path = f"datasets/{self.hf_dataset}/{GIK_CATALOG_FILE}"
         log.info("loading_gik_catalog", path=catalog_path)
-
         with self._fs.open(catalog_path) as f:
-            self._catalog = pd.read_parquet(f)
+            catalog = pd.read_parquet(f)
+
+        # Normalise: parse "YYYYMMDD" date strings once for fast comparisons.
+        catalog["_date_parsed"] = pd.to_datetime(catalog["date"], format="%Y%m%d").dt.date
+        self._catalog = catalog
+
+        if cache_file is not None:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            catalog.to_parquet(cache_file)
+            log.info("gik_catalog_cached", path=str(cache_file))
 
         log.info(
             "gik_catalog_loaded",
-            rows=len(self._catalog),
-            date_range=f"{self._catalog['date'].min()} to {self._catalog['date'].max()}",
+            rows=len(catalog),
+            date_range=f"{catalog['date'].min()} to {catalog['date'].max()}",
         )
-        return self._catalog
+        return catalog
 
     def list_available_dates(self) -> list[date]:
         """Return sorted list of all dates covered by the GIK dataset."""
         catalog = self.load_catalog()
-        return sorted(pd.to_datetime(catalog["date"]).dt.date.unique().tolist())
+        return sorted(catalog["_date_parsed"].unique().tolist())
 
     def get_coverage_gap(
         self,
@@ -120,21 +148,35 @@ class GIKCatalog:
         run_hours: tuple[int, ...] = (0,),
         variables: list[str] | None = None,
     ) -> list[str]:
-        """Return HuggingFace paths to Parquet files for a date range.
+        """Return HuggingFace hf:// paths to Parquet files for a date/hour range.
 
-        Returns paths of the form:
-          hf://datasets/E4DRR/gik-ecmwf-par/run_par_ecmwf/YYYY/MM/YYYYMMDD/HH/...
+        The catalog indexes one file per (date, run_hour, member) — no per-variable
+        filtering is possible here.  Variable filtering is applied downstream when
+        each Parquet file is loaded by VirtualiZarr.
+
+        Args:
+            start:     First date (inclusive).
+            end:       Last date (inclusive).
+            run_hours: Tuple of run hours to include, e.g. (0,) or (0, 12).
+            variables: Ignored at the catalog level (logged as info).
         """
         catalog = self.load_catalog()
 
+        # run column is "00z", "06z", "12z", "18z"
+        run_strs = {f"{h:02d}z" for h in run_hours}
+
         mask = (
-            (pd.to_datetime(catalog["date"]).dt.date >= start)
-            & (pd.to_datetime(catalog["date"]).dt.date <= end)
-            & (catalog["run_hour"].isin(run_hours))
+            (catalog["_date_parsed"] >= start)
+            & (catalog["_date_parsed"] <= end)
+            & (catalog["run"].isin(run_strs))
         )
 
         if variables:
-            mask &= catalog["variable"].isin(variables)
+            log.info(
+                "catalog_variable_filter_note",
+                msg="Catalog indexes whole files; variable filter applied per-file by VirtualiZarr.",
+                variables=variables,
+            )
 
         filtered = catalog[mask]
 
@@ -142,7 +184,10 @@ class GIKCatalog:
             log.warning("no_parquet_files_found", start=start, end=end, run_hours=run_hours)
             return []
 
-        paths = [f"hf://datasets/{self.hf_dataset}/{row['path']}" for _, row in filtered.iterrows()]
+        paths = [
+            f"hf://datasets/{self.hf_dataset}/{row['hf_path']}"
+            for _, row in filtered.iterrows()
+        ]
         log.info("parquet_paths_resolved", count=len(paths), date_range=f"{start} to {end}")
         return paths
 

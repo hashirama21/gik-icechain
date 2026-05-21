@@ -33,7 +33,12 @@ _DEFAULT_GAP_END = date(2024, 2, 29)
 
 
 @dataclass
-class GapFillConfig:
+class GapFillSpec:
+    """Job specification for filling missing days in the GIK archive.
+
+    Distinct from ``shared.config.GapFillConfig`` (pipeline on/off toggle).
+    """
+
     s3_source: str = f"s3://{_ECMWF_BUCKET}"
     output_parquet_uri: str = ""
     start: date = field(default_factory=lambda: _DEFAULT_GAP_START)
@@ -126,11 +131,11 @@ def fill_one_day(
     return out_uri
 
 
-def run_gap_fill(cfg: GapFillConfig) -> list[str]:
+def run_gap_fill(cfg: GapFillSpec) -> list[str]:
     """Launch fill_one_day in parallel via Lithops for all missing days.
 
     Args:
-        cfg: GapFillConfig with source, output, and worker settings.
+        cfg: GapFillSpec with source, output, and worker settings.
 
     Returns:
         List of written Parquet URIs (one per day × run_hour processed).
@@ -187,6 +192,10 @@ def _extract_references(
         short_name = ds.attrs.get("GRIB_shortName", "")
         if short_name not in variables:
             continue
+        step_range: str = str(ds.attrs.get("GRIB_stepRange", "0"))
+        # stepRange can be "0", "6", or "0-24" for accumulated fields;
+        # take the end of the range as the canonical step value.
+        step_hours = int(step_range.split("-")[-1])
         rows.append(
             {
                 "uri": grib_uri,
@@ -194,7 +203,7 @@ def _extract_references(
                 "byte_length": ds.attrs.get("GRIB_length", 0),
                 "variable": short_name,
                 "level": ds.attrs.get("GRIB_typeOfLevel", None),
-                "step": ds.attrs.get("GRIB_stepRange", "0"),
+                "step": step_hours,
                 "member": ds.attrs.get("GRIB_perturbationNumber", 0),
             }
         )

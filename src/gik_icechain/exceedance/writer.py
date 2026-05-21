@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import date
 
 import numpy as np
-import pandas as pd
+import pandas as pd  # noqa: F401 — used in build_exceedance_dataset (pd.Timestamp)
 import structlog
 import xarray as xr
 
@@ -122,14 +122,9 @@ def _build_dataset(exceedance_dict: dict[date, xr.DataArray]) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
     arrays = [exceedance_dict[d] for d in sorted_dates]
 
-    combined = xr.concat(
-        arrays,
-        dim=xr.DataArray(
-            [pd.Timestamp(d) for d in sorted_dates],
-            dims="date",
-            name="date",
-        ),
-    )
+    # Each array already carries a size-1 "date" dim from build_exceedance_dataset;
+    # concat along that existing dim to assemble the full time axis.
+    combined = xr.concat(arrays, dim="date")
     return xr.Dataset(
         {"exceedance_prob": combined.astype(np.float32)},
         attrs={

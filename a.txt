@@ -1,0 +1,599 @@
+(.venv) krohn@macpros-MacBook-Pro GIK-IceChain % claude
+╭─── Claude Code v2.1.145 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                                                                                                                         │
+│                  Welcome back Jas!                 │ Run /init to create a CLAUDE.md file with instructions for Claude                                                                                                │
+│                                                    │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                                                                                                                       │
+│                      ▝▜█████▛▘                     │ Added `claude agents --json` to list live Claude sessions as JSON for scripting (tmux-resurrect, status bars, session pickers)                                   │
+│                        ▘▘ ▝▝                       │ Added `agent_id` and `parent_agent_id` attributes to `claude_code.tool` OTEL spans, and fixed trace parenting so background subagent spans nest under the dispa… │
+│       Sonnet 4.6 · Claude Pro ·                    │ Status line JSON input now includes GitHub repo and PR information when detected                                                                                 │
+│       developper669@gmail.com's Organization       │ /release-notes for more                                                                                                                                          │
+│           ~/PycharmProjects/GIK-IceChain           │                                                                                                                                                                  │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+❯ analyse le code et comprends le besoin
+
+⏺ Let me read the project memory first, then explore the codebase.
+
+  Read 2 files, listed 1 directory, recalled 1 memory (ctrl+o to expand)
+
+⏺ Now let me read all the core modules in parallel.
+
+  Read 10 files (ctrl+o to expand)
+
+⏺ Let me also read the shared config and the README to understand the full context.
+
+  Read 2 files (ctrl+o to expand)
+
+⏺ Bash(git diff src/gik_icechain/conversion/gik_loader.py)
+  ⎿  diff --git a/src/gik_icechain/conversion/gik_loader.py b/src/gik_icechain/conversion/gik_loader.py
+     index feeb450..6abab39 100644
+     --- a/src/gik_icechain/conversion/gik_loader.py
+     … +10 lines (ctrl+o to expand)
+
+⏺ Here is my full analysis of the GIK-IceChain codebase.
+
+  ---
+  What the project is
+
+  GIK-IceChain v2.0 is a cloud-native Python pipeline that converts ~1 PB of ECMWF IFS ensemble GRIB2 weather data (freely available on AWS S3) into retrospective flood risk alerts for East Africa, without ever
+  copying the raw data. It was built for the ECMWF Code for Earth 2026 challenge 41 (mentors: ICPAC).
+
+  ---
+  The three-component pipeline
+
+  C1 — Conversion (conversion/)
+
+  Problem: ECMWF's 1 PB of GRIB2 on S3 is unreachable by the xarray/Dask ecosystem that disaster risk managers use.
+  Solution: The ICPAC GIK project already created 150 246 Parquet files (18.5 GB) on HuggingFace (E4DRR/gik-ecmwf-par), each holding byte-range references into the raw GRIB2.
+  What C1 does:
+  - gik_loader.py — loads the HuggingFace catalog and resolves Parquet paths by date/run-hour/variable
+  - virtualizer.py — converts those Parquet manifests into a VirtualiZarr virtual xr.Dataset (no data downloaded)
+  - icechunk_writer.py — commits each day's virtual dataset into an IceChunk Zarr v3 store, tagging every commit with the forecast date → full time-travel history
+
+  C2 — Exceedance (exceedance/)
+
+  What it does: For each of ~1 000 forecast days, 7 accumulation windows (3h→7 days), and 6 return periods (2→100 years), computes P(precip > GEV threshold) across 51 ensemble members.
+  Key innovation: thresholds.py fits adaptive GEV distributions stratified by:
+  - East Africa rainfall season (MAM / OND / JJAS / DJF)
+  - ENSO phase (El Niño / Neutral / La Niña via Niño 3.4 anomaly)
+  - IOD phase (Positive / Neutral / Negative via DMI anomaly)
+  The result is a 5D Zarr store: date × lat × lon × window × return_period.
+
+  C3 — Risk (risk/)
+
+  What it does: Aggregates exceedance probabilities to ~300 admin-1 units (11 East African countries) and runs a Bayesian Network for each unit per day.
+  ICPAC CRMA Bayesian Network (crma_model.py): 8 nodes, DAG with 6 evidence inputs:
+  - Forecast_Hazard — from exceedance probs
+  - Obs_Antecedent — from GPM IMERG daily observations
+  - Temporal_Persist — ≥3 consecutive signal days
+  - Spatial_Coverage — grid cells above threshold / admin-1 area
+  - Data_Confidence — GPM quality flag
+  - API_State — Antecedent Precipitation Index (soil moisture proxy)
+
+  Output: Risk_State ∈ {Green, Yellow, Orange, Red}
+  Dynamic BN (dynamic_bn.py): propagates API across days with exponential decay so soil saturation carries forward.
+  CPT refinement (cpt_refinement.py): uses EM-DAT historical flood events to update the leaf CPT via MLE + Laplace smoothing.
+  Output (risk_engine.py): one GeoJSON FeatureCollection per day → calendar-map storymaps.
+
+  ---
+  Current state
+
+  ┌────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                        Area                        │                                           Status                                            │
+  ├────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Core pipeline (C1→C2→C3)                           │ Fully implemented                                                                           │
+  ├────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ CLI (gik-icechain convert/exceedance/risk/run-all) │ Implemented                                                                                 │
+  ├────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Shared config (Pydantic, YAML)                     │ Implemented                                                                                 │
+  ├────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Unit tests                                         │ Partial — test_thresholds.py + test_crma_model.py exist; integration tests empty            │
+  ├────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Modified file                                      │ gik_loader.py — trivial: a # pressure level in hPa comment was removed from the level field │
+  └────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  What I think the next needs are
+
+  Looking at the code gaps:
+  1. Integration tests — tests/integration/ is empty; no end-to-end test without real AWS/HF credentials
+  2. exceedance/loader.py / exceedance/writer.py / exceedance/accumulations.py / exceedance/aifs_track.py — referenced everywhere in cli.py but not yet read; need verification they are complete
+  3. risk/aggregator.py / risk/gpm_loader.py / risk/geojson_writer.py — same
+  4. Gap-filler (conversion/gap_filler.py) — for dates missing from HuggingFace
+  5. Dashboard — referenced in CLI but the dashboard/ module is not in the package
+
+  What would you like to do next?
+
+✻ Cooked for 1m 46s
+
+❯ analyse le code identifie les erreurs , incoherences ,
+
+⏺ Let me read all the remaining modules I haven't seen yet before doing a full diagnostic.
+
+  Read 12 files (ctrl+o to expand)
+
+⏺ Now I have the complete picture. Here is the full diagnostic report.
+
+  ---
+  Errors and Inconsistencies — GIK-IceChain
+
+  ---
+  CRITICAL — Breaks at Runtime
+
+  1. Wrong argument order: store.commit_day() (cli.py:58)
+
+  # WRONG:
+  store.commit_day(current, run_hour, vds)
+
+  # Signature: commit_day(forecast_date, virtual_ds, run_hour=0, message=None)
+  # run_hour (int) is passed where virtual_ds (xr.Dataset) is expected → TypeError
+
+  2. IceChainStore is never opened before commit_day (cli.py:44–59)
+
+  store = IceChainStore(...) is created, then commit_day is called immediately. create_or_open() is never called. commit_day checks if self._repo is None and raises RuntimeError. The whole _run_convert function is
+  dead.
+
+  3. parquet_to_virtual_dataset receives a DataFrame instead of paths (cli.py:57–58)
+
+  manifest = load_gik_parquet(path, variables=...)   # returns pd.DataFrame
+  vds = parquet_to_virtual_dataset(manifest)          # expects list[str]
+  parquet_to_virtual_dataset calls open_virtual_mfdataset(parquet_paths, ...) on a DataFrame → crash. Should be parquet_to_virtual_dataset([path], variables=...).
+
+  4. compute_exceedance_probabilities is incompatible with every caller (exceedance/exceedance.py:45)
+
+  The function does:
+  tp_window = ensemble_ds["tp"].isel(step=slice(0, n_steps)).sum(dim="step")
+  Both cli.py and aifs_track.py call it with the output of compute_rolling_accumulations, which produces variables named tp_3h, tp_24h, etc. — there is no "tp" in the dataset after accumulation. The function also sums
+   cumulative values over step, which is physically meaningless (cumulative tp values can't be summed). The function was designed for raw tp but the callers pass an already-accumulated dataset.
+
+  ---
+  High Severity — Silent Wrong Results
+
+  5. December is in both OND and DJF — always returns OND, never DJF (thresholds.py:65–70)
+
+  _SEASON_MONTHS = {
+      Season.OND:  [10, 11, 12],  # 12 here first
+      Season.DJF:  [12, 1, 2],    # 12 here too, never reached
+  }
+  get_season returns the first match. December always returns OND. DJF thresholds are never selected for December. The unit test test_djf_months only tests months 1 and 2, masking this bug.
+
+  6. build_exceedance_dataset + _build_dataset produce malformed output (writer.py:111, 125)
+
+  build_exceedance_dataset does stacked.assign_coords(date=...).expand_dims("date") — adds date as a size-1 dim. Then _build_dataset calls xr.concat(arrays, dim=DataArray([date1, date2...], dims="date")) on arrays
+  that already have a date dim → likely a dimension conflict or double-nesting of the date coordinate.
+
+  7. GIKManifestEntry.step: int but gap_filler produces string step (gap_filler.py:197)
+
+  "step": ds.attrs.get("GRIB_stepRange", "0"),  # e.g. "0-24" for accumulated fields
+  GIKManifestEntry declares step: int. Pydantic will raise a ValidationError on any accumulated GRIB2 field.
+
+  8. East Africa country lists are inconsistent (cpt_refinement.py vs regions.py)
+
+  ┌───────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────┬──────────┐
+  │                                    Module                                     │               Has                │ Missing  │
+  ├───────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────┼──────────┤
+  │ cpt_refinement.py                                                             │ SDN (Sudan), COD (DRC)           │ DJI, MDG │
+  ├───────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────┼──────────┤
+  │ regions.py                                                                    │ DJI (Djibouti), MDG (Madagascar) │ SDN, COD │
+  ├───────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────┼──────────┤
+  │ EM-DAT filtering and spatial filtering use different country scopes silently. │                                  │          │
+  └───────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────┴──────────┘
+
+  ---
+  Medium Severity — Design Flaws
+
+  9. GapFillConfig name collision between two modules
+
+  shared/config.py and conversion/gap_filler.py both define a class named GapFillConfig with completely different fields and base classes (BaseModel vs @dataclass). Any ambiguous import breaks both.
+
+  10. dynamic_bn.py is dead code
+
+  risk_engine.py re-implements API decay and consecutive-day tracking inline:
+  api_state[pcode] = gpm_24h + api_decay * cur_api
+  consecutive_days[pcode] = consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
+  dynamic_bn.py's step() and run_temporal_sequence() are never called anywhere in the pipeline.
+
+  11. write_daily_geojson (geojson_writer.py:21) is dead code
+
+  risk_engine.py writes GeoJSON inline with out_path.write_text(json.dumps(...)) and never calls write_daily_geojson. Two parallel implementations exist; only one is used.
+
+  12. IceChainStore._parse_bucket drops the path prefix (icechunk_writer.py:229)
+
+  return self.storage_uri[5:].split("/")[0]  # returns only the bucket name
+  If the store is at s3://my-bucket/gik/icechain/, the prefix gik/icechain/ is silently lost. Stores can only live at the root of a bucket.
+
+  13. refine_cpts_with_emdat takes a raw BayesianNetwork, not CRMAModel (cpt_refinement.py:258)
+
+  The CLI uses CRMAModel (the wrapper). To call refine_cpts_with_emdat, a user must access crma._model (private attribute). The function should accept CRMAModel and extract ._model internally.
+
+  14. GIKCatalog.load_catalog cache_dir parameter is silently ignored (gik_loader.py:73)
+
+  def load_catalog(self, cache_dir: Path | None = None) -> pd.DataFrame:
+      # cache_dir is never used — always re-downloads
+
+  ---
+  Minor / Inconsistencies
+
+  15. lat/lon vs latitude/longitude dimension name mismatch
+
+  - shared/config.py default chunk_dims: {"time": 10, "lat": 100, "lon": 100}
+  - exceedance/loader.py default chunks: {"time": 10, "latitude": 100, "longitude": 100}
+  - exceedance/writer.py schema docstring: latitude, longitude
+
+  Chunks from config would be silently ignored if the dataset uses latitude/longitude.
+
+  16. accumulations.py docstring lies about return shape
+
+  compute_rolling_accumulations says "time axis dropped to a single coordinate window_start" — the code keeps the full step dimension intact, nothing is dropped.
+
+  17. GIKCatalog.get_parquet_paths filters on catalog["variable"] (gik_loader.py:136)
+
+  The catalog indexes files (one per run), not individual variables. If the catalog doesn't have a variable column at the file level, this silently returns an empty list for any specific variable filter.
+
+  ---
+  Summary Table
+
+  ┌─────┬─────────────────────────────┬──────────┬────────────────────────────────────────────────┐
+  │  #  │              File               │ Severity │                      Type                      │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 1   │ cli.py:58                       │ Critical │ Wrong argument order                           │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 2   │ cli.py:44–59                    │ Critical │ Store never opened                             │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 3   │ cli.py:57–58                    │ Critical │ DataFrame passed instead of path list          │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 4   │ exceedance/exceedance.py:45     │ Critical │ Wrong variable name + wrong step logic         │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 5   │ thresholds.py:65–70             │ High     │ December always OND, never DJF                 │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 6   │ writer.py:111,125               │ High     │ Malformed date dimension in Zarr output        │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 7   │ gap_filler.py:197               │ High     │ String step value fails Pydantic int validator │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 8   │ cpt_refinement.py vs regions.py │ High     │ Inconsistent country lists                     │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 9   │ config.py vs gap_filler.py      │ Medium   │ Same class name, different structures          │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 10  │ dynamic_bn.py                   │ Medium   │ Entire module is dead code                     │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 11  │ geojson_writer.py:21            │ Medium   │ write_daily_geojson is dead code               │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 12  │ icechunk_writer.py:229          │ Medium   │ S3 path prefix silently dropped                │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 13  │ cpt_refinement.py:258           │ Medium   │ API exposes private model internals            │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 14  │ gik_loader.py:73                │ Minor    │ cache_dir parameter never used                 │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 15  │ config.py vs loader.py          │ Minor    │ lat/lon vs latitude/longitude chunks           │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 16  │ accumulations.py                │ Minor    │ Docstring incorrect                            │
+  ├─────┼─────────────────────────────────┼──────────┼────────────────────────────────────────────────┤
+  │ 17  │ gik_loader.py:136               │ Minor    │ Variable filter may not match catalog schema   │
+  └─────┴─────────────────────────────────┴──────────┴────────────────────────────────────────────────┘
+
+  Do you want me to fix these, starting with the critical ones?
+
+✻ Crunched for 4m 41s
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ? for shortcuts · ← for agents
+
+
+
+
+
+"""EM-DAT CPT refinement for the CRMA Bayesian Network.
+
+Refines the Risk_State leaf CPT using historical EM-DAT flood events as
+labeled ground truth via Maximum Likelihood Estimation with Laplace smoothing.
+
+Positive samples: EM-DAT flood event days → Risk_State = Red (3).
+Negative samples: randomly drawn non-event days → Risk_State ≤ Yellow (≤1).
+Root-node CPTs (expert priors) are left unchanged.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+import pandas as pd
+import structlog
+
+from gik_icechain.risk.crma_model import CRMAEvidence
+
+log = structlog.get_logger(__name__)
+
+try:
+    from pgmpy.estimators import MaximumLikelihoodEstimator
+    from pgmpy.models import BayesianNetwork
+
+    PGMPY_AVAILABLE = True
+except ImportError:
+    PGMPY_AVAILABLE = False
+
+
+_EAST_AFRICA_ISO3 = {
+    "KEN",
+    "ETH",
+    "UGA",
+    "TZA",
+    "SOM",
+    "SDN",
+    "SSD",
+    "RWA",
+    "BDI",
+    "COD",
+    "ERI",
+}
+
+_EVIDENCE_COLS = [
+    "Forecast_Hazard",
+    "Obs_Antecedent",
+    "Temporal_Persist",
+    "Spatial_Coverage",
+    "Data_Confidence",
+    "API_State",
+    "Risk_State",
+]
+
+_STATE_NAMES: dict[str, list[int]] = {
+    "Forecast_Hazard": [0, 1, 2],
+    "Obs_Antecedent": [0, 1, 2],
+    "Temporal_Persist": [0, 1],
+    "Spatial_Coverage": [0, 1, 2],
+    "Data_Confidence": [0, 1, 2],
+    "API_State": [0, 1, 2],
+    "Compound_Risk": [0, 1, 2, 3],
+    "Risk_State": [0, 1, 2, 3],
+}
+
+
+@dataclass
+class EMDATFloodRecord:
+    """A single EM-DAT flood event relevant to East Africa."""
+
+    event_id: str
+    country: str
+    admin1_name: str
+    admin1_pcode: str
+    start_date: pd.Timestamp
+    end_date: pd.Timestamp
+    deaths: int | None
+    affected: int | None
+    disaster_type: str = "Flood"
+
+
+def load_emdat_east_africa(csv_path: Path) -> list[EMDATFloodRecord]:
+    """Load and filter EM-DAT flood records for East Africa (from May 2023).
+
+    Expects a CSV export from emdat.be filtered for Disaster Type=Flood,
+    Continent=Africa. Returns records with admin-1 attribution.
+    """
+    df = pd.read_csv(csv_path, parse_dates=["Start Date", "End Date"])
+    df = df[
+        (df["Disaster Type"] == "Flood")
+        & (df["ISO"].isin(_EAST_AFRICA_ISO3))
+        & (df["Start Date"] >= "2023-05-01")
+    ].copy()
+
+    records = [
+        EMDATFloodRecord(
+            event_id=str(row.get("DisNo.", "")),
+            country=str(row.get("Country", "")),
+            admin1_name=str(row.get("Admin1", "")),
+            admin1_pcode=str(row.get("Admin1 Code", "")),
+            start_date=pd.Timestamp(row["Start Date"]),
+            end_date=pd.Timestamp(row.get("End Date", row["Start Date"])),
+            deaths=int(row["Total Deaths"]) if pd.notna(row.get("Total Deaths")) else None,
+            affected=int(row["No. Affected"]) if pd.notna(row.get("No. Affected")) else None,
+        )
+        for _, row in df.iterrows()
+    ]
+
+    log.info(
+        "emdat_loaded",
+        n_events=len(records),
+        date_range=f"{df['Start Date'].min().date()} to {df['Start Date'].max().date()}",
+        countries=df["Country"].value_counts().to_dict(),
+    )
+    return records
+
+
+def _col_or_default(df: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    if df.empty or col not in df.columns:
+        return default
+    return float(df[col].iloc[0])
+
+
+def build_training_dataset(
+    emdat_records: list[EMDATFloodRecord],
+    exceedance_df: pd.DataFrame,
+    gpm_df: pd.DataFrame,
+    api_df: pd.DataFrame,
+    negative_sample_ratio: float = 3.0,
+) -> pd.DataFrame:
+    """Build a labeled training dataset for CPT refinement.
+
+    Args:
+        emdat_records:         EM-DAT flood events.
+        exceedance_df:         Columns: date, admin1_pcode, exceedance_prob_24h_5y,
+                               exceedance_prob_72h_5y, spatial_coverage_fraction,
+                               consecutive_signal_days.
+        gpm_df:                Columns: date, admin1_pcode, gpm_obs_24h.
+        api_df:                Columns: date, admin1_pcode, api_mm.
+        negative_sample_ratio: Ratio of negative to positive samples.
+
+    Returns:
+        DataFrame with discretised evidence columns and a Risk_State label.
+    """
+    rows: list[dict] = []
+
+    for record in emdat_records:
+        for offset in range(3):
+            event_date = record.start_date + pd.Timedelta(days=offset)
+            pcode = record.admin1_pcode
+
+            exc_row = exceedance_df[
+                (exceedance_df["date"] == event_date.date())
+                & (exceedance_df["admin1_pcode"] == pcode)
+            ]
+            gpm_row = gpm_df[
+                (gpm_df["date"] == event_date.date()) & (gpm_df["admin1_pcode"] == pcode)
+            ]
+            api_row = api_df[
+                (api_df["date"] == event_date.date()) & (api_df["admin1_pcode"] == pcode)
+            ]
+
+            if exc_row.empty or gpm_row.empty:
+                continue
+
+            evidence = CRMAEvidence(
+                exceedance_prob_24h_5y=float(exc_row["exceedance_prob_24h_5y"].iloc[0]),
+                exceedance_prob_72h_5y=_col_or_default(exc_row, "exceedance_prob_72h_5y"),
+                exceedance_prob_7d_5y=_col_or_default(exc_row, "exceedance_prob_7d_5y"),
+                gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
+                api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 20.0,
+                spatial_coverage_fraction=_col_or_default(
+                    exc_row, "spatial_coverage_fraction", 0.5
+                ),
+                consecutive_signal_days=int(
+                    _col_or_default(exc_row, "consecutive_signal_days", 1.0)
+                ),
+            )
+
+            rows.append(
+                {
+                    "Forecast_Hazard": evidence.forecast_hazard_state,
+                    "Obs_Antecedent": evidence.obs_antecedent_state,
+                    "Temporal_Persist": evidence.temporal_persistence_state,
+                    "Spatial_Coverage": evidence.spatial_coverage_state,
+                    "Data_Confidence": evidence.data_confidence_state,
+                    "API_State": evidence.api_state,
+                    "Risk_State": 3,
+                    "source": "emdat_positive",
+                    "event_id": record.event_id,
+                    "date": event_date.date(),
+                    "admin1_pcode": pcode,
+                }
+            )
+
+    n_positive = len(rows)
+    log.info("positive_examples_built", n=n_positive)
+
+    n_negative = int(n_positive * negative_sample_ratio)
+    flood_day_pcodes = {(r.start_date.date(), r.admin1_pcode) for r in emdat_records}
+
+    neg_pool = exceedance_df[
+        ~exceedance_df.apply(
+            lambda row: (row["date"], row["admin1_pcode"]) in flood_day_pcodes,
+            axis=1,
+        )
+    ]
+    neg_sample = neg_pool.sample(min(n_negative, len(neg_pool)), random_state=42)
+
+    for _, row in neg_sample.iterrows():
+        gpm_row = gpm_df[
+            (gpm_df["date"] == row["date"]) & (gpm_df["admin1_pcode"] == row["admin1_pcode"])
+        ]
+        api_row = api_df[
+            (api_df["date"] == row["date"]) & (api_df["admin1_pcode"] == row["admin1_pcode"])
+        ]
+        if gpm_row.empty:
+            continue
+
+        evidence = CRMAEvidence(
+            exceedance_prob_24h_5y=float(row.get("exceedance_prob_24h_5y", 0.0)),
+            exceedance_prob_72h_5y=float(row.get("exceedance_prob_72h_5y", 0.0)),
+            exceedance_prob_7d_5y=float(row.get("exceedance_prob_7d_5y", 0.0)),
+            gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
+            api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
+            spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
+            consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
+        )
+
+        rows.append(
+            {
+                "Forecast_Hazard": evidence.forecast_hazard_state,
+                "Obs_Antecedent": evidence.obs_antecedent_state,
+                "Temporal_Persist": evidence.temporal_persistence_state,
+                "Spatial_Coverage": evidence.spatial_coverage_state,
+                "Data_Confidence": evidence.data_confidence_state,
+                "API_State": evidence.api_state,
+                "Risk_State": min(evidence.forecast_hazard_state, 1),
+                "source": "negative_sample",
+                "event_id": None,
+                "date": row["date"],
+                "admin1_pcode": row["admin1_pcode"],
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    log.info(
+        "training_dataset_built",
+        n_positive=n_positive,
+        n_negative=len(df) - n_positive,
+        risk_state_distribution=df["Risk_State"].value_counts().to_dict(),
+    )
+    return df
+
+
+def refine_cpts_with_emdat(
+    model: BayesianNetwork,
+    training_df: pd.DataFrame,
+    laplace_alpha: float = 1.0,
+    output_path: Path | None = None,
+) -> BayesianNetwork:
+    """Refine the Risk_State CPT using MLE on the EM-DAT training dataset.
+
+    Only the Risk_State leaf node is updated — root node priors are kept
+    as the expert elicitation values.
+
+    Args:
+        model:         The CRMA BayesianNetwork instance.
+        training_df:   Labeled data from build_training_dataset().
+        laplace_alpha: Laplace smoothing parameter (1.0 = add-one smoothing).
+        output_path:   If given, saves all CPTs to this JSON path.
+
+    Returns:
+        Updated BayesianNetwork with refined Risk_State CPT.
+    """
+    if not PGMPY_AVAILABLE:
+        raise ImportError("pgmpy is required: pip install pgmpy")
+
+    estimator = MaximumLikelihoodEstimator(
+        model,
+        training_df[_EVIDENCE_COLS].copy(),
+        state_names=_STATE_NAMES,
+    )
+
+    refined_cpd = estimator.estimate_cpd(
+        "Risk_State",
+        prior_type="dirichlet",
+        pseudo_counts=laplace_alpha,
+    )
+    model.remove_cpds(model.get_cpds("Risk_State"))
+    model.add_cpds(refined_cpd)
+
+    if not model.check_model():
+        raise ValueError("Refined model failed validation")
+
+    if output_path is not None:
+        cpts = {
+            node: model.get_cpds(node).values.tolist()
+            for node in model.nodes()
+            if model.get_cpds(node) is not None
+        }
+        output_path.write_text(json.dumps(cpts, indent=2))
+        log.info("refined_cpts_saved", path=str(output_path))
+
+    log.info(
+        "cpts_refined_with_emdat",
+        n_training_samples=len(training_df),
+        laplace_alpha=laplace_alpha,
+    )
+    return model

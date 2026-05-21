@@ -18,56 +18,25 @@ _EAHW_RISK_LABELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red"}
 _EAHW_HAZARD_TYPE = "Flood"
 
 
-def write_daily_geojson(
+def write_risk_geojson(
     day: date,
-    admin_gdf: gpd.GeoDataFrame,
-    risk_results: list[dict[str, Any]],
+    features: list[dict[str, Any]],
     output_dir: Path,
 ) -> Path:
-    """Write a GeoJSON FeatureCollection with risk data for *day*.
-
-    Each feature in *risk_results* must carry at minimum:
-        - ``admin1_pcode`` — links to *admin_gdf* row
-        - ``risk_state`` (int, 0–3)
-        - ``risk_label`` (str)
-        - probability fields ``p_green``, ``p_yellow``, ``p_orange``, ``p_red``
+    """Write a GeoJSON FeatureCollection of risk features for *day*.
 
     Args:
-        day:          Forecast date.
-        admin_gdf:    GeoDataFrame of admin-1 boundaries (EPSG:4326).
-        risk_results: List of property dicts, one per admin-1 unit.
-        output_dir:   Directory to write ``YYYY-MM-DD_admin1_risk.geojson``.
+        day:        Forecast date (used in the output filename).
+        features:   Pre-built GeoJSON Feature dicts from :func:`build_feature`.
+        output_dir: Directory to write ``YYYY-MM-DD_admin1_risk.geojson``.
 
     Returns:
         Path to the written file.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    pcode_to_result = {r["admin1_pcode"]: r for r in risk_results}
-    features: list[dict[str, Any]] = []
-
-    for _, unit in admin_gdf.iterrows():
-        pcode = str(unit.get("admin1_pcode", ""))
-        props = pcode_to_result.get(pcode, {})
-        props.update(
-            {
-                "admin1_pcode": pcode,
-                "admin1_name": str(unit.get("admin1_name", "")),
-                "country": str(unit.get("adm0_name", "")),
-                "date": day.isoformat(),
-            }
-        )
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": unit.geometry.__geo_interface__,
-                "properties": props,
-            }
-        )
-
     out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
     out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
-    log.info("geojson_written", date=day, n_features=len(features), path=str(out_path))
+    log.info("risk_geojson_written", date=day, n_features=len(features), path=str(out_path))
     return out_path
 
 

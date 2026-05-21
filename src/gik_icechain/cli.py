@@ -13,9 +13,16 @@ from __future__ import annotations
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Optional
 
 import typer
+
+
+def _parse_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise typer.BadParameter(f"Date must be YYYY-MM-DD, got: {value!r}")
 
 app = typer.Typer(
     name="gik-icechain",
@@ -36,13 +43,14 @@ def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
 
 
 def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
-    from gik_icechain.conversion.gik_loader import GIKCatalog, load_gik_parquet
+    from gik_icechain.conversion.gik_loader import GIKCatalog
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.conversion.virtualizer import parquet_to_virtual_dataset
 
     catalog = GIKCatalog(cfg.sources.gik_hf_dataset)
     catalog.load_catalog()
     store = IceChainStore(cfg.outputs.icechunk_store_uri)
+    store.create_or_open()
 
     current = start
     while current <= end:
@@ -53,10 +61,13 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
                 run_hours=(run_hour,),
                 variables=cfg.component1.variables,
             )
-            for path in paths:
-                manifest = load_gik_parquet(path, variables=cfg.component1.variables)
-                vds = parquet_to_virtual_dataset(manifest)
-                store.commit_day(current, run_hour, vds)
+            if not paths:
+                continue
+            # Pass the raw Parquet paths directly to VirtualiZarr; do not
+            # pre-load them as DataFrames (parquet_to_virtual_dataset
+            # needs the file paths, not the loaded content).
+            vds = parquet_to_virtual_dataset(paths, variables=cfg.component1.variables)
+            store.commit_day(current, vds, run_hour)
         current += timedelta(days=1)
 
 
@@ -160,16 +171,17 @@ def _run_risk(
 
 @app.command()
 def convert(
-    start: Annotated[date, typer.Option("--start", help="First forecast date (YYYY-MM-DD).")],
-    end: Annotated[date, typer.Option("--end", help="Last forecast date (YYYY-MM-DD).")],
+    start: Annotated[str, typer.Option("--start", help="First forecast date (YYYY-MM-DD).")],
+    end: Annotated[str, typer.Option("--end", help="Last forecast date (YYYY-MM-DD).")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
 ) -> None:
     """Ingest ECMWF IFS ensemble GRIB2 files into an IceChunk virtual store (C1)."""
     from gik_icechain.shared.validation import validate_date_range
 
-    validate_date_range(start, end)
-    _run_convert(_bootstrap(config), start, end)
-    typer.echo(f"Convert complete: {start} → {end}")
+    s, e = _parse_date(start), _parse_date(end)
+    validate_date_range(s, e)
+    _run_convert(_bootstrap(config), s, e)
+    typer.echo(f"Convert complete: {s} → {e}")
 
 
 @app.command()
@@ -178,11 +190,13 @@ def exceedance(
     output: Annotated[str, typer.Option(help="URI for the output exceedance Zarr store.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     workers: Annotated[int, typer.Option(help="Dask distributed workers.")] = 16,
-    start: Annotated[date | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[date | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[Optional[str], typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
     cfg = _bootstrap(config)
+    s = _parse_date(start) if start else None
+    e = _parse_date(end) if end else None
 
     if workers > 1:
         try:
@@ -192,7 +206,7 @@ def exceedance(
         except ImportError:
             pass
 
-    n = _run_exceedance(cfg, store, output, start, end)
+    n = _run_exceedance(cfg, store, output, s, e)
     typer.echo(f"Exceedance complete: {n} days written to {output}")
 
 
@@ -201,48 +215,51 @@ def risk(
     exceedance_store: Annotated[str, typer.Option(help="URI of the exceedance Zarr store.")],
     output: Annotated[Path, typer.Option(help="Output directory for GeoJSON files.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
-    start: Annotated[date | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[date | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[Optional[str], typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[Optional[str], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Run CRMA Bayesian Network risk inference for all admin-1 units (C3)."""
     import xarray as xr
 
     cfg = _bootstrap(config)
+    s = _parse_date(start) if start else None
+    e = _parse_date(end) if end else None
 
-    if start is None or end is None:
+    if s is None or e is None:
         exc_ds = xr.open_zarr(exceedance_store, consolidated=False)
         dates = sorted(str(d)[:10] for d in exc_ds["date"].values)
-        if start is None:
-            start = date.fromisoformat(dates[0])
-        if end is None:
-            end = date.fromisoformat(dates[-1])
+        if s is None:
+            s = date.fromisoformat(dates[0])
+        if e is None:
+            e = date.fromisoformat(dates[-1])
 
-    written = _run_risk(cfg, exceedance_store, output, start, end)
+    written = _run_risk(cfg, exceedance_store, output, s, e)
     typer.echo(f"Risk complete: {len(written)} GeoJSON files in {output}")
 
 
 @app.command("run-all")
 def run_all(
-    start: Annotated[date, typer.Option("--start", help="Pipeline start date (YYYY-MM-DD).")],
-    end: Annotated[date, typer.Option("--end", help="Pipeline end date (YYYY-MM-DD).")],
+    start: Annotated[str, typer.Option("--start", help="Pipeline start date (YYYY-MM-DD).")],
+    end: Annotated[str, typer.Option("--end", help="Pipeline end date (YYYY-MM-DD).")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     output: Annotated[Path, typer.Option(help="Root output directory.")] = Path("results/"),
 ) -> None:
     """Run C1 → C2 → C3 end-to-end for the given date range."""
     from gik_icechain.shared.validation import validate_date_range
 
-    validate_date_range(start, end)
+    s, e = _parse_date(start), _parse_date(end)
+    validate_date_range(s, e)
     cfg = _bootstrap(config)
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
 
     typer.echo("[1/3] convert …")
-    _run_convert(cfg, start, end)
+    _run_convert(cfg, s, e)
 
     typer.echo("[2/3] exceedance …")
-    _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, start, end)
+    _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, s, e)
 
     typer.echo("[3/3] risk …")
-    _run_risk(cfg, exc_uri, output / "admin1_risk", start, end)
+    _run_risk(cfg, exc_uri, output / "admin1_risk", s, e)
 
     typer.echo(f"Pipeline complete. Results in {output}")
 

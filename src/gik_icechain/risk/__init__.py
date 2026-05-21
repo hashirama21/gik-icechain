@@ -1,4 +1,8 @@
-from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
+try:
+    from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
+except ImportError:
+    pass  # geopandas/regionmask optional; import directly when needed
+
 from gik_icechain.risk.cpt_refinement import (
     EMDATFloodRecord,
     build_training_dataset,
@@ -20,7 +24,7 @@ from gik_icechain.risk.dynamic_bn import (
 from gik_icechain.risk.geojson_writer import (
     build_feature,
     export_eahw_format,
-    write_daily_geojson,
+    write_risk_geojson,
 )
 from gik_icechain.risk.gpm_loader import (
     compute_api_series,
@@ -50,5 +54,5 @@ __all__ = [
     "run_risk_batch",
     "run_temporal_sequence",
     "step",
-    "write_daily_geojson",
+    "write_risk_geojson",
 ]

@@ -1,12 +1,17 @@
 """ICPAC CRMA Bayesian Network for admin-1 flood risk in East Africa.
 
-DAG (8 nodes, 7 edges):
+Static DAG (8 nodes, 7 intra-slice edges):
   Forecast_Hazard  ──┐
   Obs_Antecedent   ──┤
   Temporal_Persist ──┼──► Compound_Risk ──► Risk_State
   Spatial_Coverage ──┤
-  Data_Confidence  ──┘
+  Data_Confidence  ──┤
   API_State        ──┘
+
+Dynamic extension (C1-A): API_State carries over between days via
+a 3×3 inter-slice transition edge in a DynamicBayesianNetwork used by
+infer_sequence().  Single-step infer() uses VariableElimination on the
+equivalent DiscreteBayesianNetwork for efficiency.
 
 API_State extends the ICPAC CRMA prototype (EGU26-18323) with soil moisture
 persistence via the Antecedent Precipitation Index (White et al., 2021).
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -28,14 +34,45 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
+
+class EastAfricaCluster(StrEnum):
+    """4 climate clusters for regionalized CPT weights (ICPAC E4DRR, 2024)."""
+
+    EQUATORIAL_EAST = "equatorial_east"  # Kenya coast, Tanzania, Uganda
+    HORN_ARID = "horn_arid"              # N. Somalia, Djibouti, Eritrea
+    GREAT_RIFT = "great_rift"            # Ethiopian highlands, Kenya Rift
+    NILE_BASIN = "nile_basin"            # South Sudan, Sudan, N. Uganda
+
+
+# Per-cluster compound-risk score weights for _build_compound_risk_cpt.
+# Higher forecast/api weights in arid zones to reduce false-alarm rate.
+_CLUSTER_WEIGHTS: dict[str, dict[str, float]] = {
+    EastAfricaCluster.EQUATORIAL_EAST: {"forecast": 2.0, "obs": 1.5, "api": 1.5},
+    EastAfricaCluster.HORN_ARID:       {"forecast": 2.5, "obs": 1.0, "api": 2.0},
+    EastAfricaCluster.GREAT_RIFT:      {"forecast": 2.0, "obs": 1.5, "api": 1.8},
+    EastAfricaCluster.NILE_BASIN:      {"forecast": 1.8, "obs": 2.0, "api": 1.5},
+}
+
+# API_State inter-slice transition: P(API_t | API_{t-1}).
+# Rows: API_t ∈ {Dry=0, Normal=1, Saturated=2}.
+# Cols: API_{t-1} ∈ {Dry=0, Normal=1, Saturated=2}.
+# Reflects exponential decay (k≈0.8) and the East Africa bimodal rain regime.
+_API_TRANSITION = np.array([
+    [0.70, 0.20, 0.05],  # P(Dry_t | prev)
+    [0.25, 0.55, 0.35],  # P(Normal_t | prev)
+    [0.05, 0.25, 0.60],  # P(Saturated_t | prev)
+])
+
 try:
-    import pgmpy.models as pgm
+    from pgmpy.models import DiscreteBayesianNetwork, DynamicBayesianNetwork
     from pgmpy.factors.discrete import TabularCPD
-    from pgmpy.inference import VariableElimination
+    from pgmpy.inference import DBNInference, VariableElimination
 
     PGMPY_AVAILABLE = True
 except ImportError:
     PGMPY_AVAILABLE = False
+    VariableElimination = None  # type: ignore[assignment,misc]
+    DBNInference = None         # type: ignore[assignment,misc]
     log.warning("pgmpy_not_installed", msg="pip install pgmpy")
 
 
@@ -52,6 +89,16 @@ NODE_CARDS: dict[str, int] = {
     "Compound_Risk": 4,  # None / Low / Moderate / High
     "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
+
+_INTRA_EDGES = [
+    ("Forecast_Hazard", "Compound_Risk"),
+    ("Obs_Antecedent", "Compound_Risk"),
+    ("Temporal_Persist", "Compound_Risk"),
+    ("Spatial_Coverage", "Compound_Risk"),
+    ("Data_Confidence", "Compound_Risk"),
+    ("API_State", "Compound_Risk"),
+    ("Compound_Risk", "Risk_State"),
+]
 
 
 @dataclass
@@ -117,32 +164,186 @@ class CRMAEvidence:
             return 1
         return 0
 
+    def to_obs_dict(self) -> dict[str, int]:
+        """Discretised evidence as a plain dict keyed by BN node name."""
+        return {
+            "Forecast_Hazard": self.forecast_hazard_state,
+            "Obs_Antecedent": self.obs_antecedent_state,
+            "Temporal_Persist": self.temporal_persistence_state,
+            "Spatial_Coverage": self.spatial_coverage_state,
+            "Data_Confidence": self.data_confidence_state,
+            "API_State": self.api_state,
+        }
+
 
 class CRMAModel:
-    """ICPAC CRMA Bayesian Network for East Africa flood risk."""
+    """ICPAC CRMA Bayesian Network for East Africa flood risk.
 
-    def __init__(self, cpt_path: Path | None = None) -> None:
+    Single-step inference uses a DiscreteBayesianNetwork + VariableElimination.
+    Multi-step sequence inference uses a DynamicBayesianNetwork + DBNInference
+    with an inter-slice API_State transition capturing soil moisture persistence.
+
+    CPT structure from expert elicitation described in:
+    Kalladath, N. et al. (2026), "CRMA: Continuous Risk Monitoring and
+    Assessment for East Africa", EGU General Assembly 2026, EGU26-18323.
+    CPTs are optionally refined via EM-DAT MLE (see cpt_refinement.py).
+    """
+
+    def __init__(
+        self,
+        cluster: EastAfricaCluster = EastAfricaCluster.EQUATORIAL_EAST,
+        cpt_path: Path | None = None,
+    ) -> None:
         if not PGMPY_AVAILABLE:
             raise ImportError("pgmpy is required: pip install pgmpy")
 
-        self._model: pgm.BayesianNetwork | None = None
-        self._inference: VariableElimination | None = None
+        self.cluster = cluster
+        self._model: Any = None        # DiscreteBayesianNetwork for infer()
+        self._inference: Any = None    # VariableElimination on _model
+        self._dbn: Any = None          # DynamicBayesianNetwork for infer_sequence()
+        self._dbn_inference: Any = None
         self._cpt_path = cpt_path
 
     def build(self) -> None:
-        """Construct the Bayesian Network structure and CPTs."""
-        edges = [
-            ("Forecast_Hazard", "Compound_Risk"),
-            ("Obs_Antecedent", "Compound_Risk"),
-            ("Temporal_Persist", "Compound_Risk"),
-            ("Spatial_Coverage", "Compound_Risk"),
-            ("Data_Confidence", "Compound_Risk"),
-            ("API_State", "Compound_Risk"),
-            ("Compound_Risk", "Risk_State"),
+        """Construct both the static BN and the 2-slice DBN."""
+        cpds = self._build_cpds()
+
+        # ── Static DiscreteBayesianNetwork (single-step inference) ────────────
+        self._model = DiscreteBayesianNetwork(_INTRA_EDGES)
+        self._model.add_cpds(*cpds)
+        if not self._model.check_model():
+            raise ValueError("DiscreteBayesianNetwork failed validation")
+        self._inference = VariableElimination(self._model)
+
+        # ── DynamicBayesianNetwork (multi-step sequence inference) ────────────
+        # Build all edges explicitly for both time slices to avoid calling
+        # initialize_initial_state(), which has a pgmpy bug for nodes with
+        # cardinality != 2 (hardcoded reshape to (2, -1)).
+        dbn_all_edges = (
+            [((u, 0), (v, 0)) for u, v in _INTRA_EDGES]   # slice-0 intra
+            + [((u, 1), (v, 1)) for u, v in _INTRA_EDGES]  # slice-1 intra
+            + [(("API_State", 0), ("API_State", 1))]         # inter-slice
+        )
+        self._dbn = DynamicBayesianNetwork(dbn_all_edges)
+
+        # Slice-0 CPDs: same structure as the static BN.
+        # Slice-1 CPDs for non-API nodes: same CPTs with slice-1 evidence variables.
+        # API_State_1: 3×3 inter-slice transition matrix.
+        api_transition_cpd = TabularCPD(
+            ("API_State", 1), 3, _API_TRANSITION,
+            evidence=[("API_State", 0)], evidence_card=[3],
+        )
+        dbn_cpds_0 = [self._to_dbn_cpd(cpd, time_slice=0) for cpd in cpds]
+        dbn_cpds_1 = [
+            self._to_dbn_cpd(cpd, time_slice=1)
+            for cpd in cpds
+            if cpd.variable != "API_State"  # API_State_1 uses transition CPD
         ]
+        self._dbn.add_cpds(*dbn_cpds_0, *dbn_cpds_1, api_transition_cpd)
+        if not self._dbn.check_model():
+            raise ValueError("DynamicBayesianNetwork failed validation")
+        self._dbn_inference = DBNInference(self._dbn)
 
-        self._model = pgm.BayesianNetwork(edges)
+        log.info("crma_model_built", cluster=self.cluster,
+                 nodes=len(self._model.nodes()))
 
+    def infer(self, evidence: CRMAEvidence) -> dict[str, Any]:
+        """Single-step Bayesian inference for one admin-1 unit on one day.
+
+        Uses VariableElimination on the static DiscreteBayesianNetwork.
+
+        Returns a dict with risk_state (0–3), risk_label, per-state
+        probabilities, and the discretised evidence passed to the BN.
+        """
+        if self._inference is None:
+            raise RuntimeError("Model not built. Call build() first.")
+
+        obs = evidence.to_obs_dict()
+        risk_dist = self._inference.query(
+            variables=["Risk_State"],
+            evidence=obs,
+            show_progress=False,
+        )
+        probs = risk_dist.values
+        risk_state = int(np.argmax(probs))
+        return self._format_result(risk_state, probs, obs)
+
+    def infer_sequence(
+        self,
+        evidence_sequence: list[CRMAEvidence],
+        initial_api_state: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Multi-step inference over a temporal sequence via DBNInference.
+
+        The API_State is treated as a latent variable propagated through the
+        inter-slice transition matrix; all other evidence is fully observed at
+        each time step.  The initial API_State at time 0 must be supplied.
+
+        Args:
+            evidence_sequence:  Ordered list of CRMAEvidence (one per day).
+            initial_api_state:  Discretised API_State at day 0 (0=Dry, 1=Normal,
+                                2=Saturated).
+
+        Returns:
+            List of result dicts (same format as infer()) for each day.
+        """
+        if self._dbn_inference is None:
+            raise RuntimeError("Model not built. Call build() first.")
+
+        T = len(evidence_sequence)
+        if T == 0:
+            return []
+
+        # Build evidence spanning all time steps.
+        # API_State is latent beyond t=0; all other nodes are fully observed.
+        dbn_evidence: dict[tuple[str, int], int] = {
+            ("API_State", 0): initial_api_state,
+        }
+        for t, ev in enumerate(evidence_sequence):
+            obs = ev.to_obs_dict()
+            for node in ("Forecast_Hazard", "Obs_Antecedent", "Temporal_Persist",
+                         "Spatial_Coverage", "Data_Confidence"):
+                dbn_evidence[(node, t)] = obs[node]
+
+        query_vars = [("Risk_State", t) for t in range(T)]
+        results_raw = self._dbn_inference.forward_inference(query_vars, evidence=dbn_evidence)
+
+        out: list[dict[str, Any]] = []
+        for t, ev in enumerate(evidence_sequence):
+            probs = results_raw[("Risk_State", t)].values
+            risk_state = int(np.argmax(probs))
+            out.append(self._format_result(risk_state, probs, ev.to_obs_dict()))
+        return out
+
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _to_dbn_cpd(cpd: Any, time_slice: int) -> Any:
+        """Convert a static BN TabularCPD to a DBN CPD at *time_slice*."""
+        parents = cpd.variables[1:]  # empty for root nodes
+        return TabularCPD(
+            variable=(cpd.variable, time_slice),
+            variable_card=cpd.variable_card,
+            values=cpd.get_values(),
+            evidence=[(p, time_slice) for p in parents] if parents else None,
+            evidence_card=list(cpd.cardinality[1:]) if parents else None,
+        )
+
+    def _format_result(
+        self, risk_state: int, probs: np.ndarray, obs: dict[str, int]
+    ) -> dict[str, Any]:
+        return {
+            "risk_state": risk_state,
+            "risk_label": RISK_LEVELS[risk_state],
+            "p_green": float(probs[0]),
+            "p_yellow": float(probs[1]),
+            "p_orange": float(probs[2]),
+            "p_red": float(probs[3]),
+            "evidence": obs,
+        }
+
+    def _build_cpds(self) -> list[Any]:
+        """Return a list of TabularCPD objects for the static BN."""
         cpd_forecast = TabularCPD(
             variable="Forecast_Hazard",
             variable_card=3,
@@ -186,61 +387,10 @@ class CRMAModel:
             evidence=["Compound_Risk"],
             evidence_card=[4],
         )
+        return [cpd_forecast, cpd_obs, cpd_persist, cpd_spatial,
+                cpd_confidence, cpd_api, cpd_compound, cpd_risk]
 
-        self._model.add_cpds(
-            cpd_forecast,
-            cpd_obs,
-            cpd_persist,
-            cpd_spatial,
-            cpd_confidence,
-            cpd_api,
-            cpd_compound,
-            cpd_risk,
-        )
-
-        if not self._model.check_model():
-            raise ValueError("Bayesian Network model failed validation")
-
-        self._inference = VariableElimination(self._model)
-        log.info("crma_model_built", nodes=len(self._model.nodes()))
-
-    def infer(self, evidence: CRMAEvidence) -> dict[str, Any]:
-        """Run Bayesian inference for one admin-1 unit on one day.
-
-        Returns a dict with risk_state (0–3), risk_label, per-state
-        probabilities, and the discretised evidence passed to the BN.
-        """
-        if self._inference is None:
-            raise RuntimeError("Model not built. Call build() first.")
-
-        obs = {
-            "Forecast_Hazard": evidence.forecast_hazard_state,
-            "Obs_Antecedent": evidence.obs_antecedent_state,
-            "Temporal_Persist": evidence.temporal_persistence_state,
-            "Spatial_Coverage": evidence.spatial_coverage_state,
-            "Data_Confidence": evidence.data_confidence_state,
-            "API_State": evidence.api_state,
-        }
-
-        risk_dist = self._inference.query(
-            variables=["Risk_State"],
-            evidence=obs,
-            show_progress=False,
-        )
-        probs = risk_dist.values
-        risk_state = int(np.argmax(probs))
-
-        return {
-            "risk_state": risk_state,
-            "risk_label": RISK_LEVELS[risk_state],
-            "p_green": float(probs[0]),
-            "p_yellow": float(probs[1]),
-            "p_orange": float(probs[2]),
-            "p_red": float(probs[3]),
-            "evidence": obs,
-        }
-
-    def _build_compound_risk_cpd(self) -> TabularCPD:
+    def _build_compound_risk_cpd(self) -> Any:
         """Build the Compound_Risk CPT from a rule-based risk score (0–10 scale).
 
         Each parent state contributes additively; Data_Confidence dampens the
@@ -259,13 +409,18 @@ class CRMAModel:
         for c in parent_cards:
             n_combinations *= c
 
+        w = _CLUSTER_WEIGHTS[self.cluster]
         cpt = np.zeros((4, n_combinations))
         for idx in range(n_combinations):
             f_hazard, obs_ant, t_persist, spatial, confidence, api = self._idx_to_states(
                 idx, parent_cards
             )
             score = (
-                f_hazard * 2.0 + obs_ant * 1.5 + t_persist * 1.5 + spatial * 1.0 + api * 1.5
+                f_hazard * w["forecast"]
+                + obs_ant * w["obs"]
+                + t_persist * 1.5    # temporal persistence — universal
+                + spatial * 1.0      # spatial coverage — universal
+                + api * w["api"]
             ) * [0.5, 0.8, 1.0][confidence]
 
             if score <= 1.5:
@@ -322,5 +477,5 @@ class CRMAModel:
             cpd = self._model.get_cpds(node)
             if cpd is not None:
                 cpd.values = np.array(values)
-        self._inference = VariableElimination(self._model)
+        self._inference = VariableElimination(self._model)  # type: ignore[operator]
         log.info("cpts_loaded", path=str(path))
