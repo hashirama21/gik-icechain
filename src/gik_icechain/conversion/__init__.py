@@ -1,4 +1,4 @@
-from gik_icechain.conversion.gap_filler import GapFillConfig, identify_gap, run_gap_fill
+from gik_icechain.conversion.gap_filler import GapFillSpec, identify_gap, run_gap_fill
 from gik_icechain.conversion.gik_loader import (
     GIKCatalog,
     GIKManifestEntry,
@@ -10,7 +10,7 @@ from gik_icechain.conversion.virtualizer import parquet_to_virtual_dataset
 __all__ = [
     "GIKCatalog",
     "GIKManifestEntry",
-    "GapFillConfig",
+    "GapFillSpec",
     "IceChainStore",
     "identify_gap",
     "load_gik_parquet",

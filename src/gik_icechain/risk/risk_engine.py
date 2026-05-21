@@ -14,7 +14,6 @@ Expected exceedance store schema:
 
 from __future__ import annotations
 
-import json
 import math
 from datetime import date, timedelta
 from pathlib import Path
@@ -26,7 +25,9 @@ import xarray as xr
 
 from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
 from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
-from gik_icechain.risk.geojson_writer import build_feature
+from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
+from gik_icechain.risk.dynamic_bn import step as bn_step
+from gik_icechain.risk.geojson_writer import build_feature, write_risk_geojson
 from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
@@ -67,8 +68,7 @@ def run_risk_batch(
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
 
     pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
-    api_state = {p: _INITIAL_API_MM for p in pcodes}
-    consecutive_days = {p: 0 for p in pcodes}
+    bn_states: dict[str, DynamicBNState] = {p: init_state(_INITIAL_API_MM) for p in pcodes}
 
     written: list[Path] = []
     current = start
@@ -80,8 +80,7 @@ def run_risk_batch(
             admin,
             crma_model,
             output_dir,
-            api_state,
-            consecutive_days,
+            bn_states,
             api_decay,
         )
         if path is not None:
@@ -99,8 +98,7 @@ def _process_day(
     admin: gpd.GeoDataFrame,
     crma_model: CRMAModel,
     output_dir: Path,
-    api_state: dict[str, float],
-    consecutive_days: dict[str, int],
+    bn_states: dict[str, DynamicBNState],
     api_decay: float,
 ) -> Path | None:
     try:
@@ -123,7 +121,6 @@ def _process_day(
     features = []
     for _, unit in admin.iterrows():
         pcode = str(unit["admin1_pcode"])
-        cur_api = api_state[pcode]
         p_24h = _safe(p_24h_s.get(pcode, 0.0))
         gpm_24h = _safe(gpm_s.get(pcode, 0.0))
 
@@ -132,18 +129,23 @@ def _process_day(
             exceedance_prob_72h_5y=_safe(p_72h_s.get(pcode, 0.0)),
             exceedance_prob_7d_5y=_safe(p_7d_s.get(pcode, 0.0)),
             gpm_obs_24h=gpm_24h,
-            api_mm=cur_api,
+            api_mm=bn_states[pcode].api_mm,
             spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
-            consecutive_signal_days=consecutive_days[pcode],
+            consecutive_signal_days=bn_states[pcode].consecutive_days,
         )
-        result = crma_model.infer(evidence)
 
-        api_state[pcode] = gpm_24h + api_decay * cur_api
-        consecutive_days[pcode] = consecutive_days[pcode] + 1 if p_24h >= _SIGNAL_THRESHOLD else 0
+        # bn_step overrides api_mm and consecutive_signal_days from state,
+        # then advances the state for the next day.
+        result, bn_states[pcode] = bn_step(
+            bn_states[pcode],
+            evidence,
+            crma_model,
+            api_decay=api_decay,
+            gpm_obs_mm=gpm_24h,
+        )
         features.append(build_feature(unit, result, evidence, day))
 
-    out_path = output_dir / f"{day.isoformat()}_admin1_risk.geojson"
-    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    out_path = write_risk_geojson(day, features, output_dir)
     log.info("risk_day_written", date=day, n_units=len(features))
     return out_path
 

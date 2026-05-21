@@ -7,9 +7,15 @@ from typing import Any, Literal
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import regionmask
 import structlog
 import xarray as xr
+
+try:
+    import regionmask
+    _REGIONMASK_AVAILABLE = True
+except ImportError:
+    regionmask = None  # type: ignore[assignment]
+    _REGIONMASK_AVAILABLE = False
 
 log = structlog.get_logger(__name__)
 

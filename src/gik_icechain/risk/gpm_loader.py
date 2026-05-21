@@ -1,4 +1,12 @@
-"""Load GPM IMERG v7 daily precipitation and compute Antecedent Precipitation Index."""
+"""Load GPM IMERG v7 daily precipitation and compute Antecedent Precipitation Index.
+
+Optionally loads spatially-varying decay coefficients k(x,y) from the HWSD
+(Harmonized World Soil Database) to replace the scalar decay used in the
+original API formulation.  Soil hydraulic properties from HWSD are mapped to
+k via:  k = 1 - (Ksat / 100)  clipped to [0.5, 0.95], where Ksat is the
+saturated hydraulic conductivity (cm/day).  Sandy soils (high Ksat) drain
+quickly → low k; clay soils (low Ksat) retain water → high k.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +19,10 @@ import structlog
 import xarray as xr
 
 log = structlog.get_logger(__name__)
+
+# API discretisation thresholds (mm) — White et al. (2021), Nzoia basin
+_API_DRY_THRESHOLD = 30.0
+_API_SATURATED_THRESHOLD = 80.0
 
 _GPM_PATTERNS = (
     "3B-DAY.MS.MRG.3IMERG.{date_str}-S000000-E235959.1440.V07B.HDF5",

@@ -9,9 +9,8 @@ from gik_icechain.risk.crma_model import (
     RISK_LEVELS,
     CRMAEvidence,
     CRMAModel,
+    EastAfricaCluster,
 )
-
-# ── CRMAEvidence discretisation ───────────────────────────────────────────────
 
 
 class TestCRMAEvidenceDiscretisation:
@@ -85,14 +84,12 @@ class TestCRMAEvidenceDiscretisation:
         assert e.spatial_coverage_state == 2
 
 
-# ── CRMAModel inference ────────────────────────────────────────────────────────
-
 
 @pytest.fixture(scope="module")
 def built_model():
     """Build the CRMA model once for all tests (slow to construct)."""
     pytest.importorskip("pgmpy", reason="pgmpy not installed")
-    model = CRMAModel()
+    model = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
     model.build()
     return model
 
@@ -182,3 +179,37 @@ class TestCRMAModelInference:
         evidence = self._make_evidence()
         result = built_model.infer(evidence)
         assert RISK_LEVELS[result["risk_state"]] == result["risk_label"]
+
+    def test_saturated_api_increases_risk_vs_dry(self, built_model):
+        """API_State=Saturated must not produce lower risk than API_State=Dry."""
+        from gik_icechain.risk.dynamic_bn import init_state, step as bn_step
+
+        shared_kwargs = dict(
+            exceedance_prob_24h_5y=0.25,
+            exceedance_prob_72h_5y=0.20,
+            exceedance_prob_7d_5y=0.15,
+            gpm_obs_24h=15.0,
+            spatial_coverage_fraction=0.5,
+            consecutive_signal_days=1,
+        )
+        ev_dry = self._make_evidence(api_mm=5.0, **shared_kwargs)
+        ev_sat = self._make_evidence(api_mm=120.0, **shared_kwargs)
+
+        state_dry = init_state(5.0)
+        state_sat = init_state(120.0)
+
+        result_dry, _ = bn_step(state_dry, ev_dry, built_model)
+        result_sat, _ = bn_step(state_sat, ev_sat, built_model)
+
+        risk_dry = result_dry["p_orange"] + result_dry["p_red"]
+        risk_sat = result_sat["p_orange"] + result_sat["p_red"]
+        assert risk_sat >= risk_dry, "Saturated soil must not reduce flood risk"
+
+    def test_horn_arid_cluster_higher_api_weight(self):
+        """Horn-arid cluster must weight API more heavily than equatorial."""
+        from gik_icechain.risk.crma_model import _CLUSTER_WEIGHTS, EastAfricaCluster
+
+        eq = _CLUSTER_WEIGHTS[EastAfricaCluster.EQUATORIAL_EAST]
+        horn = _CLUSTER_WEIGHTS[EastAfricaCluster.HORN_ARID]
+        assert horn["api"] > eq["api"]
+        assert horn["forecast"] >= eq["forecast"]

@@ -36,9 +36,9 @@ def compute_rolling_accumulations(
         step_hours:   Hours between consecutive forecast steps.
 
     Returns:
-        Dataset with one variable per window named ``tp_{w}h``
-        (same spatial dimensions as *ds*, time axis dropped to a single
-        coordinate ``window_start``).
+        Dataset with one variable per window named ``tp_{w}h``.
+        Each variable retains the same dimensions as *ds[precip_var]*;
+        values represent the window-accumulated total ending at each step.
     """
     if precip_var not in ds:
         raise KeyError(

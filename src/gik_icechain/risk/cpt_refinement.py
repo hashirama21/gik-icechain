@@ -17,32 +17,20 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from gik_icechain.risk.crma_model import CRMAEvidence
+from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
+from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
 
 log = structlog.get_logger(__name__)
 
 try:
     from pgmpy.estimators import MaximumLikelihoodEstimator
-    from pgmpy.models import BayesianNetwork
+    from pgmpy.inference import VariableElimination
 
     PGMPY_AVAILABLE = True
 except ImportError:
+    MaximumLikelihoodEstimator = None  # type: ignore[assignment,misc]
+    VariableElimination = None  # type: ignore[assignment,misc]
     PGMPY_AVAILABLE = False
-
-
-_EAST_AFRICA_ISO3 = {
-    "KEN",
-    "ETH",
-    "UGA",
-    "TZA",
-    "SOM",
-    "SDN",
-    "SSD",
-    "RWA",
-    "BDI",
-    "COD",
-    "ERI",
-}
 
 _EVIDENCE_COLS = [
     "Forecast_Hazard",
@@ -90,7 +78,7 @@ def load_emdat_east_africa(csv_path: Path) -> list[EMDATFloodRecord]:
     df = pd.read_csv(csv_path, parse_dates=["Start Date", "End Date"])
     df = df[
         (df["Disaster Type"] == "Flood")
-        & (df["ISO"].isin(_EAST_AFRICA_ISO3))
+        & (df["ISO"].isin(EAST_AFRICA_COUNTRIES_ISO3))
         & (df["Start Date"] >= "2023-05-01")
     ].copy()
 
@@ -256,29 +244,30 @@ def build_training_dataset(
 
 
 def refine_cpts_with_emdat(
-    model: BayesianNetwork,
+    crma: CRMAModel,
     training_df: pd.DataFrame,
     laplace_alpha: float = 1.0,
     output_path: Path | None = None,
-) -> BayesianNetwork:
-    """Refine the Risk_State CPT using MLE on the EM-DAT training dataset.
+) -> None:
+    """Refine the Risk_State CPT in-place using MLE on the EM-DAT training dataset.
 
     Only the Risk_State leaf node is updated — root node priors are kept
-    as the expert elicitation values.
+    as the expert elicitation values. Rebuilds the inference engine after
+    updating the CPD so the wrapper is immediately usable.
 
     Args:
-        model:         The CRMA BayesianNetwork instance.
+        crma:          Built CRMAModel instance (call build() before this).
         training_df:   Labeled data from build_training_dataset().
         laplace_alpha: Laplace smoothing parameter (1.0 = add-one smoothing).
         output_path:   If given, saves all CPTs to this JSON path.
-
-    Returns:
-        Updated BayesianNetwork with refined Risk_State CPT.
     """
     if not PGMPY_AVAILABLE:
         raise ImportError("pgmpy is required: pip install pgmpy")
+    if crma._model is None:
+        raise RuntimeError("Model not built. Call CRMAModel.build() first.")
 
-    estimator = MaximumLikelihoodEstimator(
+    model = crma._model  # intentional: cpt_refinement owns the CPD update
+    estimator = MaximumLikelihoodEstimator(  # type: ignore[operator]
         model,
         training_df[_EVIDENCE_COLS].copy(),
         state_names=_STATE_NAMES,
@@ -295,6 +284,9 @@ def refine_cpts_with_emdat(
     if not model.check_model():
         raise ValueError("Refined model failed validation")
 
+    # Rebuild the inference engine to pick up the updated CPD
+    crma._inference = VariableElimination(model)  # type: ignore[operator]
+
     if output_path is not None:
         cpts = {
             node: model.get_cpds(node).values.tolist()
@@ -309,4 +301,3 @@ def refine_cpts_with_emdat(
         n_training_samples=len(training_df),
         laplace_alpha=laplace_alpha,
     )
-    return model

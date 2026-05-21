@@ -64,7 +64,7 @@ class ClimateMode:
 
 _SEASON_MONTHS: dict[Season, list[int]] = {
     Season.MAM: [3, 4, 5],
-    Season.OND: [10, 11, 12],
+    Season.OND: [10, 11],       # December transitions to DJF
     Season.JJAS: [6, 7, 8, 9],
     Season.DJF: [12, 1, 2],
 }
@@ -275,16 +275,45 @@ class AdaptiveGEVThresholds:
         mode_key: str,
         window_h: int,
     ) -> dict[int, xr.DataArray]:
-        """Fit GEV per grid cell and return a dict of RP → threshold DataArray."""
+        """Fit GEV per grid cell (free ξ, L-BFGS-B) with Gumbel fallback."""
+        from scipy.optimize import minimize
+
+        exceedance_probs = [1.0 - 1.0 / rp for rp in return_periods]
 
         def fit_cell(data: np.ndarray) -> np.ndarray:
             valid = data[np.isfinite(data) & (data > 0)]
             if len(valid) < 20:
                 return np.full(len(return_periods), np.nan)
+
+            # Attempt 1: GEV with free ξ, L2 regularisation to prevent divergence
+            # on short records. Bounded ξ ∈ [−0.5, 0.5] covers all practical
+            # precipitation extreme value shapes (Coles, 2001).
             try:
-                c, loc, scale = genextreme.fit(valid, f0=0)  # f0=0 constrains to Gumbel
-                # P(X > x) = 1/T  →  x = Q(1 − 1/T)
-                return genextreme.ppf([1.0 - 1.0 / rp for rp in return_periods], c, loc, scale)
+                def _neg_ll(params: np.ndarray) -> float:
+                    c, loc, scale = params
+                    if scale <= 0:
+                        return 1e10
+                    ll = float(genextreme.logpdf(valid, c, loc=loc, scale=scale).sum())
+                    return -(ll - 0.1 * c**2)  # L2 penalty on ξ
+
+                opt = minimize(
+                    _neg_ll,
+                    x0=[0.1, float(np.mean(valid)), float(np.std(valid))],
+                    method="L-BFGS-B",
+                    bounds=[(-0.5, 0.5), (None, None), (1e-6, None)],
+                )
+                if opt.success:
+                    c, loc, scale = opt.x
+                    thresholds = genextreme.ppf(exceedance_probs, c, loc=loc, scale=scale)
+                    if np.all(np.diff(thresholds) > 0) and np.all(thresholds > 0):
+                        return thresholds
+            except Exception:
+                pass
+
+            # Fallback: Gumbel (ξ = 0) — more robust on short records
+            try:
+                c, loc, scale = genextreme.fit(valid, f0=0)
+                return genextreme.ppf(exceedance_probs, c, loc=loc, scale=scale)
             except Exception:
                 return np.full(len(return_periods), np.nan)
 
@@ -299,6 +328,24 @@ class AdaptiveGEVThresholds:
             dask_gufunc_kwargs={"output_sizes": {"return_period": len(return_periods)}},
         )
 
+        nan_fraction = float(
+            np.isnan(all_thresholds.isel(return_period=0).values).mean()
+        )
+        log.info(
+            "gev_fit_complete",
+            mode_key=mode_key,
+            window_h=window_h,
+            nan_fraction_pct=round(nan_fraction * 100, 1),
+        )
+        if nan_fraction > 0.20:
+            log.warning(
+                "high_gev_nan_rate",
+                mode_key=mode_key,
+                window_h=window_h,
+                nan_fraction_pct=round(nan_fraction * 100, 1),
+                action="check_cmorph_data_coverage",
+            )
+
         result: dict[int, xr.DataArray] = {}
         for i, rp in enumerate(return_periods):
             da = all_thresholds.isel(return_period=i).rename(f"threshold_rp{rp}y_{window_h}h")
@@ -307,7 +354,7 @@ class AdaptiveGEVThresholds:
                 "window_h": window_h,
                 "return_period": rp,
                 "mode_key": mode_key,
-                "distribution": "GEV (Gumbel, c=0)",
+                "distribution": "GEV (free xi, L-BFGS-B; Gumbel fallback)",
                 "source": "CMORPH v1.0 climatology",
             }
             result[rp] = da
