@@ -129,6 +129,7 @@ packages = ["src/gik_icechain"]
 target-version = "py311"
 line-length    = 100
 src            = ["src"]
+exclude        = ["notebooks/"]
 
 [tool.ruff.lint]
 select = [
