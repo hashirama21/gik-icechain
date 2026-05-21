@@ -12,10 +12,9 @@ Decision Support in East Africa using the ECMWF IFS Ensemble**
 > Mentors: Nishadh Kalladath · Masilin Gudoshava · Ahmed Amdihun · Anthony Mwanthi · Katherine Egan · Jessica Keune · Hillary Koros
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-green.svg)](https://python.org)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-green.svg)](https://python.org)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-black.svg)](https://github.com/astral-sh/ruff)
-[![CI](https://github.com/code4earth-2026/gik-icechain/actions/workflows/ci.yaml/badge.svg)](https://github.com/code4earth-2026/gik-icechain/actions)
-[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen)](https://pre-commit.com/)
+[![CI](https://github.com/hashirama21/gik-icechain/actions/workflows/ci.yaml/badge.svg)](https://github.com/hashirama21/gik-icechain/actions)
 
 ---
 
@@ -155,35 +154,33 @@ calendar-map storymaps and exportable to the
 ## Quick Start
 
 ```bash
-# Clone
+# Clone and install
 git clone https://github.com/hashirama21/gik-icechain.git
 cd gik-icechain
-
-# Create environment
-conda env create -f environment.yml
-conda activate gik-icechain
-
-# Or with pip
 pip install -e ".[dev]"
 
-# Run the full pipeline for a 30-day test window
-python -m gik_icechain run-all \
-  --start 2024-10-01 \
-  --end   2024-10-31 \
-  --region east_africa \
-  --output results/
-
-# Run only Component 1 (conversion)
-python -m gik_icechain convert --help
+# Run only Component 1 (conversion) — store URI set in configs/default.yaml
+python -m gik_icechain convert --start 2024-10-01 --end 2024-10-31
 
 # Run only Component 2 (exceedance)
-python -m gik_icechain exceedance --help
+python -m gik_icechain exceedance \
+  --store  s3://your-bucket/gik-icechain-store \
+  --output s3://your-bucket/exceedance-zarr \
+  --start  2024-10-01 \
+  --end    2024-10-31
 
 # Run only Component 3 (risk assessment)
-python -m gik_icechain risk --help
+python -m gik_icechain risk \
+  --exceedance-store s3://your-bucket/exceedance-zarr \
+  --output           results/admin1_risk/ \
+  --start            2024-10-01 \
+  --end              2024-10-31
 
-# Launch the dashboard locally
-python -m gik_icechain dashboard --port 8080
+# Run all three components end-to-end
+python -m gik_icechain run-all \
+  --start  2024-10-01 \
+  --end    2024-10-31 \
+  --output results/
 ```
 
 ---
@@ -192,47 +189,35 @@ python -m gik_icechain dashboard --port 8080
 
 ### Requirements
 
-- Python 3.11+
-- (Optional) GPU: not required — pipeline runs on CPU
-- Storage: ~50 GB for calibration data (ERA5 subset) + ~5 GB for results
+- Python 3.12+
+- AWS credentials with read access to `s3://ecmwf-forecasts` (anonymous access, no keys needed)
+- (Optional) Write access to your own S3 bucket for the IceChunk store and Zarr outputs
 
-### Full installation
+### Install
 
 ```bash
-# 1. Clone
-git clone https://github.com/hashirama21/gik-icechain.git
-cd gik-icechain
+# Core pipeline
+pip install -e "."
 
-# 2. Install with all dependencies
-pip install -e ".[full]"
+# With development tools (pytest, ruff, mypy, coverage)
+pip install -e ".[dev]"
 
-# 3. Configure AWS credentials (read-only access to s3://ecmwf-forecasts)
-aws configure --profile ecmwf-open
-# AWS Access Key: <your key>
-# AWS Secret Key: <your secret>
-# Region: eu-west-1
-# Output: json
+# With cloud extras (icechunk, virtualizarr, obstore)
+pip install -e ".[cloud]"
 
-# 4. (Optional) Configure output S3 bucket for IceChunk store
-export GIK_OUTPUT_BUCKET="s3://your-bucket/gik-icechain"
-
-# 5. Run tests
-pytest tests/ -v
-
-# 6. Download admin-1 boundaries and CMORPH thresholds
-python scripts/download_data.py --component all
+# With visualisation extras (matplotlib, seaborn, plotly)
+pip install -e ".[viz]"
 ```
 
-### Docker
+### Configuration
+
+Pipeline settings (HuggingFace dataset ID, store URIs, thresholds path, Dask workers, etc.)
+live in `configs/default.yaml`. Copy and edit before running:
 
 ```bash
-docker build -t gik-icechain:latest .
-docker run --rm \
-  -e AWS_PROFILE=ecmwf-open \
-  -v ~/.aws:/root/.aws:ro \
-  -v $(pwd)/results:/results \
-  gik-icechain:latest \
-  python -m gik_icechain run-all --start 2024-10-01 --end 2024-10-31
+cp configs/default.yaml configs/local.yaml
+# edit configs/local.yaml: set outputs.icechunk_store_uri, sources.*, etc.
+python -m gik_icechain convert --start 2024-10-01 --end 2024-10-01 --config configs/local.yaml
 ```
 
 ---
@@ -249,64 +234,6 @@ docker run --rm \
 | EM-DAT | Global disaster database (flood events) | Free registration | C2 validation, C3 |
 | OCHA/GADM admin-1 | East Africa administrative boundaries | Public | C3 |
 | ERA5 (CDS) | Reanalysis for ENSO/IOD phase classification | Free (CDS account) | C2 thresholds |
-
----
-
-## Running the Full Pipeline
-
-### Step-by-step (production)
-
-```bash
-# 1. Convert GIK Parquet → IceChunk (Component 1)
-python -m gik_icechain convert \
-  --hf-dataset E4DRR/gik-ecmwf-par \
-  --output-store s3://your-bucket/gik-icechain-store \
-  --start 2024-03-01 \
-  --end   2026-03-07 \
-  --workers 16
-
-# 2. Fill archive gap (May 2023 – Feb 2024)
-python scripts/run_gap_fill.py \
-  --s3-source s3://ecmwf-forecasts \
-  --output-parquet s3://your-bucket/gik-parquet-gap \
-  --start 2023-05-01 \
-  --end   2024-02-28
-
-# 3. Compute exceedance probabilities (Component 2)
-python -m gik_icechain exceedance \
-  --store s3://your-bucket/gik-icechain-store \
-  --thresholds data/cmorph_thresholds/ \
-  --output s3://your-bucket/exceedance-zarr \
-  --region east_africa \
-  --workers 32
-
-# 4. Run CRMA-Live risk assessment (Component 3)
-python -m gik_icechain risk \
-  --exceedance-store s3://your-bucket/exceedance-zarr \
-  --gpm-path data/gpm_imerg/ \
-  --admin-boundaries data/admin_boundaries/east_africa_admin1.gpkg \
-  --emdat data/emdat/east_africa_floods.csv \
-  --output results/admin1_risk/
-
-# 5. Generate dashboard
-python dashboard/storymaps/generate_storymaps.py \
-  --exceedance-store s3://your-bucket/exceedance-zarr \
-  --risk-dir results/admin1_risk/ \
-  --output dashboard/calendar_map/data/
-```
-
-### Dask configuration
-
-For large-scale runs, configure Dask via `configs/default.yaml`:
-
-```yaml
-dask:
-  scheduler: distributed
-  n_workers: 32
-  threads_per_worker: 2
-  memory_limit: "8GB"
-  dashboard_address: ":8787"
-```
 
 ---
 
@@ -354,20 +281,17 @@ The interactive calendar-map is deployed at:
 
 ## Contributing
 
-Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome. Please open an issue or pull request on GitHub.
 
 ```bash
 # Install dev dependencies
 pip install -e ".[dev]"
 
-# Install pre-commit hooks
-pre-commit install
+# Run tests
+pytest tests/unit/ -v
 
-# Run full test suite
-make test
-
-# Run linters
-make lint
+# Run linter
+ruff check src/ tests/
 ```
 
 ---
