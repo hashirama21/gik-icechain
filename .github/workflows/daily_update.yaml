@@ -25,6 +25,9 @@ on:
 
 env:
   PYTHON_VERSION: "3.12"
+  # Set MINIO_ENDPOINT_URL secret to redirect all S3 writes to a MinIO instance.
+  # Leave the secret unset (empty) to use standard AWS S3.
+  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
 
 jobs:
 
