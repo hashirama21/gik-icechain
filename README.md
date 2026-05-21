@@ -15,6 +15,7 @@ Decision Support in East Africa using the ECMWF IFS Ensemble**
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-green.svg)](https://python.org)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-black.svg)](https://github.com/astral-sh/ruff)
 [![CI](https://github.com/hashirama21/gik-icechain/actions/workflows/ci.yaml/badge.svg)](https://github.com/hashirama21/gik-icechain/actions)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashirama21/gik-icechain/blob/main/notebooks/colab_e2e_test.ipynb)
 
 ---
 
