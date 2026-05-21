@@ -182,7 +182,8 @@ class TestCRMAModelInference:
 
     def test_saturated_api_increases_risk_vs_dry(self, built_model):
         """API_State=Saturated must not produce lower risk than API_State=Dry."""
-        from gik_icechain.risk.dynamic_bn import init_state, step as bn_step
+        from gik_icechain.risk.dynamic_bn import init_state
+        from gik_icechain.risk.dynamic_bn import step as bn_step
 
         shared_kwargs = dict(
             exceedance_prob_24h_5y=0.25,

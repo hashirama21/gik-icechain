@@ -10,12 +10,14 @@ import pytest
 import xarray as xr
 
 from gik_icechain.exceedance.thresholds import (
+    _SEASON_MONTHS as _SEASON_MONTHS_FOR_TEST,
+)
+from gik_icechain.exceedance.thresholds import (
     AdaptiveGEVThresholds,
     ClimateMode,
     ENSOPhase,
     IODPhase,
     Season,
-    _SEASON_MONTHS as _SEASON_MONTHS_FOR_TEST,
     classify_enso,
     classify_iod,
     get_season,

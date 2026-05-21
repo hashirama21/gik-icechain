@@ -64,9 +64,9 @@ _API_TRANSITION = np.array([
 ])
 
 try:
-    from pgmpy.models import DiscreteBayesianNetwork, DynamicBayesianNetwork
     from pgmpy.factors.discrete import TabularCPD
     from pgmpy.inference import DBNInference, VariableElimination
+    from pgmpy.models import DiscreteBayesianNetwork, DynamicBayesianNetwork
 
     PGMPY_AVAILABLE = True
 except ImportError:
@@ -290,8 +290,8 @@ class CRMAModel:
         if self._dbn_inference is None:
             raise RuntimeError("Model not built. Call build() first.")
 
-        T = len(evidence_sequence)
-        if T == 0:
+        n_steps = len(evidence_sequence)
+        if n_steps == 0:
             return []
 
         # Build evidence spanning all time steps.
@@ -305,7 +305,7 @@ class CRMAModel:
                          "Spatial_Coverage", "Data_Confidence"):
                 dbn_evidence[(node, t)] = obs[node]
 
-        query_vars = [("Risk_State", t) for t in range(T)]
+        query_vars = [("Risk_State", t) for t in range(n_steps)]
         results_raw = self._dbn_inference.forward_inference(query_vars, evidence=dbn_evidence)
 
         out: list[dict[str, Any]] = []
