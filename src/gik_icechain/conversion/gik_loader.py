@@ -174,7 +174,7 @@ class GIKCatalog:
         if variables:
             log.info(
                 "catalog_variable_filter_note",
-                msg="Catalog indexes whole files; variable filter applied per-file by VirtualiZarr.",
+                msg="Catalog indexes whole files; per-file filter applied by VirtualiZarr.",
                 variables=variables,
             )
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -22,7 +22,7 @@ def _parse_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
     except ValueError:
-        raise typer.BadParameter(f"Date must be YYYY-MM-DD, got: {value!r}")
+        raise typer.BadParameter(f"Date must be YYYY-MM-DD, got: {value!r}") from None
 
 app = typer.Typer(
     name="gik-icechain",
@@ -190,8 +190,8 @@ def exceedance(
     output: Annotated[str, typer.Option(help="URI for the output exceedance Zarr store.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     workers: Annotated[int, typer.Option(help="Dask distributed workers.")] = 16,
-    start: Annotated[Optional[str], typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[Optional[str], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[str | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[str | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
     cfg = _bootstrap(config)
@@ -215,8 +215,8 @@ def risk(
     exceedance_store: Annotated[str, typer.Option(help="URI of the exceedance Zarr store.")],
     output: Annotated[Path, typer.Option(help="Output directory for GeoJSON files.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
-    start: Annotated[Optional[str], typer.Option(help="First date (YYYY-MM-DD).")] = None,
-    end: Annotated[Optional[str], typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    start: Annotated[str | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
+    end: Annotated[str | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
 ) -> None:
     """Run CRMA Bayesian Network risk inference for all admin-1 units (C3)."""
     import xarray as xr

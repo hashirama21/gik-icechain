@@ -1,7 +1,7 @@
-try:
+import contextlib
+
+with contextlib.suppress(ImportError):
     from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
-except ImportError:
-    pass  # geopandas/regionmask optional; import directly when needed
 
 from gik_icechain.risk.cpt_refinement import (
     EMDATFloodRecord,

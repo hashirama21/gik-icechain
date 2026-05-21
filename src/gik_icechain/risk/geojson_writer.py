@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
-    import geopandas as gpd
+    pass
 
 log = structlog.get_logger(__name__)
 

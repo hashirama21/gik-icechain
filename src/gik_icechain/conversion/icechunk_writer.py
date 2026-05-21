@@ -124,7 +124,9 @@ class IceChainStore:
                     f"s3://ecmwf-forecasts/"
                     f"{forecast_date.strftime('%Y/%m/%d')}/{run_hour:02d}z/"
                 )
-                fallback_datasets = cfgrib.open_datasets(date_prefix, backend_kwargs={"indexpath": ""})
+                fallback_datasets = cfgrib.open_datasets(
+                    date_prefix, backend_kwargs={"indexpath": ""}
+                )
                 for ds in fallback_datasets:
                     xr.Dataset(ds).to_zarr(session.store, append_dim="time")
                 log.info("cfgrib_fallback_success", date=forecast_date.isoformat())
