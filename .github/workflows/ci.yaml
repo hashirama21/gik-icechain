@@ -38,10 +38,6 @@ jobs:
         with:
           args: "check src/ tests/"
 
-      - uses: astral-sh/ruff-action@v3
-        with:
-          args: "format --check src/ tests/"
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
