@@ -276,8 +276,8 @@ def dashboard(
     typer.echo(f"VEDA UI base URL:  {cfg.dashboard.veda_ui.base_url}")
 
     try:
-        import uvicorn  # type: ignore[import-untyped]
-        from dashboard.app import create_app  # type: ignore[import-not-found]
+        import uvicorn
+        from dashboard.app import create_app
 
         uvicorn.run(create_app(cfg), host="0.0.0.0", port=port)
     except ImportError:
@@ -286,3 +286,7 @@ def dashboard(
             err=True,
         )
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    app()

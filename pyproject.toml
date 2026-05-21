@@ -32,13 +32,20 @@ classifiers = [
 
 dependencies = [
   "zarr>=3.0.8",
-  "icechunk>=1.0",
-  "virtualizarr>=1.0",
+  "icechunk>=2.0",
+  "virtualizarr>=2.0",
+  "obstore>=0.9",
+  "obspec-utils>=0.9",
+
   "xarray>=2025.1.2",
   "dask[distributed]>=2025.1.0",
+
   "fsspec[s3]>=2024.12.0",
   "s3fs>=2024.12.0",
   "gcsfs>=2024.12.0",
+  "huggingface-hub>=0.23",
+
+  "pyarrow>=16.0",
 
   # GRIB2 decoding
   "cfgrib>=0.9.14",
@@ -56,10 +63,7 @@ dependencies = [
   "pyproj>=3.7",
   "rioxarray>=0.17",
 
-  "pgmpy>=0.1.26",
-
-  # Data access
-  "huggingface-hub>=0.23",
+  "pgmpy>=1.0",
 
   # Configuration
   "pydantic>=2.7",
@@ -80,6 +84,7 @@ dependencies = [
 # Visualization + dashboard
 viz = [
   "matplotlib>=3.8",
+  "seaborn>=0.13",
   "cartopy>=0.23",
   "hvplot>=0.9",
   "panel>=1.4",
