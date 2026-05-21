@@ -68,7 +68,6 @@ jobs:
           pytest tests/unit/ \
             -v \
             --tb=short \
-            -m "unit" \
             --cov=src/gik_icechain \
             --cov-report=xml \
             --cov-report=term-missing \
@@ -76,7 +75,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
+        if: matrix.python-version == '3.12'
         with:
           files: coverage.xml
           fail_ci_if_error: false
