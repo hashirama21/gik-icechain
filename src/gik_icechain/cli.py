@@ -10,6 +10,7 @@ Entry points:
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -42,7 +43,8 @@ def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
     return cfg
 
 
-def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
+def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
+    """Run C1 ingest. Returns the last IceChunk commit hash (empty string if nothing ingested)."""
     from gik_icechain.conversion.gik_loader import GIKCatalog
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.conversion.virtualizer import parquet_to_virtual_dataset
@@ -52,6 +54,7 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
     store = IceChainStore(cfg.outputs.icechunk_store_uri)
     store.create_or_open()
 
+    last_commit = ""
     current = start
     while current <= end:
         for run_hour in cfg.component1.run_hours:
@@ -67,8 +70,10 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> None:  # noqa: F821
             # pre-load them as DataFrames (parquet_to_virtual_dataset
             # needs the file paths, not the loaded content).
             vds = parquet_to_virtual_dataset(paths, variables=cfg.component1.variables)
-            store.commit_day(current, vds, run_hour)
+            last_commit = store.commit_day(current, vds, run_hour)
         current += timedelta(days=1)
+
+    return last_commit
 
 
 def _run_exceedance(
@@ -174,14 +179,40 @@ def convert(
     start: Annotated[str, typer.Option("--start", help="First forecast date (YYYY-MM-DD).")],
     end: Annotated[str, typer.Option("--end", help="Last forecast date (YYYY-MM-DD).")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
+    output_store: Annotated[
+        str | None, typer.Option("--output-store", help="Override IceChunk store URI.")
+    ] = None,
+    hf_dataset: Annotated[
+        str | None, typer.Option("--hf-dataset", help="Override HuggingFace dataset ID.")
+    ] = None,
+    mode: Annotated[
+        str, typer.Option("--mode", help="append or overwrite (create_or_open handles both).")
+    ] = "append",
+    output_json: Annotated[
+        Path | None,
+        typer.Option("--output-json", help="Write ingest result JSON (commit_hash, processed_date)."),  # noqa: E501
+    ] = None,
 ) -> None:
     """Ingest ECMWF IFS ensemble GRIB2 files into an IceChunk virtual store (C1)."""
     from gik_icechain.shared.validation import validate_date_range
 
     s, e = _parse_date(start), _parse_date(end)
     validate_date_range(s, e)
-    _run_convert(_bootstrap(config), s, e)
-    typer.echo(f"Convert complete: {s} → {e}")
+
+    cfg = _bootstrap(config)
+    if output_store:
+        cfg.outputs.icechunk_store_uri = output_store
+    if hf_dataset:
+        cfg.sources.gik_hf_dataset = hf_dataset
+
+    commit_hash = _run_convert(cfg, s, e)
+
+    if output_json is not None:
+        output_json.write_text(
+            json.dumps({"commit_hash": commit_hash, "processed_date": e.isoformat()})
+        )
+
+    typer.echo(f"Convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
 
 
 @app.command()
@@ -192,9 +223,21 @@ def exceedance(
     workers: Annotated[int, typer.Option(help="Dask distributed workers.")] = 16,
     start: Annotated[str | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
     end: Annotated[str | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
+    thresholds: Annotated[
+        str | None, typer.Option("--thresholds", help="Override CMORPH thresholds URI/path.")
+    ] = None,
+    region: Annotated[
+        str | None, typer.Option("--region", help="Spatial domain label (informational).")
+    ] = None,
+    mode: Annotated[
+        str, typer.Option("--mode", help="append or overwrite (append is always the default).")
+    ] = "append",
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
     cfg = _bootstrap(config)
+    if thresholds:
+        cfg.sources.cmorph_thresholds_path = thresholds
+
     s = _parse_date(start) if start else None
     e = _parse_date(end) if end else None
 
