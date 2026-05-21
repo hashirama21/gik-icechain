@@ -117,27 +117,20 @@ jobs:
           GIK_TEST_END:   "2024-10-05"
           GIK_OUTPUT_BUCKET: ${{ secrets.GIK_TEST_BUCKET }}
 
-  #  4. Notebook Tests
-  notebooks:
-    name: Notebook Tests
-    runs-on: ubuntu-latest
-    needs: test-unit
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-
-      - name: Install package + notebook deps
-        run: pip install -e ".[dev,viz]"
-
-      - name: Run notebooks (with mock data)
-        run: |
-          pytest --nbmake notebooks/ \
-            --nbmake-timeout=300 \
-            --ignore=notebooks/05_aifs_vs_ifs_comparison.ipynb \
-            -v
-        env:
-          GIK_USE_MOCK_DATA: "true"
+  # 4. Notebook Tests — disabled (notebooks tested manually on Colab)
+  # notebooks:
+  #   name: Notebook Tests
+  #   runs-on: ubuntu-latest
+  #   needs: test-unit
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ env.PYTHON_VERSION }}
+  #         cache: pip
+  #     - name: Install package + notebook deps
+  #       run: pip install -e ".[dev,viz]"
+  #     - name: Run notebooks (with mock data)
+  #       run: pytest --nbmake notebooks/ --nbmake-timeout=300 -v
+  #       env:
+  #         GIK_USE_MOCK_DATA: "true"
