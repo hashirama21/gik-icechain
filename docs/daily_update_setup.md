@@ -45,11 +45,11 @@ All flags used in the workflow are now implemented in `cli.py`.
 
 | Flag | Status | Notes |
 |---|---|---|
-| `--start` / `--end` | ✅ | Always existed |
-| `--output-store` | ✅ | Overrides `cfg.outputs.icechunk_store_uri` |
-| `--hf-dataset` | ✅ | Overrides `cfg.sources.gik_hf_dataset` |
-| `--mode` | ✅ | Accepted; `create_or_open` handles append semantics |
-| `--output-json` | ✅ | Writes `{"commit_hash": "...", "processed_date": "..."}` |
+| `--start` / `--end` | done | Always existed |
+| `--output-store` | done | Overrides `cfg.outputs.icechunk_store_uri` |
+| `--hf-dataset` | done | Overrides `cfg.sources.gik_hf_dataset` |
+| `--mode` | done | Accepted; `create_or_open` handles append semantics |
+| `--output-json` | done | Writes `{"commit_hash": "...", "processed_date": "..."}` |
 
 The `--output-json` file is what the workflow reads to extract `commit_hash`
 and pass it downstream via `$GITHUB_OUTPUT`.
@@ -58,16 +58,16 @@ and pass it downstream via `$GITHUB_OUTPUT`.
 
 | Flag | Status | Notes |
 |---|---|---|
-| `--store` / `--output` / `--start` / `--end` | ✅ | Always existed |
-| `--thresholds` | ✅ | Overrides `cfg.sources.cmorph_thresholds_path` |
-| `--region` | ✅ | Accepted (informational; spatial filtering not yet applied) |
-| `--mode` | ✅ | Accepted; append is always the default |
+| `--store` / `--output` / `--start` / `--end` | done | Always existed |
+| `--thresholds` | done | Overrides `cfg.sources.cmorph_thresholds_path` |
+| `--region` | done | Accepted (informational; spatial filtering not yet applied) |
+| `--mode` | done | Accepted; append is always the default |
 
 ### C3 — `risk`
 
 | Flag | Status | Notes |
 |---|---|---|
-| `--exceedance-store` / `--output` / `--start` / `--end` | ✅ | Always existed |
+| `--exceedance-store` / `--output` / `--start` / `--end` | done | Always existed |
 
 ---
 
@@ -83,10 +83,10 @@ The Dashboard job is **commented out** in `daily_update.yaml` until the script i
 
 | # | Action | Status |
 |---|---|---|
-| 1 | Add missing CLI flags to `convert` and `exceedance` | ✅ Done |
+| 1 | Add missing CLI flags to `convert` and `exceedance` | done Done |
 | 2 | Create `production` environment in GitHub Settings | Pending |
 | 3 | Add all 5 production Secrets | Pending |
-| 4 | Comment out Dashboard job | ✅ Done |
+| 4 | Comment out Dashboard job | done Done |
 | 5 | Create `dashboard/storymaps/generate_storymaps.py` | Pending (re-enable job when ready) |
 
 ---
