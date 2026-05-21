@@ -11,6 +11,7 @@ underlying GRIB2 files on s3://ecmwf-forecasts are never copied.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -44,15 +45,23 @@ class IceChainStore:
     and tag, time-travel checkout, and store validation.
     """
 
-    def __init__(self, storage_uri: str, branch: str = "main") -> None:
+    def __init__(
+        self,
+        storage_uri: str,
+        branch: str = "main",
+        endpoint_url: str | None = None,
+    ) -> None:
         """
         Args:
-            storage_uri: S3 or GCS URI for the IceChunk store.
-            branch:      IceChunk branch name.
+            storage_uri:  S3 or MinIO URI for the IceChunk store (s3://bucket/prefix).
+            branch:       IceChunk branch name.
+            endpoint_url: Custom S3 endpoint for MinIO/on-prem storage.
+                          Falls back to the AWS_ENDPOINT_URL environment variable.
         """
         self.storage_uri = storage_uri
         self.branch = branch
         self._repo: Any | None = None
+        self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
 
     def _check_deps(self) -> None:
         if not ICECHUNK_AVAILABLE:
@@ -285,13 +294,23 @@ class IceChainStore:
         return result
 
     def _storage_config(self) -> Any:
-        """Build a StorageConfig from storage_uri, preserving the key prefix."""
+        """Build a StorageConfig from storage_uri.
+
+        Supports both AWS S3 and MinIO-compatible stores. When AWS_ENDPOINT_URL
+        is set (or endpoint_url was passed to __init__), force_path_style is
+        enabled automatically — required by MinIO.
+        """
         if not self.storage_uri.startswith("s3://"):
             raise ValueError(f"Unsupported storage URI scheme: {self.storage_uri}")
         path = self.storage_uri[5:]
         parts = path.split("/", 1)
         bucket = parts[0]
         prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
+        kwargs: dict[str, Any] = {"bucket": bucket}
         if prefix:
-            return StorageConfig.s3_from_env(bucket=bucket, prefix=prefix)
-        return StorageConfig.s3_from_env(bucket=bucket)
+            kwargs["prefix"] = prefix
+        if self._endpoint_url:
+            kwargs["endpoint_url"] = self._endpoint_url
+            kwargs["force_path_style"] = True
+            log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
+        return StorageConfig.s3_from_env(**kwargs)

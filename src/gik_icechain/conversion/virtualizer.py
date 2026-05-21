@@ -8,6 +8,7 @@ virtualizarr's built-in KerchunkParquetParser.
 
 from __future__ import annotations
 
+import os
 import structlog
 import xarray as xr
 
@@ -55,11 +56,25 @@ class GIKFlatParquetParser:
 
 
 def _build_ecmwf_registry() -> object:
-    """Return an ObjectStoreRegistry configured for anonymous ECMWF S3 access."""
+    """Return an ObjectStoreRegistry for ECMWF GRIB2 byte-range reads.
+
+    By default, targets the public AWS S3 bucket (anonymous access).
+    Set GIK_ECMWF_ENDPOINT_URL to redirect to a local MinIO mirror instead,
+    e.g. GIK_ECMWF_ENDPOINT_URL=http://minio.example.com:9000
+    """
     from obspec_utils.registry import ObjectStoreRegistry
     from obstore.store import S3Store
 
-    store = S3Store(_ECMWF_BUCKET, region=_ECMWF_REGION, skip_signature=True)
+    endpoint_url = os.environ.get("GIK_ECMWF_ENDPOINT_URL")
+    if endpoint_url:
+        store = S3Store(
+            _ECMWF_BUCKET,
+            endpoint_url=endpoint_url,
+            virtual_hosted_style_request=False,
+        )
+        log.info("ecmwf_registry_minio", endpoint=endpoint_url)
+    else:
+        store = S3Store(_ECMWF_BUCKET, region=_ECMWF_REGION, skip_signature=True)
     return ObjectStoreRegistry({_ECMWF_S3_PREFIX: store})
 
 

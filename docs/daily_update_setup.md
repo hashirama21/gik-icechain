@@ -136,7 +136,90 @@ Either create it or comment out the entire Dashboard job until it is implemented
 
 ---
 
-## 6. Notes
+## 6. MinIO / On-Premises S3 Storage
+
+If you run the pipeline against a self-hosted MinIO instance instead of AWS S3,
+no code changes are needed — everything is driven by environment variables.
+
+### How it works
+
+Two env vars are read at runtime:
+
+| Variable | Read by | Purpose |
+|---|---|---|
+| `AWS_ENDPOINT_URL` | `IceChainStore` (`icechunk_writer.py`) | Redirect IceChunk store writes to MinIO |
+| `GIK_ECMWF_ENDPOINT_URL` | `_build_ecmwf_registry` (`virtualizer.py`) | Redirect ECMWF GRIB2 reads to a local mirror |
+
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are reused as-is — MinIO accepts the same format.  
+`force_path_style` is enabled automatically when `AWS_ENDPOINT_URL` is set (required by MinIO).
+
+### Local usage
+
+```bash
+export AWS_ENDPOINT_URL="http://localhost:9000"
+export AWS_ACCESS_KEY_ID="minioadmin"
+export AWS_SECRET_ACCESS_KEY="minioadmin"
+export AWS_REGION="us-east-1"           # dummy value — required by some SDKs
+
+# Optional: only if ECMWF data is mirrored on your MinIO instance
+# export GIK_ECMWF_ENDPOINT_URL="http://localhost:9000"
+
+python -m gik_icechain convert \
+  --start 2024-10-01 --end 2024-10-01 \
+  --config configs/local.yaml
+```
+
+`configs/local.yaml` should set `outputs.icechunk_store_uri: s3://my-minio-bucket/gik-store`.
+
+### GitHub Actions — MinIO secrets
+
+Replace the AWS secrets with MinIO equivalents:
+
+| Secret | Value |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | MinIO access key |
+| `AWS_SECRET_ACCESS_KEY` | MinIO secret key |
+| `MINIO_ENDPOINT_URL` | e.g. `https://minio.your-infra.com` |
+
+Then add to each job in `daily_update.yaml`:
+
+```yaml
+env:
+  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+```
+
+Or set it at the workflow level under the top-level `env:` block so all jobs inherit it.
+
+### MinIO bucket setup
+
+```bash
+# Create buckets (mc = MinIO Client)
+mc alias set local http://localhost:9000 minioadmin minioadmin
+mc mb local/gik-icechain-store
+mc mb local/exceedance-zarr
+mc mb local/gik-data              # for admin1_risk/, cmorph_thresholds/, etc.
+
+# Optional: make IceChunk store publicly readable
+mc anonymous set download local/gik-icechain-store
+```
+
+### ECMWF mirror (optional)
+
+If you want to mirror ECMWF GRIB2 data locally (removes dependency on `s3://ecmwf-forecasts`):
+
+```bash
+# Sync one forecast day to MinIO (large — 51 members × ~200 MB each)
+aws s3 sync s3://ecmwf-forecasts/2024/10/01/00z/ \
+  s3://ecmwf-forecasts/2024/10/01/00z/ \
+  --endpoint-url http://localhost:9000
+
+# Then set:
+export GIK_ECMWF_ENDPOINT_URL="http://localhost:9000"
+```
+
+---
+
+## 7. Notes
 
 - **macOS local testing**: the C1 step uses `date -u -d "yesterday"` (GNU `date`, Linux-only).
   On macOS use `date -u -v-1d +%Y-%m-%d` instead. GitHub Actions runners are Ubuntu so this
