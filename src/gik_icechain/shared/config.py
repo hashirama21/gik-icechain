@@ -51,7 +51,7 @@ class GapFillConfig(BaseModel):
 
 class Component1Config(BaseModel):
     run_hours: list[int] = Field(default_factory=lambda: [0])
-    variables: list[str] = Field(default_factory=lambda: ["tp", "2t", "10u", "10v", "sro", "ssro"])
+    variables: list[str] = Field(default_factory=lambda: ["tp", "2t", "10u", "10v", "ro"])
     icechunk: IceChunkConfig = Field(default_factory=IceChunkConfig)
     gap_fill: GapFillConfig = Field(default_factory=GapFillConfig)
 

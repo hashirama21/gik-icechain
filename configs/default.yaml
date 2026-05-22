@@ -57,8 +57,7 @@ component1:
     - "2t"     # 2m temperature
     - "10u"    # 10m U-wind
     - "10v"    # 10m V-wind
-    - "sro"    # surface runoff
-    - "ssro"   # sub-surface runoff
+    - "ro"     # total runoff (sro/ssro are not in ENFO; ro = surface + sub-surface)
 
   # IceChunk store settings
   icechunk:

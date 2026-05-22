@@ -12,7 +12,7 @@ underlying GRIB2 files on s3://ecmwf-forecasts are never copied.
 from __future__ import annotations
 
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -22,7 +22,6 @@ log = structlog.get_logger(__name__)
 
 try:
     import icechunk  # noqa: F401
-    from icechunk import IcechunkStore, Repository, StorageConfig  # noqa: F401
 
     ICECHUNK_AVAILABLE = True
 except ImportError:
@@ -53,7 +52,7 @@ class IceChainStore:
     ) -> None:
         """
         Args:
-            storage_uri:  S3 or MinIO URI for the IceChunk store (s3://bucket/prefix).
+            storage_uri:  S3 URI (s3://bucket/prefix) or local path for the store.
             branch:       IceChunk branch name.
             endpoint_url: Custom S3 endpoint for MinIO/on-prem storage.
                           Falls back to the AWS_ENDPOINT_URL environment variable.
@@ -72,25 +71,27 @@ class IceChainStore:
     def create(self) -> None:
         """Create a new IceChunk repository at storage_uri."""
         self._check_deps()
-        self._repo = Repository.create(self._storage_config())
+        self._repo = icechunk.Repository.create(
+            self._build_storage(), config=self._build_repo_config()
+        )
         log.info("icechunk_store_created", uri=self.storage_uri)
 
     def open(self) -> None:
         """Open an existing IceChunk repository."""
         self._check_deps()
-        self._repo = Repository.open(self._storage_config())
+        self._repo = icechunk.Repository.open(
+            self._build_storage(), config=self._build_repo_config()
+        )
         log.info("icechunk_store_opened", uri=self.storage_uri)
 
     def create_or_open(self) -> None:
         """Open the store if it exists, otherwise create it."""
         self._check_deps()
-        storage = self._storage_config()
-        try:
-            self._repo = Repository.open(storage)
-            log.info("icechunk_store_opened_existing", uri=self.storage_uri)
-        except Exception:
-            self._repo = Repository.create(storage)
-            log.info("icechunk_store_created_new", uri=self.storage_uri)
+        self._repo = icechunk.Repository.open_or_create(
+            self._build_storage(),
+            config=self._build_repo_config(),
+        )
+        log.info("icechunk_store_ready", uri=self.storage_uri)
 
     def commit_day(
         self,
@@ -117,38 +118,11 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         tag = f"{forecast_date.isoformat()}T{run_hour:02d}Z"
+        # Each day is written to its own zarr group so multiple dates can
+        # coexist in the same IceChunk store without path conflicts.
+        date_group = forecast_date.isoformat()
         session = self._repo.writable_session(self.branch)
-        try:
-            virtual_ds.virtualize.to_icechunk(session.store)
-        except Exception as primary_err:
-            log.warning(
-                "virtualizarr_failed_trying_cfgrib_fallback",
-                date=forecast_date.isoformat(),
-                error=str(primary_err),
-            )
-            try:
-                import cfgrib  # type: ignore[import-untyped]
-
-                date_prefix = (
-                    f"s3://ecmwf-forecasts/"
-                    f"{forecast_date.strftime('%Y/%m/%d')}/{run_hour:02d}z/"
-                )
-                fallback_datasets = cfgrib.open_datasets(
-                    date_prefix, backend_kwargs={"indexpath": ""}
-                )
-                for ds in fallback_datasets:
-                    xr.Dataset(ds).to_zarr(session.store, append_dim="time")
-                log.info("cfgrib_fallback_success", date=forecast_date.isoformat())
-            except Exception as fallback_err:
-                log.error(
-                    "both_parsers_failed",
-                    date=forecast_date.isoformat(),
-                    primary_error=str(primary_err),
-                    fallback_error=str(fallback_err),
-                )
-                raise RuntimeError(
-                    f"Cannot ingest GRIB2 for {forecast_date}: {primary_err}"
-                ) from primary_err
+        virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
         commit_hash = session.commit(
             message=message or f"GIK ingest: {tag}",
@@ -196,7 +170,7 @@ class IceChainStore:
             raise ValueError(f"No commits on or before {as_of_date}. Earliest: {earliest}")
 
         latest_tag = sorted(valid_tags)[-1]
-        snapshot_id = self._repo.get_tag(latest_tag)
+        snapshot_id = self._repo.lookup_tag(latest_tag)
         log.info(
             "time_travel_checkout",
             as_of_date=as_of_date.isoformat(),
@@ -204,16 +178,23 @@ class IceChainStore:
             snapshot=snapshot_id[:12],
         )
 
-        session = self._repo.readonly_session(snapshot=snapshot_id)
-        return xr.open_zarr(session.store, consolidated=False)
+        session = self._repo.readonly_session(snapshot_id=snapshot_id)
+        # Each date's data lives in its own zarr group named after the date.
+        # Resolve the tag date to find the matching group.
+        target_date = latest_tag[:10]
+        return xr.open_zarr(session.store, group=target_date, consolidated=False)
 
     def open_latest(self) -> xr.Dataset:
-        """Open the most recent snapshot of the store."""
+        """Open the most recent snapshot of the store, returning the latest date's group."""
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
         session = self._repo.readonly_session(branch=self.branch)
-        ds = xr.open_zarr(session.store, consolidated=False)
-        log.info("store_opened_latest", dims=dict(ds.dims))
+        tags = sorted(self._repo.list_tags())
+        if not tags:
+            raise RuntimeError("Store has no committed snapshots.")
+        latest_date = tags[-1][:10]
+        ds = xr.open_zarr(session.store, group=latest_date, consolidated=False)
+        log.info("store_opened_latest", date=latest_date, dims=dict(ds.sizes))
         return ds
 
     def list_snapshots(self) -> list[dict[str, str]]:
@@ -222,53 +203,43 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
         snapshots = []
         for tag in sorted(self._repo.list_tags()):
-            commit_hash = self._repo.get_tag(tag)
-            meta = self._repo.get_commit_metadata(commit_hash)
+            snapshot_id = self._repo.lookup_tag(tag)
+            info = self._repo.inspect_snapshot(snapshot_id)
+            meta = info.get("metadata") or {}
             snapshots.append(
                 {
                     "tag": tag,
-                    "commit": commit_hash[:12],
+                    "commit": snapshot_id[:12],
                     "forecast_date": meta.get("forecast_date", ""),
                     "commit_time": meta.get("commit_time", ""),
-                    "message": meta.get("message", ""),
+                    "message": info.get("commit_message", ""),
                 }
             )
         return snapshots
 
-    def compact(self, keep_snapshots: int = 30) -> dict[str, int]:
-        """Consolidate daily micro-manifests into a single index (monthly maintenance).
-
-        Squashes IceChunk commit history, keeping only the *keep_snapshots* most
-        recent snapshots. Keeps the root manifest index under ~50 MB so that
-        time-to-first-byte stays below 3 seconds for end users.
+    def compact(self, keep_days: int = 30) -> dict[str, int]:
+        """Expire snapshots older than keep_days days (monthly maintenance).
 
         Args:
-            keep_snapshots: Number of recent snapshots to preserve (default: 30 = 1 month).
+            keep_days: Retain snapshots from the last keep_days days (default: 30).
 
         Returns:
-            Dict with ``snapshots_before`` and ``snapshots_after`` counts.
+            Dict with ``expired`` count (number of snapshot IDs removed).
         """
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
-        snapshots_before = len(self.list_snapshots())
-        self._repo.squash_history(keep=keep_snapshots)
-        snapshots_after = len(self.list_snapshots())
-
-        log.info(
-            "icechunk_compacted",
-            snapshots_before=snapshots_before,
-            snapshots_after=snapshots_after,
-            kept=keep_snapshots,
-        )
-        return {"snapshots_before": snapshots_before, "snapshots_after": snapshots_after}
+        cutoff = datetime.now(tz=UTC) - timedelta(days=keep_days)
+        expired = self._repo.expire_snapshots(cutoff)
+        log.info("icechunk_compacted", expired=len(expired), keep_days=keep_days)
+        return {"expired": len(expired)}
 
     def validate(self) -> dict[str, Any]:
         """Validate store integrity: day count, gaps, and variable accessibility."""
         ds = self.open_latest()
         snapshots = self.list_snapshots()
 
-        committed_dates = sorted({s["forecast_date"] for s in snapshots})
+        committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})
         n_days = len(committed_dates)
 
         gaps: list[str] = []
@@ -277,7 +248,7 @@ class IceChainStore:
             for ds_date in committed_dates[1:]:
                 next_d = date.fromisoformat(ds_date)
                 if (next_d - current).days > 1:
-                    gaps.append(f"{current} → {next_d}")
+                    gaps.append(f"{current} -> {next_d}")
                 current = next_d
 
         result: dict[str, Any] = {
@@ -293,24 +264,39 @@ class IceChainStore:
         log.info("store_validation", **{k: v for k, v in result.items() if k != "gap_details"})
         return result
 
-    def _storage_config(self) -> Any:
-        """Build a StorageConfig from storage_uri.
+    def _build_repo_config(self) -> Any:
+        """Build a RepositoryConfig that authorises virtual chunks from s3://ecmwf-forecasts/.
 
-        Supports both AWS S3 and MinIO-compatible stores. When AWS_ENDPOINT_URL
-        is set (or endpoint_url was passed to __init__), force_path_style is
-        enabled automatically — required by MinIO.
+        IceChunk requires explicit virtual chunk container declarations so it
+        knows which external S3 prefixes are trusted for byte-range references.
+        The ECMWF bucket is public (anonymous S3 access).
         """
-        if not self.storage_uri.startswith("s3://"):
-            raise ValueError(f"Unsupported storage URI scheme: {self.storage_uri}")
-        path = self.storage_uri[5:]
-        parts = path.split("/", 1)
-        bucket = parts[0]
-        prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
-        kwargs: dict[str, Any] = {"bucket": bucket}
-        if prefix:
-            kwargs["prefix"] = prefix
-        if self._endpoint_url:
-            kwargs["endpoint_url"] = self._endpoint_url
-            kwargs["force_path_style"] = True
-            log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
-        return StorageConfig.s3_from_env(**kwargs)
+        ecmwf_store = icechunk.s3_store(region="eu-west-1", anonymous=True)
+        container = icechunk.VirtualChunkContainer(
+            url_prefix="s3://ecmwf-forecasts/",
+            store=ecmwf_store,
+        )
+        config = icechunk.RepositoryConfig.default()
+        config.set_virtual_chunk_container(container)
+        return config
+
+    def _build_storage(self) -> Any:
+        """Build an icechunk Storage from storage_uri.
+
+        Supports S3 (AWS or MinIO) and local filesystem paths.
+        MinIO: set AWS_ENDPOINT_URL env var or pass endpoint_url to __init__.
+        """
+        if self.storage_uri.startswith("s3://"):
+            path = self.storage_uri[5:]
+            parts = path.split("/", 1)
+            bucket = parts[0]
+            prefix = parts[1].rstrip("/") if len(parts) > 1 else None
+            kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix, "from_env": True}
+            if self._endpoint_url:
+                kwargs["endpoint_url"] = self._endpoint_url
+                kwargs["force_path_style"] = True
+                log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
+            return icechunk.s3_storage(**kwargs)
+
+        # Local filesystem (for testing)
+        return icechunk.local_filesystem_storage(self.storage_uri)

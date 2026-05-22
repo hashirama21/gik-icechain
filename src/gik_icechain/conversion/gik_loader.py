@@ -27,7 +27,7 @@ GIK_CATALOG_FILE = "catalog.parquet"
 
 VALID_RUN_HOURS = (0, 6, 12, 18)
 
-FLOOD_RELEVANT_VARS = ["tp", "2t", "10u", "10v", "sro", "ssro"]
+FLOOD_RELEVANT_VARS = ["tp", "2t", "10u", "10v", "ro"]
 
 
 class GIKManifestEntry(BaseModel):

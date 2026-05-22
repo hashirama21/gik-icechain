@@ -12,6 +12,7 @@ regimes (Finney et al., 2020; White et al., 2021; Nana et al., 2025).
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -20,6 +21,7 @@ import numpy as np
 import pandas as pd
 import structlog
 import xarray as xr
+from scipy.optimize import minimize
 from scipy.stats import genextreme
 
 log = structlog.get_logger(__name__)
@@ -64,7 +66,7 @@ class ClimateMode:
 
 _SEASON_MONTHS: dict[Season, list[int]] = {
     Season.MAM: [3, 4, 5],
-    Season.OND: [10, 11],       # December transitions to DJF
+    Season.OND: [10, 11],  # December transitions to DJF
     Season.JJAS: [6, 7, 8, 9],
     Season.DJF: [12, 1, 2],
 }
@@ -121,6 +123,10 @@ class AdaptiveGEVThresholds:
     ) -> AdaptiveGEVThresholds:
         """Fit GEV distributions to CMORPH climatology, stratified by climate mode.
 
+        All per-cell GEV fits are submitted as a single Dask compute graph so
+        that the Dask scheduler can maximise CPU utilisation across all modes
+        and windows in one pass.
+
         Args:
             cmorph_ds:      xr.Dataset with CMORPH 30-min precipitation
                             (dimensions: time, lat, lon).
@@ -128,35 +134,73 @@ class AdaptiveGEVThresholds:
             windows_h:      Accumulation windows in hours.
             return_periods: Return periods in years.
         """
+        import dask
+
         instance = cls()
         log.info("fitting_gev_thresholds", n_windows=len(windows_h), n_rps=len(return_periods))
 
         enso_iod_daily = enso_iod_index.set_index("date")
 
-        for season in Season:
-            for enso_phase in ENSOPhase:
-                for iod_phase in IODPhase:
-                    mode = ClimateMode(season, enso_phase, iod_phase)
-                    time_mask = cls._build_time_mask(
-                        cmorph_ds.time, season, enso_phase, iod_phase, enso_iod_daily
-                    )
-                    n_samples = int(time_mask.sum())
-                    if n_samples < 30:
-                        log.debug("insufficient_samples", mode=mode.key, n=n_samples)
-                        continue
+        # Collect lazy DataArrays — no Dask compute triggered yet
+        pending: list[tuple[str, int, xr.DataArray]] = []
+        for season, enso_phase, iod_phase in itertools.product(Season, ENSOPhase, IODPhase):
+            mode = ClimateMode(season, enso_phase, iod_phase)
+            time_mask = cls._build_time_mask(
+                cmorph_ds.time, season, enso_phase, iod_phase, enso_iod_daily
+            )
+            n_samples = int(time_mask.sum())
+            if n_samples < 30:
+                log.debug("insufficient_samples", mode=mode.key, n=n_samples)
+                continue
 
-                    instance._thresholds[mode.key] = {}
-                    for window_h in windows_h:
-                        n_steps = window_h * 2  # CMORPH is 30-min resolution
-                        accumulated = (
-                            cmorph_ds["precip"]
-                            .rolling(time=n_steps, min_periods=n_steps)
-                            .sum()
-                            .sel(time=time_mask)
-                        )
-                        instance._thresholds[mode.key][window_h] = cls._fit_gev_gridded(
-                            accumulated, return_periods, mode.key, window_h
-                        )
+            for window_h in windows_h:
+                n_steps = window_h * 2  # CMORPH is 30-min resolution
+                accumulated = (
+                    cmorph_ds["precip"]
+                    .rolling(time=n_steps, min_periods=n_steps)
+                    .sum()
+                    .sel(time=time_mask)
+                )
+                pending.append((mode.key, window_h, cls._fit_gev_lazy(accumulated, return_periods)))
+
+        if not pending:
+            log.warning("no_valid_climate_modes", msg="All modes had insufficient samples (<30)")
+            return instance
+
+        log.info("computing_gev_thresholds", n_tasks=len(pending))
+        # Single Dask scheduler call — all grid-cell GEV fits run in parallel
+        computed: tuple[xr.DataArray, ...] = dask.compute(*[da for _, _, da in pending])
+
+        for (mode_key, window_h, _), all_thresholds in zip(pending, computed, strict=True):
+            nan_fraction = float(np.isnan(all_thresholds.isel(return_period=0).values).mean())
+            log.info(
+                "gev_fit_complete",
+                mode_key=mode_key,
+                window_h=window_h,
+                nan_fraction_pct=round(nan_fraction * 100, 1),
+            )
+            if nan_fraction > 0.20:
+                log.warning(
+                    "high_gev_nan_rate",
+                    mode_key=mode_key,
+                    window_h=window_h,
+                    nan_fraction_pct=round(nan_fraction * 100, 1),
+                    action="check_cmorph_data_coverage",
+                )
+
+            rp_dict: dict[int, xr.DataArray] = {}
+            for i, rp in enumerate(return_periods):
+                da = all_thresholds.isel(return_period=i).rename(f"threshold_rp{rp}y_{window_h}h")
+                da.attrs = {
+                    "units": "mm",
+                    "window_h": window_h,
+                    "return_period": rp,
+                    "mode_key": mode_key,
+                    "distribution": "GEV (free xi, L-BFGS-B; Gumbel fallback)",
+                    "source": "CMORPH v1.0 climatology",
+                }
+                rp_dict[rp] = da
+            instance._thresholds.setdefault(mode_key, {})[window_h] = rp_dict
 
         log.info("gev_thresholds_fitted", n_modes=len(instance._thresholds))
         return instance
@@ -269,15 +313,14 @@ class AdaptiveGEVThresholds:
         return xr.DataArray(month_mask & climate_mask, coords={"time": time_index}, dims="time")
 
     @staticmethod
-    def _fit_gev_gridded(
+    def _fit_gev_lazy(
         accumulated: xr.DataArray,
         return_periods: list[int],
-        mode_key: str,
-        window_h: int,
-    ) -> dict[int, xr.DataArray]:
-        """Fit GEV per grid cell (free ξ, L-BFGS-B) with Gumbel fallback."""
-        from scipy.optimize import minimize
+    ) -> xr.DataArray:
+        """Return a lazy Dask-backed DataArray of GEV quantiles per grid cell.
 
+        Shape: (lat, lon, n_return_periods). Does not trigger Dask compute.
+        """
         exceedance_probs = [1.0 - 1.0 / rp for rp in return_periods]
 
         def fit_cell(data: np.ndarray) -> np.ndarray:
@@ -289,6 +332,7 @@ class AdaptiveGEVThresholds:
             # on short records. Bounded ξ ∈ [−0.5, 0.5] covers all practical
             # precipitation extreme value shapes (Coles, 2001).
             try:
+
                 def _neg_ll(params: np.ndarray) -> float:
                     c, loc, scale = params
                     if scale <= 0:
@@ -317,7 +361,7 @@ class AdaptiveGEVThresholds:
             except Exception:
                 return np.full(len(return_periods), np.nan)
 
-        all_thresholds = xr.apply_ufunc(
+        return xr.apply_ufunc(
             fit_cell,
             accumulated,
             input_core_dims=[["time"]],
@@ -327,36 +371,3 @@ class AdaptiveGEVThresholds:
             dask="parallelized",
             dask_gufunc_kwargs={"output_sizes": {"return_period": len(return_periods)}},
         )
-
-        nan_fraction = float(
-            np.isnan(all_thresholds.isel(return_period=0).values).mean()
-        )
-        log.info(
-            "gev_fit_complete",
-            mode_key=mode_key,
-            window_h=window_h,
-            nan_fraction_pct=round(nan_fraction * 100, 1),
-        )
-        if nan_fraction > 0.20:
-            log.warning(
-                "high_gev_nan_rate",
-                mode_key=mode_key,
-                window_h=window_h,
-                nan_fraction_pct=round(nan_fraction * 100, 1),
-                action="check_cmorph_data_coverage",
-            )
-
-        result: dict[int, xr.DataArray] = {}
-        for i, rp in enumerate(return_periods):
-            da = all_thresholds.isel(return_period=i).rename(f"threshold_rp{rp}y_{window_h}h")
-            da.attrs = {
-                "units": "mm",
-                "window_h": window_h,
-                "return_period": rp,
-                "mode_key": mode_key,
-                "distribution": "GEV (free xi, L-BFGS-B; Gumbel fallback)",
-                "source": "CMORPH v1.0 climatology",
-            }
-            result[rp] = da
-
-        return result
