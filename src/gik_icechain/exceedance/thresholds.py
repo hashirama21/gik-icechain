@@ -112,6 +112,17 @@ class AdaptiveGEVThresholds:
 
     def __init__(self) -> None:
         self._thresholds: dict[str, dict[int, dict[int, xr.DataArray]]] = {}
+        self._call_count: int = 0
+        self._fallback_count: int = 0
+
+    @property
+    def fallback_rate(self) -> float:
+        """Fraction of get() calls that fell back to the neutral-phase threshold."""
+        return self._fallback_count / self._call_count if self._call_count else 0.0
+
+    def reset_stats(self) -> None:
+        self._call_count = 0
+        self._fallback_count = 0
 
     @classmethod
     def from_cmorph(
@@ -272,14 +283,24 @@ class AdaptiveGEVThresholds:
             rp_dict = windows.get(window_h, {})
             return rp_dict.get(return_period)
 
+        self._call_count += 1
+
         result = _lookup(mode.key)
         if result is not None:
             return result
 
+        self._fallback_count += 1
         fallback = ClimateMode(mode.season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
         result = _lookup(fallback.key)
         if result is not None:
             log.debug("threshold_fallback", requested=mode.key, using=fallback.key)
+            if self._call_count >= 10 and self.fallback_rate > 0.20:
+                log.warning(
+                    "threshold_high_fallback_rate",
+                    fallback_rate=f"{self.fallback_rate:.1%}",
+                    fallback_count=self._fallback_count,
+                    total_count=self._call_count,
+                )
             return result
 
         raise KeyError(
