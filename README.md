@@ -47,59 +47,91 @@ GIK-IceChain v2.0 solves this in three components:
 | Return-period thresholds | 6 (2, 5, 10, 20, 40, 100 years) |
 | Admin-1 units | ~300 (11 East African countries) |
 
----
 
 ## Architecture
 
-```
-╔══════════════════════════════════════════════════════════════════════════╗
-║                    GIK-IceChain v2.0 — Pipeline Overview                 ║
-╠══════════════════════════════════════════════════════════════════════════╣
-║                                                                          ║
-║  AWS S3 (s3://ecmwf-forecasts)          HuggingFace                     ║
-║  ┌─────────────────────────────┐        ┌─────────────────────────┐     ║
-║  │  ~1 PB GRIB2 (raw, static) │        │ E4DRR/gik-ecmwf-par     │     ║
-║  │  51 members × 85 steps     │        │ 150 246 Parquet files   │     ║
-║  │  ~1 000 days since May 2023│        │ 18.5 GB (metadata only) │     ║
-║  └─────────────────────────────┘        └────────────┬────────────┘     ║
-║           ▲ byte-range reads only                    │                  ║
-║           │                             C1: VirtualiZarr + IceChunk     ║
-║           │                                          │                  ║
-║           │◄─────────────────────────────────────────┘                  ║
-║                                                      │                  ║
-║                              ┌───────────────────────▼───────────────┐  ║
-║                              │  IceChunk Zarr v3 Virtual Store       │  ║
-║                              │  (public S3 bucket — metadata only)   │  ║
-║                              │  zarr.open(store)  ← single call      │  ║
-║                              │  Full time-travel version history      │  ║
-║                              └───────────────┬───────────────────────┘  ║
-║                                              │                          ║
-║                    ┌─────────────────────────┼─────────────────┐        ║
-║                    │                         │                 │        ║
-║          C2: Exceedance                   CMORPH            GPM IMERG   ║
-║          ┌──────────────────┐          (thresholds)       (observations)║
-║          │ Dask + xarray    │               │                 │        ║
-║          │ 7 windows        │◄──────────────┘                 │        ║
-║          │ 6 return periods │                                  │        ║
-║          │ GEV adaptive     │                                  │        ║
-║          └────────┬─────────┘                                  │        ║
-║                   │                                            │        ║
-║                   │         C3: CRMA-Live                      │        ║
-║          ┌────────▼──────────────────────────────────┐         │        ║
-║          │ Dynamic Bayesian Network (pgmpy)           │◄────────┘        ║
-║          │ API node (soil saturation persistence)    │                  ║
-║          │ EM-DAT CPT refinement                     │                  ║
-║          │ → Admin-1 traffic-light risk (300 units)  │                  ║
-║          └────────────────────┬──────────────────────┘                  ║
-║                               │                                         ║
-║          ┌────────────────────▼──────────────────────┐                  ║
-║          │  Dashboard: Calendar-Map + VEDA Storymaps  │                  ║
-║          │  GitHub Pages + TiTiler (AWS Lambda)       │                  ║
-║          │  One cell per day → click → storymap       │                  ║
-║          └───────────────────────────────────────────┘                  ║
-╚══════════════════════════════════════════════════════════════════════════╝
-```
+```mermaid
+flowchart TD
+    %% ==================== SOURCES ====================
+    subgraph Sources["SOURCES DE DONNÉES"]
+        S3[AWS S3<br/><b>s3://ecmwf-forecasts</b><br/>~1 PB GRIB2]
+        HF[HuggingFace<br/><b>E4DRR/gik-ecmwf-par</b><br/>150 246 Parquet files]
+        
+        S3 ---|"51 members × 85 steps<br/>~1000 days since May 2023"| GRIB[GRIB2 Raw Files]
+        HF ---|"Metadata only<br/>18.5 GB"| Parquet[Parquet Files]
+    end
 
+    %% ==================== C1 : VIRTUAL STORE ====================
+    subgraph C1["C1 — IceChunk Virtual Store"]
+        direction TB
+        VZ[VirtualiZarr] 
+        IC[IceChunk<br/>Zarr v3]
+        Store["IceChunk Zarr v3 Virtual Store<br/>Public S3 Bucket<br/>Metadata Only<br/>zarr.open(store) — Single Call<br/>Full Time-Travel History"]
+        
+        GRIB & Parquet -->|"byte-range reads"| VZ
+        VZ --> IC
+        IC --> Store
+    end
+
+    %% ==================== C2 : EXCEEDANCE ====================
+    subgraph C2["C2 — Exceedance Analysis"]
+        direction TB
+        Dask[Dask + xarray]
+        CMORPH[CMORPH + GPM IMERG<br/>Observations]
+        Thresholds[Thresholds Calculation<br/>7 windows]
+        GEV[GEV Adaptive<br/>6 Return Periods]
+        
+        Store --> Dask
+        CMORPH --> Dask
+        Dask --> Thresholds
+        Thresholds --> GEV
+    end
+
+    %% ==================== C3 : CRMA-LIVE ====================
+    subgraph C3["C3 — CRMA-Live Risk Engine"]
+        direction TB
+        DBN[Dynamic Bayesian Network<br/>pgmpy]
+        Soil[Soil Saturation Persistence<br/>API Node]
+        EMDAT[EM-DAT CPT Refinement]
+        Risk["Admin-1 Traffic-Light Risk<br/>300 administrative units"]
+        
+        GEV --> DBN
+        DBN --> Soil
+        Soil --> EMDAT
+        EMDAT --> Risk
+    end
+
+    %% ==================== DASHBOARD ====================
+    subgraph Dashboard["DASHBOARD & VISUALISATION"]
+        direction TB
+        Calendar[Calendar-Map View]
+        TiTiler[TiTiler<br/>AWS Lambda]
+        Storymaps[VEDA Storymaps]
+        Final["One cell per day<br/>→ Click → Full Storymap"]
+        
+        Risk --> Calendar
+        Calendar --> TiTiler
+        TiTiler --> Storymaps
+        Storymaps --> Final
+    end
+
+    %% Flux principaux
+    Sources --> C1
+    C1 --> C2
+    C2 --> C3
+    C3 --> Dashboard
+
+    %% Styles
+    classDef source fill:#1e40af,stroke:#60a5fa,stroke-width:2px,color:#fff
+    classDef core fill:#166534,stroke:#4ade80,stroke-width:3px,color:#fff
+    classDef process fill:#312e81,stroke:#818cf8,stroke-width:2px,color:#fff
+    classDef final fill:#854d0e,stroke:#fbbf24,stroke-width:3px,color:#fff
+
+    class Sources source
+    class C1 core
+    class C2,C3 process
+    class Dashboard final
+```
 ---
 
 ## Components

@@ -93,7 +93,7 @@ def fill_one_day(
         URI of the written Parquet file.
     """
     try:
-        import cfgrib  # type: ignore[import-untyped]  # noqa: F401
+        import cfgrib
     except ImportError as exc:
         raise RuntimeError("cfgrib is required for gap_filler.fill_one_day") from exc
 

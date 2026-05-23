@@ -1,10 +1,8 @@
 # configs/default.yaml
-# ─────────────────────────────────────────────────────────────────────────────
 # GIK-IceChain v2.0 — Default Pipeline Configuration
 #
 # Override specific values using configs/east_africa.yaml or by passing
 # --config path/to/custom.yaml to any CLI command.
-# ─────────────────────────────────────────────────────────────────────────────
 
 #  Data sources
 sources:
@@ -33,10 +31,10 @@ sources:
 #  Output locations
 outputs:
   # Component 1: IceChunk virtual store
-  icechunk_store_uri: "s3://your-bucket/gik-icechain-store"
+  icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
 
   # Component 2: Exceedance probabilities Zarr
-  exceedance_store_uri: "s3://your-bucket/exceedance-zarr"
+  exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
 
   # Component 3: Admin-1 risk GeoJSON
   risk_output_dir: "results/admin1_risk/"
@@ -57,8 +55,7 @@ component1:
     - "2t"     # 2m temperature
     - "10u"    # 10m U-wind
     - "10v"    # 10m V-wind
-    - "sro"    # surface runoff
-    - "ssro"   # sub-surface runoff
+    - "ro"     # total runoff (sro/ssro are not in ENFO; ro = surface + sub-surface)
 
   # IceChunk store settings
   icechunk:
@@ -104,7 +101,7 @@ component2:
     # forecast steps must be co-located for the IQR/probability reduction.
     # Spatial blocks of 50×50 give ~80 MB chunks (optimal for Dask tasks).
     chunk_dims:
-      number: -1        # all ensemble members in one chunk
+      member: -1        # all ensemble members in one chunk
       step: -1          # all forecast steps in one chunk
       latitude: 50
       longitude: 50
@@ -153,8 +150,8 @@ component3:
 #  Dashboard
 dashboard:
   titiler:
-    endpoint: "https://titiler.lambda.your-domain.com"
-    cog_bucket: "your-bucket"
+    endpoint: ""   # Set to your TiTiler deployment URL (e.g. http://20.116.218.195:8000)
+    cog_bucket: "gik-icechain"
 
   calendar_map:
     signal_threshold_yellow: 0.15   # Exceedance prob → yellow cell
@@ -162,7 +159,7 @@ dashboard:
     signal_threshold_red:    0.50   # → red cell
 
   veda_ui:
-    base_url: "https://code4earth-2026.github.io/gik-icechain/storymaps"
+    base_url: "https://hashirama21.github.io/gik-icechain/storymaps"
 
 
 #  Logging
