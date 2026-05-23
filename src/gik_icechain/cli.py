@@ -16,7 +16,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
 
+import structlog
 import typer
+
+log = structlog.get_logger(__name__)
 
 
 def _parse_date(value: str) -> date:
@@ -86,9 +89,9 @@ def _run_exceedance(
     import pandas as pd
     import xarray as xr
 
+    from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.exceedance.accumulations import compute_rolling_accumulations
     from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
-    from gik_icechain.exceedance.loader import open_icechunk_store
     from gik_icechain.exceedance.thresholds import (
         AdaptiveGEVThresholds,
         ClimateMode,
@@ -100,10 +103,22 @@ def _run_exceedance(
     )
     from gik_icechain.exceedance.writer import build_exceedance_dataset, write_exceedance_store
 
-    ds = open_icechunk_store(store_uri, chunks=cfg.component2.dask.chunk_dims)
-    thresholds = AdaptiveGEVThresholds.load(Path(cfg.sources.cmorph_thresholds_path))
-    acc_ds = compute_rolling_accumulations(ds, windows_h=cfg.component2.windows_h)
+    # Iterate over committed date groups directly — IceChunk stores one zarr
+    # group per forecast date (step-based), not a time-series dataset.
+    store_obj = IceChainStore(store_uri)
+    store_obj.create_or_open()
+    snapshots = store_obj.list_snapshots()
+    committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})
+    if start:
+        committed_dates = [d for d in committed_dates if d >= start.isoformat()]
+    if end:
+        committed_dates = [d for d in committed_dates if d <= end.isoformat()]
 
+    if not committed_dates:
+        log.warning("no_committed_dates_in_range", start=start, end=end)
+        return 0
+
+    thresholds = AdaptiveGEVThresholds.load(Path(cfg.sources.cmorph_thresholds_path))
     enso_iod = pd.read_csv(
         cfg.component2.thresholds.enso_iod_index_path, parse_dates=["date"]
     ).set_index("date")
@@ -118,27 +133,37 @@ def _run_exceedance(
         except KeyError:
             return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
-    all_dates = sorted(str(t)[:10] for t in ds["time"].values)
-    if start:
-        all_dates = [d for d in all_dates if d >= start.isoformat()]
-    if end:
-        all_dates = [d for d in all_dates if d <= end.isoformat()]
-
     results: dict[date, xr.DataArray] = {}
-    for d_str in all_dates:
-        day = date.fromisoformat(d_str)
-        mode = _mode_for(day)
-        day_results: dict[tuple[int, int], xr.DataArray] = {}
+    session = store_obj._repo.readonly_session(branch=store_obj.branch)
 
+    for date_str in committed_dates:
+        day = date.fromisoformat(date_str)
+        mode = _mode_for(day)
+
+        try:
+            day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+            day_ds = day_ds.chunk(cfg.component2.dask.chunk_dims)
+        except Exception as exc:
+            log.warning("exceedance_date_open_failed", date=date_str, error=str(exc)[:120])
+            continue
+
+        acc_ds = compute_rolling_accumulations(day_ds, windows_h=cfg.component2.windows_h)
+
+        day_results: dict[tuple[int, int], xr.DataArray] = {}
         for w in cfg.component2.windows_h:
             for rp in cfg.component2.return_periods:
                 try:
-                    thr_ds = xr.Dataset({f"rp_{rp}y": thresholds.get(w, rp, mode)})
-                    day_results[(w, rp)] = compute_exceedance_probabilities(
-                        acc_ds.sel(time=pd.Timestamp(d_str)), thr_ds, window_h=w, return_period=rp
+                    thr = thresholds.get(w, rp, mode)
+                    p_exceed = compute_exceedance_probabilities(
+                        acc_ds,
+                        xr.Dataset({f"rp_{rp}y": thr}),
+                        window_h=w,
+                        return_period=rp,
+                        member_dim="member",
                     )
-                except Exception:
-                    pass
+                    day_results[(w, rp)] = p_exceed
+                except Exception as exc:
+                    log.debug("exceedance_skip", window=w, rp=rp, error=str(exc)[:80])
 
         if day_results:
             results[day] = build_exceedance_dataset(day_results, day)

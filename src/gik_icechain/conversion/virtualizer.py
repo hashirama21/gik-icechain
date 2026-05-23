@@ -264,12 +264,28 @@ def parquet_to_virtual_dataset(
         return vds
 
     try:
+        from collections import Counter
+
         import pandas as pd
 
-        member_idx = pd.Index(range(len(valid)), name="member")
-        # join="inner" aligns on shared step-hour coordinates, handling members
-        # with different step counts (84 vs 85 steps common in the ENFO archive).
-        vds = xr.concat(valid, dim=member_idx, join="inner", coords="minimal")
+        # ManifestArrays do not support fancy indexing, so xr.concat with
+        # join="inner" (which reindexes along step) will always fail.
+        # Instead, group by step count and keep only the majority, then
+        # concat with join="override" (no reindexing needed when all shapes match).
+        step_sizes = Counter(ds.dims.get("step", 0) for ds in valid)
+        majority_n = step_sizes.most_common(1)[0][0]
+        majority = [ds for ds in valid if ds.dims.get("step", 0) == majority_n]
+        if len(majority) < len(valid):
+            log.warning(
+                "member_step_count_filtered",
+                total=len(valid),
+                kept=len(majority),
+                dropped=len(valid) - len(majority),
+                step_count=majority_n,
+            )
+
+        member_idx = pd.Index(range(len(majority)), name="member")
+        vds = xr.concat(majority, dim=member_idx, join="override", coords="minimal")
     except Exception as exc:
         log.warning(
             "member_concat_failed_returning_first",

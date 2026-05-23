@@ -122,6 +122,19 @@ class IceChainStore:
         # coexist in the same IceChunk store without path conflicts.
         date_group = forecast_date.isoformat()
         session = self._repo.writable_session(self.branch)
+
+        # Idempotent re-run: delete the group if it already exists in this branch.
+        # This allows re-ingesting a date without creating a new store.
+        try:
+            import zarr
+
+            root = zarr.open_group(session.store, zarr_format=3)
+            if date_group in root:
+                del root[date_group]
+                log.debug("icechunk_group_cleared", group=date_group)
+        except Exception as exc:
+            log.debug("icechunk_group_clear_skipped", group=date_group, reason=str(exc))
+
         virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
         commit_hash = session.commit(
@@ -133,7 +146,11 @@ class IceChainStore:
                 "source": "gik-icechain",
             },
         )
-        self._repo.create_tag(tag, commit_hash)
+        try:
+            self._repo.create_tag(tag, commit_hash)
+        except Exception as exc:
+            # Tags are immutable in IceChunk — skip re-creation on idempotent re-runs.
+            log.debug("icechunk_tag_skipped", tag=tag, reason=str(exc)[:120])
         log.info(
             "icechunk_commit",
             date=forecast_date.isoformat(),

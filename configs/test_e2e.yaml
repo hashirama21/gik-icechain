@@ -1,0 +1,51 @@
+sources:
+  gik_hf_dataset: "E4DRR/gik-ecmwf-par"
+  cmorph_thresholds_path: "data/cmorph_thresholds/"
+  gpm_imerg_path: "data/gpm_imerg/"
+  emdat_path: "data/emdat/east_africa_floods.csv"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
+
+outputs:
+  icechunk_store_uri: "s3://gik-icechain-store/test"
+  exceedance_store_uri: "results/test_exceedance"
+  risk_output_dir: "results/test_admin1_risk/"
+
+component1:
+  run_hours: [0]
+  variables: ["tp", "2t", "10u", "10v", "ro"]
+
+component2:
+  windows_h: [24, 72, 168]
+  return_periods: [5, 20]
+  thresholds:
+    adaptive: true
+    enso_iod_index_path: "data/enso_iod_index.csv"
+    fit_from_cmorph: false
+  dask:
+    scheduler: "synchronous"
+    n_workers: 1
+    threads_per_worker: 1
+    memory_limit: "4GB"
+    dashboard_address: ":8787"
+    chunk_dims:
+      member: -1
+      step: -1
+      latitude: 50
+      longitude: 50
+
+component3:
+  crma:
+    cpt_path: null
+    use_refined_cpts: false
+  api:
+    enabled: true
+    decay_factor: 0.8
+    initial_api_mm: 20.0
+  aggregation:
+    method: "mean"
+    min_coverage_fraction: 0.1
+
+logging:
+  level: "INFO"
+  format: "console"
+  output: "stderr"
