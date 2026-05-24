@@ -68,6 +68,8 @@ class ThresholdsConfig(BaseModel):
     adaptive: bool = True
     enso_iod_index_path: str = "data/enso_iod_index.csv"
     fit_from_cmorph: bool = False
+    enso_nino34_threshold: float = 0.5   # °C Niño-3.4 for El Niño / La Niña
+    iod_dmi_threshold: float = 0.4       # °C DMI for Positive / Negative IOD
 
 
 class AIFSTrackConfig(BaseModel):

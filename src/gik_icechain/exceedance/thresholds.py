@@ -396,14 +396,12 @@ class AdaptiveGEVThresholds:
         fallback = ClimateMode(mode.season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
         result = _lookup(fallback.key)
         if result is not None:
-            log.debug("threshold_fallback", requested=mode.key, using=fallback.key)
-            if self._call_count >= 10 and self.fallback_rate > 0.20:
-                log.warning(
-                    "threshold_high_fallback_rate",
-                    fallback_rate=f"{self.fallback_rate:.1%}",
-                    fallback_count=self._fallback_count,
-                    total_count=self._call_count,
-                )
+            log.warning(
+                "threshold_fallback_to_neutral",
+                requested=mode.key,
+                using=fallback.key,
+                fallback_rate=f"{self.fallback_rate:.1%}",
+            )
             return result
 
         raise KeyError(

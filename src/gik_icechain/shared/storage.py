@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import s3fs
+
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential
+
+    _s3_retry = retry(
+        reraise=True,
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+    )
+except ImportError:
+    # tenacity not installed — fall back to no-op decorator
+    def _s3_retry(fn):  # type: ignore[misc]
+        return fn
 
 
 def get_s3_filesystem(
@@ -26,6 +40,7 @@ def get_s3_filesystem(
     )
 
 
+@_s3_retry
 def open_byte_range(
     uri: str,
     offset: int,
@@ -51,6 +66,7 @@ def open_byte_range(
         return f.read(length)
 
 
+@_s3_retry
 def list_s3_objects(
     bucket: str,
     prefix: str,

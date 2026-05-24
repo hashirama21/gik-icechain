@@ -22,6 +22,13 @@ import typer
 log = structlog.get_logger(__name__)
 
 
+def _exit_on_error(command: str, exc: Exception) -> None:
+    """Log a pipeline error and exit with code 1 (DRY error handler for all commands)."""
+    log.error("pipeline_command_failed", command=command, error=str(exc), exc_info=True)
+    typer.echo(f"ERROR [{command}]: {exc}", err=True)
+    raise typer.Exit(code=1)
+
+
 def _parse_date(value: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -126,12 +133,17 @@ def _run_exceedance(
         cfg.component2.thresholds.enso_iod_index_path, parse_dates=["date"]
     ).set_index("date")
 
+    enso_thr = cfg.component2.thresholds.enso_nino34_threshold
+    iod_thr  = cfg.component2.thresholds.iod_dmi_threshold
+
     def _mode_for(d: date) -> ClimateMode:
         season = get_season(d.month)
         try:
             row = enso_iod.loc[pd.Timestamp(d)]
             return ClimateMode(
-                season, classify_enso(float(row["nino34"])), classify_iod(float(row["dmi"]))
+                season,
+                classify_enso(float(row["nino34"]), threshold=enso_thr),
+                classify_iod(float(row["dmi"]), threshold=iod_thr),
             )
         except KeyError:
             return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
@@ -254,7 +266,10 @@ def convert(
     if hf_dataset:
         cfg.sources.gik_hf_dataset = hf_dataset
 
-    commit_hash = _run_convert(cfg, s, e)
+    try:
+        commit_hash = _run_convert(cfg, s, e)
+    except Exception as exc:
+        _exit_on_error("convert", exc)
 
     if output_json is not None:
         output_json.write_text(
@@ -298,7 +313,11 @@ def exceedance(
         except ImportError:
             pass
 
-    n = _run_exceedance(cfg, store, output, s, e)
+    try:
+        n = _run_exceedance(cfg, store, output, s, e)
+    except Exception as exc:
+        _exit_on_error("exceedance", exc)
+
     typer.echo(f"Exceedance complete: {n} days written to {output}")
 
 
@@ -325,7 +344,11 @@ def risk(
         if e is None:
             e = date.fromisoformat(dates[-1])
 
-    written = _run_risk(cfg, exceedance_store, output, s, e)
+    try:
+        written = _run_risk(cfg, exceedance_store, output, s, e)
+    except Exception as exc:
+        _exit_on_error("risk", exc)
+
     typer.echo(f"Risk complete: {len(written)} GeoJSON files in {output}")
 
 
@@ -344,14 +367,15 @@ def run_all(
     cfg = _bootstrap(config)
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
 
-    typer.echo("[1/3] convert …")
-    _run_convert(cfg, s, e)
-
-    typer.echo("[2/3] exceedance …")
-    _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, s, e)
-
-    typer.echo("[3/3] risk …")
-    _run_risk(cfg, exc_uri, output / "admin1_risk", s, e)
+    try:
+        typer.echo("[1/3] convert …")
+        _run_convert(cfg, s, e)
+        typer.echo("[2/3] exceedance …")
+        _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, s, e)
+        typer.echo("[3/3] risk …")
+        _run_risk(cfg, exc_uri, output / "admin1_risk", s, e)
+    except Exception as exc:
+        _exit_on_error("run-all", exc)
 
     typer.echo(f"Pipeline complete. Results in {output}")
 
