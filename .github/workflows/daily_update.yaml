@@ -85,6 +85,15 @@ jobs:
     needs: ingest-daily-gik
     environment: production
     steps:
+      - name: Verify C1 produced a commit
+        run: |
+          COMMIT="${{ needs.ingest-daily-gik.outputs.commit_hash }}"
+          if [ -z "$COMMIT" ]; then
+            echo "::error title=C1 produced no commit::Ingest job completed but commit_hash is empty — no new data for ${{ needs.ingest-daily-gik.outputs.processed_date }}. C2 skipped."
+            exit 1
+          fi
+          echo "C1 commit: $COMMIT"
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:

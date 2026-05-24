@@ -141,6 +141,8 @@ class CRMAEvidence:
     spatial_extensive: float = 0.75
     persist_threshold: int = 3
     soil_memory_days: int = 7
+    hazard_medium_threshold: float = 0.15  # Low → Medium boundary for Forecast_Hazard
+    hazard_high_threshold: float = 0.40    # Medium → High boundary for Forecast_Hazard
 
     def __post_init__(self) -> None:
         for field, val in (
@@ -161,9 +163,9 @@ class CRMAEvidence:
     def forecast_hazard_state(self) -> int:
         """0=Low, 1=Medium, 2=High."""
         p = max(self.exceedance_prob_24h_5y, self.exceedance_prob_72h_5y)
-        if p >= 0.4:
+        if p >= self.hazard_high_threshold:
             return 2
-        if p >= 0.15:
+        if p >= self.hazard_medium_threshold:
             return 1
         return 0
 
@@ -274,6 +276,8 @@ class CRMAModel:
             spatial_extensive=cfg.spatial_threshold_extensive,
             persist_threshold=cfg.consecutive_signal_threshold,
             soil_memory_days=cfg.soil_memory_days,
+            hazard_medium_threshold=cfg.hazard_medium_threshold,
+            hazard_high_threshold=cfg.hazard_high_threshold,
             **kwargs,  # type: ignore[arg-type]
         )
 

@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger(__name__)
 

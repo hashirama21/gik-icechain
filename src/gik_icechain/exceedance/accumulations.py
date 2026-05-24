@@ -100,7 +100,7 @@ def accumulation_for_window(
     n = da.sizes[step_dim]
 
     if n_back >= n:
-        return da.copy()
+        return da
 
     current = da.isel({step_dim: slice(n_back, None)})
     lagged = da.isel({step_dim: slice(0, n - n_back)}).assign_coords({step_dim: current[step_dim]})

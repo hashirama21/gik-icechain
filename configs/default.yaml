@@ -83,7 +83,6 @@ component2:
   thresholds:
     adaptive: true    # false → use static climatological percentiles
     enso_iod_index_path: "data/enso_iod_index.csv"
-    fit_from_cmorph: false   # true → fit from raw CMORPH (slow), false → load pre-computed
 
   # AIFS parallel track (Innovation 3)
   aifs_track:
@@ -141,6 +140,9 @@ component3:
     # Soil-memory threshold: consecutive days of API_State=Saturated
     # that triggers SoilMemory_State=1 (prolonged saturation — DBN Innovation 1a)
     soil_memory_days: 7
+    # Forecast_Hazard discretization thresholds
+    hazard_medium_threshold: 0.15   # Low → Medium exceedance boundary
+    hazard_high_threshold: 0.40     # Medium → High exceedance boundary
     # Exceedance signal thresholds
     signal_threshold_prob: 0.15
     rp_signal: 5
