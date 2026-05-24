@@ -1,0 +1,28 @@
+# configs/benchmark.yaml
+# Configuration for the GIK+IceChunk vs dynamical.org benchmark run.
+
+sources:
+  gik_hf_dataset: "E4DRR/gik-ecmwf-par"
+  cmorph_thresholds_path: "data/cmorph_thresholds/"
+  admin_boundaries_path:  "data/admin_boundaries/east_africa_admin1.gpkg"
+
+outputs:
+  icechunk_store_uri:  "s3://gik-icechain/benchmark-store"
+  exceedance_store_uri: "results/benchmark_exceedance"
+
+component1:
+  run_hours: [0]
+  variables: ["tp"]
+
+component2:
+  windows_h:      [24, 72, 168]
+  return_periods: [5, 20]
+  dask:
+    scheduler: "distributed"
+    n_workers: 4
+    threads_per_worker: 2
+    memory_limit: "4GB"
+
+logging:
+  level:  "INFO"
+  format: "console"

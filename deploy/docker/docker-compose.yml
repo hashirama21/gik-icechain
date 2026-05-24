@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  pipeline-c1:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["python", "-m", "gik_icechain.conversion.gik_loader"]
+    env_file: .env
+    volumes:
+      - ../../configs:/app/configs:ro
+
+  pipeline-c2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["python", "-m", "gik_icechain.exceedance.pipeline"]
+    env_file: .env
+    depends_on:
+      - pipeline-c1
+    volumes:
+      - ../../configs:/app/configs:ro
+
+  pipeline-c3:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    command: ["python", "-m", "gik_icechain.risk.pipeline"]
+    env_file: .env
+    depends_on:
+      - pipeline-c2
+    volumes:
+      - ../../configs:/app/configs:ro

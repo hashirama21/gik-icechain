@@ -1,0 +1,30 @@
+# configs/east_africa.yaml
+# East Africa domain — production override for the GIK-IceChain pipeline.
+# Inherits all defaults from configs/default.yaml; only overrides are listed here.
+
+outputs:
+  icechunk_store_uri:  "s3://gik-icechain/gik-icechain-store"
+  exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
+  risk_output_dir:     "s3://gik-icechain/admin1-risk/"
+
+sources:
+  cmorph_thresholds_path: "s3://gik-icechain/cmorph_thresholds/"
+  gpm_imerg_path:         "s3://gik-icechain/gpm_imerg/"
+  admin_boundaries_path:  "s3://gik-icechain/admin_boundaries/east_africa_admin1.gpkg"
+
+component1:
+  run_hours: [0]
+  variables: ["tp", "2t", "10u", "10v", "ro"]
+
+component2:
+  windows_h:      [3, 6, 12, 24, 48, 72, 168]
+  return_periods: [2, 5, 10, 20, 40, 100]
+  dask:
+    scheduler: "distributed"
+    n_workers: 16
+    threads_per_worker: 2
+    memory_limit: "8GB"
+
+logging:
+  level:  "INFO"
+  format: "json"
