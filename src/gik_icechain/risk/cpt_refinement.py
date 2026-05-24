@@ -244,11 +244,12 @@ def build_training_dataset(
         )
 
     df = pd.DataFrame(rows)
+    dist = df["Risk_State"].value_counts().to_dict() if not df.empty else {}
     log.info(
         "training_dataset_built",
         n_positive=n_positive,
         n_negative=len(df) - n_positive,
-        risk_state_distribution=df["Risk_State"].value_counts().to_dict(),
+        risk_state_distribution=dist,
     )
     return df
 
