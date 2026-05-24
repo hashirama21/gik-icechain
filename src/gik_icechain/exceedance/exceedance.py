@@ -22,11 +22,14 @@ log = structlog.get_logger(__name__)
 _STEP_DIM_CANDIDATES = ("step", "time", "forecast_period")
 
 
-def _find_step_dim(da: xr.DataArray) -> str | None:
+def _find_step_dim(da: xr.DataArray) -> str:
     for candidate in _STEP_DIM_CANDIDATES:
         if candidate in da.dims:
             return candidate
-    return None
+    raise ValueError(
+        f"No step/time dimension found in DataArray (dims={list(da.dims)}). "
+        f"Expected one of {_STEP_DIM_CANDIDATES}."
+    )
 
 
 def compute_exceedance_probabilities(
@@ -64,10 +67,8 @@ def compute_exceedance_probabilities(
     threshold = thresholds_ds[f"rp_{return_period}y"]
     tp = acc_ds[var_name]
 
-    # Worst-case accumulation over the forecast horizon, per member per grid cell
     step_dim = _find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim) if step_dim is not None else tp
-
+    tp_worst = tp.max(dim=step_dim)
     exceedance = (tp_worst > threshold).mean(dim=member_dim)
     exceedance.attrs.update(
         {
@@ -112,7 +113,7 @@ def compute_ensemble_confidence(
 
     tp = acc_ds[var_name]
     step_dim = _find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim) if step_dim is not None else tp
+    tp_worst = tp.max(dim=step_dim)
 
     q25 = tp_worst.quantile(0.25, dim=member_dim)
     q75 = tp_worst.quantile(0.75, dim=member_dim)

@@ -19,7 +19,6 @@ from dry soil with the same 50mm event (SoilMemory_State=1 lowers the CPT
 bucket thresholds and shifts probability mass toward Red).
 
 All CPT parameters are driven by configs/default.yaml (component3.crma_model)
-— no hardcoded numeric constants in this module.
 
 CPT structure from expert elicitation described in:
 Kalladath, N. et al. (2026), "CRMA: Continuous Risk Monitoring and
@@ -129,30 +128,34 @@ class CRMAEvidence:
     api_mm: float
     spatial_coverage_fraction: float
     consecutive_signal_days: int
-    sat_consecutive_days: int = 0   # days API_State has been Saturated (≥ api_threshold_saturated)
+    sat_consecutive_days: int = 0
     gpm_quality: int = 2
+    # Discretization thresholds — instance fields (thread-safe).
+    # Defaults match configs/default.yaml (component3.crma_model).
+    # Use CRMAModel.make_evidence() to get instances pre-loaded from config.
+    gpm_normal_mmday: float = 5.0
+    gpm_above_mmday: float = 25.0
+    api_normal_mm: float = 30.0
+    api_saturated_mm: float = 80.0
+    spatial_regional: float = 0.25
+    spatial_extensive: float = 0.75
+    persist_threshold: int = 3
+    soil_memory_days: int = 7
 
-    # Thresholds — can be overridden via CRMAEvidence.set_thresholds() at startup
-    _gpm_normal: float = 5.0
-    _gpm_above: float = 25.0
-    _api_normal: float = 30.0
-    _api_saturated: float = 80.0
-    _spatial_regional: float = 0.25
-    _spatial_extensive: float = 0.75
-    _persist_threshold: int = 3
-    _soil_memory_days: int = 7
-
-    @classmethod
-    def set_thresholds(cls, cfg: CRMAModelConfig) -> None:  # type: ignore[name-defined]
-        """Update class-level discretization thresholds from config."""
-        cls._gpm_normal = cfg.gpm_obs_normal_mmday
-        cls._gpm_above = cfg.gpm_obs_above_mmday
-        cls._api_normal = cfg.api_threshold_normal_mm
-        cls._api_saturated = cfg.api_threshold_saturated_mm
-        cls._spatial_regional = cfg.spatial_threshold_regional
-        cls._spatial_extensive = cfg.spatial_threshold_extensive
-        cls._persist_threshold = cfg.consecutive_signal_threshold
-        cls._soil_memory_days = cfg.soil_memory_days
+    def __post_init__(self) -> None:
+        for field, val in (
+            ("exceedance_prob_24h_5y", self.exceedance_prob_24h_5y),
+            ("exceedance_prob_72h_5y", self.exceedance_prob_72h_5y),
+            ("exceedance_prob_7d_5y", self.exceedance_prob_7d_5y),
+        ):
+            if not (0.0 <= val <= 1.0):
+                raise ValueError(f"{field}={val!r} must be in [0, 1]")
+        if self.api_mm < 0:
+            raise ValueError(f"api_mm={self.api_mm!r} must be >= 0")
+        if not (0.0 <= self.spatial_coverage_fraction <= 1.0):
+            raise ValueError(
+                f"spatial_coverage_fraction={self.spatial_coverage_fraction!r} must be in [0, 1]"
+            )
 
     @property
     def forecast_hazard_state(self) -> int:
@@ -167,23 +170,23 @@ class CRMAEvidence:
     @property
     def obs_antecedent_state(self) -> int:
         """0=Below normal, 1=Normal, 2=Above normal."""
-        if self.gpm_obs_24h >= self._gpm_above:
+        if self.gpm_obs_24h >= self.gpm_above_mmday:
             return 2
-        if self.gpm_obs_24h >= self._gpm_normal:
+        if self.gpm_obs_24h >= self.gpm_normal_mmday:
             return 1
         return 0
 
     @property
     def temporal_persistence_state(self) -> int:
-        """0=No, 1=Yes (≥ consecutive_signal_threshold days with signal)."""
-        return int(self.consecutive_signal_days >= self._persist_threshold)
+        """0=No, 1=Yes (≥ persist_threshold days with signal)."""
+        return int(self.consecutive_signal_days >= self.persist_threshold)
 
     @property
     def spatial_coverage_state(self) -> int:
         """0=Local, 1=Regional, 2=Extensive."""
-        if self.spatial_coverage_fraction >= self._spatial_extensive:
+        if self.spatial_coverage_fraction >= self.spatial_extensive:
             return 2
-        if self.spatial_coverage_fraction >= self._spatial_regional:
+        if self.spatial_coverage_fraction >= self.spatial_regional:
             return 1
         return 0
 
@@ -194,21 +197,17 @@ class CRMAEvidence:
 
     @property
     def api_state(self) -> int:
-        """0=Dry (API<threshold_normal), 1=Normal, 2=Saturated."""
-        if self.api_mm >= self._api_saturated:
+        """0=Dry, 1=Normal, 2=Saturated."""
+        if self.api_mm >= self.api_saturated_mm:
             return 2
-        if self.api_mm >= self._api_normal:
+        if self.api_mm >= self.api_normal_mm:
             return 1
         return 0
 
     @property
     def soil_memory_state(self) -> int:
-        """0=Recent (< soil_memory_days of saturation), 1=Prolonged (≥ soil_memory_days).
-
-        Captures the scientific distinction: saturated for 15 days + 50mm new
-        rainfall is NOT the same risk as dry soil + 50mm (White et al., 2021).
-        """
-        return int(self.sat_consecutive_days >= self._soil_memory_days)
+        """0=Recent, 1=Prolonged (≥ soil_memory_days of consecutive saturation)."""
+        return int(self.sat_consecutive_days >= self.soil_memory_days)
 
     def to_obs_dict(self) -> dict[str, int]:
         """Discretised evidence as a plain dict keyed by BN node name."""
@@ -258,9 +257,28 @@ class CRMAModel:
         from gik_icechain.shared.config import CRMAModelConfig
         return CRMAModelConfig()
 
+    def make_evidence(self, **kwargs: object) -> CRMAEvidence:
+        """Create a CRMAEvidence pre-loaded with this model's config thresholds.
+
+        Keyword arguments are forwarded directly to CRMAEvidence, which still
+        requires the mandatory positional fields.  Use this factory in production
+        code to guarantee that threshold values always match the live config.
+        """
+        cfg = self._cfg
+        return CRMAEvidence(
+            gpm_normal_mmday=cfg.gpm_obs_normal_mmday,
+            gpm_above_mmday=cfg.gpm_obs_above_mmday,
+            api_normal_mm=cfg.api_threshold_normal_mm,
+            api_saturated_mm=cfg.api_threshold_saturated_mm,
+            spatial_regional=cfg.spatial_threshold_regional,
+            spatial_extensive=cfg.spatial_threshold_extensive,
+            persist_threshold=cfg.consecutive_signal_threshold,
+            soil_memory_days=cfg.soil_memory_days,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
     def build(self) -> None:
         """Construct the static BN, the 2-slice DBN, and the inference lookup table."""
-        CRMAEvidence.set_thresholds(self._cfg)
         cpds = self._build_cpds()
         cpd_compound = next(c for c in cpds if c.variable == "Compound_Risk")
         cpd_risk = next(c for c in cpds if c.variable == "Risk_State")

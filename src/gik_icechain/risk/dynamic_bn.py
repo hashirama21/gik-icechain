@@ -87,6 +87,11 @@ def step(
         Tuple of (result_dict, new_state) where result_dict is the output
         of ``CRMAModel.infer()``.
     """
+    if not (0.0 <= api_decay <= 1.0):
+        raise ValueError(f"api_decay={api_decay!r} must be in [0, 1]")
+    if state.api_mm < 0:
+        raise ValueError(f"state.api_mm={state.api_mm!r} must be >= 0")
+
     evidence_with_state = replace(
         evidence,
         api_mm=state.api_mm,
