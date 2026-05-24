@@ -282,7 +282,7 @@ class AdaptiveGEVThresholds:
         sample_da: xr.DataArray | None = None
         for mk in mode_keys:
             for w in self._thresholds[mk]:
-                for rp, da in self._thresholds[mk][w].items():
+                for _rp, da in self._thresholds[mk][w].items():
                     sample_da = da
                     break
                 if sample_da is not None:

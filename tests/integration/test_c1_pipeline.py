@@ -52,8 +52,7 @@ class TestVirtualizerParsing:
         pytest.importorskip("icechunk", reason="icechunk not installed")
         from gik_icechain.conversion.virtualizer import GIKFlatParquetParser
 
-        parser = GIKFlatParquetParser()
-        import fsspec
+        GIKFlatParquetParser()
         import pandas as _pd
         df = _pd.read_parquet(fake_parquet)
         df["key"] = df["key"].astype(str)
@@ -65,8 +64,9 @@ class TestVirtualizerParsing:
 
     def test_step_hours_populated(self, fake_parquet):
         pytest.importorskip("virtualizarr", reason="virtualizarr not installed")
-        from gik_icechain.conversion.virtualizer import _SFC_STEP_RE
         import pandas as _pd
+
+        from gik_icechain.conversion.virtualizer import _SFC_STEP_RE
 
         df = _pd.read_parquet(fake_parquet)
         df["key"] = df["key"].astype(str)
@@ -107,8 +107,9 @@ class TestIceChunkCommit:
 
     def test_time_travel_checkout(self, local_store):
         pytest.importorskip("icechunk", reason="icechunk not installed")
-        from gik_icechain.conversion.icechunk_writer import IceChainStore
         import zarr
+
+        from gik_icechain.conversion.icechunk_writer import IceChainStore
 
         store = IceChainStore(local_store)
         store.create_or_open()
@@ -133,8 +134,9 @@ class TestIceChunkCommit:
 
     def test_validate_no_gaps(self, local_store):
         pytest.importorskip("icechunk", reason="icechunk not installed")
-        from gik_icechain.conversion.icechunk_writer import IceChainStore
         import zarr
+
+        from gik_icechain.conversion.icechunk_writer import IceChainStore
 
         store = IceChainStore(local_store)
         store.create_or_open()

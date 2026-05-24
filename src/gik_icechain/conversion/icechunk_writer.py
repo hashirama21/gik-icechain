@@ -11,6 +11,7 @@ underlying GRIB2 files on s3://ecmwf-forecasts are never copied.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -28,12 +29,8 @@ except ImportError:
     ICECHUNK_AVAILABLE = False
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
-try:
-    import virtualizarr
-
-    VIRTUALIZARR_AVAILABLE = True
-except ImportError:
-    VIRTUALIZARR_AVAILABLE = False
+VIRTUALIZARR_AVAILABLE = importlib.util.find_spec("virtualizarr") is not None
+if not VIRTUALIZARR_AVAILABLE:
     log.warning("virtualizarr_not_installed", msg="pip install virtualizarr")
 
 

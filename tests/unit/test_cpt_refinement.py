@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
-
 import pandas as pd
-import pytest
 
 from gik_icechain.risk.cpt_refinement import (
-    EMDATFloodRecord,
     _EVIDENCE_COLS,
     _STATE_NAMES,
+    EMDATFloodRecord,
     build_training_dataset,
 )
 
@@ -42,8 +39,10 @@ def _make_dataframes(pcode="KE001", event_date="2024-10-15"):
         }
         for d in dates
     ]
-    gpm_rows = [{"date": d, "admin1_pcode": pcode, "gpm_obs_24h": 30.0 if str(d) == event_date else 2.0}
-                for d in dates]
+    gpm_rows = [
+        {"date": d, "admin1_pcode": pcode, "gpm_obs_24h": 30.0 if str(d) == event_date else 2.0}
+        for d in dates
+    ]
     api_rows = [{"date": d, "admin1_pcode": pcode, "api_mm": 80.0, "sat_consecutive_days": 0}
                 for d in dates]
     return (pd.DataFrame(exc_rows), pd.DataFrame(gpm_rows), pd.DataFrame(api_rows))

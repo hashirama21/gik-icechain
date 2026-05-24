@@ -35,7 +35,11 @@ def forecast_ds() -> xr.Dataset:
 @pytest.fixture
 def thresholds():
     from gik_icechain.exceedance.thresholds import (
-        AdaptiveGEVThresholds, ClimateMode, ENSOPhase, IODPhase, Season,
+        AdaptiveGEVThresholds,
+        ClimateMode,
+        ENSOPhase,
+        IODPhase,
+        Season,
     )
     inst = AdaptiveGEVThresholds()
     template = xr.DataArray(
@@ -46,11 +50,12 @@ def thresholds():
     for season in Season:
         for enso in ENSOPhase:
             for iod in IODPhase:
-                from gik_icechain.exceedance.thresholds import ClimateMode
                 mode = ClimateMode(season, enso, iod)
                 inst._thresholds[mode.key] = {}
                 for w in WINDOWS_H:
-                    inst._thresholds[mode.key][w] = {rp: template * (rp / 5.0) for rp in RETURN_PERIODS}
+                    inst._thresholds[mode.key][w] = {
+                        rp: template * (rp / 5.0) for rp in RETURN_PERIODS
+                    }
     return inst
 
 
@@ -97,6 +102,8 @@ class TestExceedanceProbabilities:
 
 class TestExceedanceWriter:
     def test_write_and_read_zarr(self, forecast_ds, thresholds, tmp_path):
+        import pandas as pd
+
         from gik_icechain.exceedance.accumulations import compute_rolling_accumulations
         from gik_icechain.exceedance.exceedance import (
             compute_ensemble_confidence,
@@ -104,8 +111,6 @@ class TestExceedanceWriter:
         )
         from gik_icechain.exceedance.thresholds import ClimateMode, ENSOPhase, IODPhase, Season
         from gik_icechain.exceedance.writer import build_exceedance_dataset, write_exceedance_store
-
-        import pandas as pd
         acc = compute_rolling_accumulations(forecast_ds, windows_h=WINDOWS_H)
         mode = ClimateMode(Season.OND, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
@@ -141,11 +146,19 @@ class TestExceedanceWriter:
         assert p_finite.min() >= 0.0
         assert p_finite.max() <= 1.0
 
-        conf_vals = set(int(v) for v in np.unique(ds["ensemble_confidence"].values) if np.isfinite(v))
+        conf_vals = {
+            int(v) for v in np.unique(ds["ensemble_confidence"].values) if np.isfinite(v)
+        }
         assert conf_vals.issubset({0, 1, 2})
 
     def test_zarr_threshold_roundtrip(self, thresholds, tmp_path):
-        from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds, ClimateMode, ENSOPhase, IODPhase, Season
+        from gik_icechain.exceedance.thresholds import (
+            AdaptiveGEVThresholds,
+            ClimateMode,
+            ENSOPhase,
+            IODPhase,
+            Season,
+        )
 
         zarr_path = str(tmp_path / "thresholds.zarr")
         thresholds.save_zarr(zarr_path)
