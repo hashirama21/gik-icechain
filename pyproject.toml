@@ -31,7 +31,7 @@ classifiers = [
 
 dependencies = [
   "zarr>=3.0.8",
-  "icechunk>=2.0",
+  "icechunk>=2.0.5",
   "virtualizarr>=2.0",
   "obstore>=0.9",
   "obspec-utils>=0.9",

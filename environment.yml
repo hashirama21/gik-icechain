@@ -1,0 +1,21 @@
+name: gik-icechain
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - icechunk
+  - h5netcdf
+  - scipy
+  - geopandas
+  - shapely
+  - matplotlib
+  - jupyterlab
+  - ipykernel
+  - pip:
+      - -e ".[cloud]"
