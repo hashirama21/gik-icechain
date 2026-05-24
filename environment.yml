@@ -9,6 +9,7 @@ dependencies:
   - pandas
   - xarray
   - netcdf4
+  - icechunk
   - h5netcdf
   - scipy
   - geopandas
