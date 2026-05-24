@@ -3,7 +3,10 @@
 Output Zarr schema::
 
     dimensions: (date, latitude, longitude, window, return_period)
-    variable:   exceedance_prob  — float32 in [0, 1]
+    variables:
+        exceedance_prob      — float32 in [0, 1]
+        ensemble_confidence  — int8 in {0=Low, 1=Medium, 2=High}
+                               derived from inter-member IQR/median (24h window)
     coords:
         date          — datetime64[D]
         latitude      — float32, degrees N
@@ -37,6 +40,7 @@ def write_exceedance_store(
     output_uri: str,
     chunks: dict | None = None,
     append: bool = True,
+    confidence_dict: dict[date, xr.DataArray] | None = None,
 ) -> None:
     """Write or extend the exceedance Zarr store with new forecast dates.
 
@@ -49,6 +53,9 @@ def write_exceedance_store(
         chunks:          Override default Zarr chunking.
         append:          If True, append along the ``date`` dimension when
                          the store already exists; otherwise overwrite.
+        confidence_dict: Optional mapping forecast date → ensemble_confidence
+                         DataArray (lat × lon, int8 0/1/2). Written as a
+                         second variable ``ensemble_confidence``.
     """
     if not exceedance_dict:
         log.warning("write_exceedance_store_empty")
@@ -56,7 +63,7 @@ def write_exceedance_store(
 
     effective_chunks = chunks or _DEFAULT_CHUNKS
 
-    ds = _build_dataset(exceedance_dict)
+    ds = _build_dataset(exceedance_dict, confidence_dict)
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
     try:
@@ -69,9 +76,13 @@ def write_exceedance_store(
             if not new_dates:
                 log.info("write_exceedance_store_no_new_dates")
                 return
-            new_ds = _build_dataset({d: exceedance_dict[d] for d in new_dates.values()}).chunk(
-                {k: v for k, v in effective_chunks.items() if k in ds.dims}
+            new_conf = (
+                {d: confidence_dict[d] for d in new_dates.values() if d in confidence_dict}
+                if confidence_dict else None
             )
+            new_ds = _build_dataset(
+                {d: exceedance_dict[d] for d in new_dates.values()}, new_conf
+            ).chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
             new_ds.to_zarr(output_uri, mode="a", append_dim="date")
             log.info("exceedance_store_appended", n_dates=len(new_dates), uri=output_uri)
             return
@@ -93,7 +104,7 @@ def build_exceedance_dataset(
         forecast_date: The forecast date these results correspond to.
 
     Returns:
-        DataArray with dimensions (latitude, longitude, window, return_period).
+        DataArray with dimensions (date, latitude, longitude, window, return_period).
     """
     windows = sorted({w for w, _ in results})
     rps = sorted({rp for _, rp in results})
@@ -109,23 +120,17 @@ def build_exceedance_dataset(
         dim=xr.DataArray(windows, dims="window", name="window"),
     )
     stacked = stacked.assign_coords(date=pd.Timestamp(forecast_date)).expand_dims("date")
-    stacked.attrs.update(
-        {
-            "long_name": "Exceedance probability",
-            "units": "1",
-        }
-    )
+    stacked.attrs.update({"long_name": "Exceedance probability", "units": "1"})
     return stacked.astype(np.float32)
 
 
-def _build_dataset(exceedance_dict: dict[date, xr.DataArray]) -> xr.Dataset:
+def _build_dataset(
+    exceedance_dict: dict[date, xr.DataArray],
+    confidence_dict: dict[date, xr.DataArray] | None = None,
+) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
-    arrays = [exceedance_dict[d] for d in sorted_dates]
-
-    # Each array already carries a size-1 "date" dim from build_exceedance_dataset;
-    # concat along that existing dim to assemble the full time axis.
-    combined = xr.concat(arrays, dim="date")
-    return xr.Dataset(
+    combined = xr.concat([exceedance_dict[d] for d in sorted_dates], dim="date")
+    ds = xr.Dataset(
         {"exceedance_prob": combined.astype(np.float32)},
         attrs={
             "title": "GIK-IceChain exceedance probabilities",
@@ -133,3 +138,17 @@ def _build_dataset(exceedance_dict: dict[date, xr.DataArray]) -> xr.Dataset:
             "conventions": "CF-1.8",
         },
     )
+    if confidence_dict:
+        conf_arrays = [
+            confidence_dict[d] for d in sorted_dates if d in confidence_dict
+        ]
+        if len(conf_arrays) == len(sorted_dates):
+            conf_combined = xr.concat(conf_arrays, dim="date")
+            ds["ensemble_confidence"] = conf_combined.astype(np.int8)
+            ds["ensemble_confidence"].attrs = {
+                "long_name": "Ensemble confidence level (24h window)",
+                "flag_values": [0, 1, 2],
+                "flag_meanings": "low_confidence medium_confidence high_confidence",
+                "definition": "IQR/max(median,1mm) — ICPAC EGU26-18323",
+            }
+    return ds

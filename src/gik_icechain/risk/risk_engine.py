@@ -124,6 +124,14 @@ def _process_day(
     cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
+    # Ensemble confidence (Data_Confidence BN node): IQR/median spread per admin-1.
+    # Defaults to High (2) when the variable is absent (stores written before this fix).
+    if "ensemble_confidence" in exc_day:
+        conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
+        conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0)
+    else:
+        conf_s = pd.Series(dtype=float)
+
     features = []
     for _, unit in admin.iterrows():
         pcode = str(unit["admin1_pcode"])
@@ -139,6 +147,7 @@ def _process_day(
             spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
             consecutive_signal_days=bn_states[pcode].consecutive_days,
             sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
+            gpm_quality=int(conf_s.get(pcode, 2.0)),
         )
 
         result, bn_states[pcode] = bn_step(

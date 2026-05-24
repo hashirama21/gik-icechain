@@ -39,6 +39,7 @@ _EVIDENCE_COLS = [
     "Spatial_Coverage",
     "Data_Confidence",
     "API_State",
+    "Soil_Memory",
     "Risk_State",
 ]
 
@@ -49,6 +50,7 @@ _STATE_NAMES: dict[str, list[int]] = {
     "Spatial_Coverage": [0, 1, 2],
     "Data_Confidence": [0, 1, 2],
     "API_State": [0, 1, 2],
+    "Soil_Memory": [0, 1],
     "Compound_Risk": [0, 1, 2, 3],
     "Risk_State": [0, 1, 2, 3],
 }
@@ -165,6 +167,9 @@ def build_training_dataset(
                 consecutive_signal_days=int(
                     _col_or_default(exc_row, "consecutive_signal_days", 1.0)
                 ),
+                sat_consecutive_days=int(
+                    _col_or_default(api_row, "sat_consecutive_days", 0.0)
+                ),
             )
 
             rows.append(
@@ -175,6 +180,7 @@ def build_training_dataset(
                     "Spatial_Coverage": evidence.spatial_coverage_state,
                     "Data_Confidence": evidence.data_confidence_state,
                     "API_State": evidence.api_state,
+                    "Soil_Memory": evidence.soil_memory_state,
                     "Risk_State": 3,
                     "source": "emdat_positive",
                     "event_id": record.event_id,
@@ -215,6 +221,9 @@ def build_training_dataset(
             api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
             spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
             consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
+            sat_consecutive_days=int(
+                _col_or_default(api_row, "sat_consecutive_days", 0.0)
+            ),
         )
 
         rows.append(
@@ -225,6 +234,7 @@ def build_training_dataset(
                 "Spatial_Coverage": evidence.spatial_coverage_state,
                 "Data_Confidence": evidence.data_confidence_state,
                 "API_State": evidence.api_state,
+                "Soil_Memory": evidence.soil_memory_state,
                 "Risk_State": min(evidence.forecast_hazard_state, 1),
                 "source": "negative_sample",
                 "event_id": None,

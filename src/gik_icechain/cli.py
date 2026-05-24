@@ -91,7 +91,10 @@ def _run_exceedance(
 
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.exceedance.accumulations import compute_rolling_accumulations
-    from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
+    from gik_icechain.exceedance.exceedance import (
+        compute_ensemble_confidence,
+        compute_exceedance_probabilities,
+    )
     from gik_icechain.exceedance.thresholds import (
         AdaptiveGEVThresholds,
         ClimateMode,
@@ -134,6 +137,7 @@ def _run_exceedance(
             return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
     results: dict[date, xr.DataArray] = {}
+    confidence_results: dict[date, xr.DataArray] = {}
     session = store_obj._repo.readonly_session(branch=store_obj.branch)
 
     for date_str in committed_dates:
@@ -167,8 +171,24 @@ def _run_exceedance(
 
         if day_results:
             results[day] = build_exceedance_dataset(day_results, day)
+            # Compute ensemble confidence from inter-member IQR spread (24h window).
+            # Stored alongside exceedance_prob → feeds Data_Confidence BN node in C3.
+            try:
+                conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim="member")
+                confidence_results[day] = (
+                    conf_da
+                    .assign_coords(date=pd.Timestamp(day))
+                    .expand_dims("date")
+                )
+            except Exception as exc:
+                log.debug("confidence_skip", date=date_str, error=str(exc)[:80])
 
-    write_exceedance_store(results, output_uri, append=True)
+    write_exceedance_store(
+        results,
+        output_uri,
+        append=True,
+        confidence_dict=confidence_results or None,
+    )
     return len(results)
 
 
