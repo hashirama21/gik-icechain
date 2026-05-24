@@ -34,6 +34,10 @@ if not VIRTUALIZARR_AVAILABLE:
     log.warning("virtualizarr_not_installed", msg="pip install virtualizarr")
 
 
+_DEFAULT_MESSAGE_TEMPLATE = "GIK ingest: {date}T{run_hour:02d}Z"
+_DEFAULT_TAG_FORMAT = "{date}T{run_hour:02d}Z"
+
+
 class IceChainStore:
     """Manages the GIK-IceChain virtual store lifecycle.
 
@@ -46,16 +50,24 @@ class IceChainStore:
         storage_uri: str,
         branch: str = "main",
         endpoint_url: str | None = None,
+        commit_message_template: str = _DEFAULT_MESSAGE_TEMPLATE,
+        tag_format: str = _DEFAULT_TAG_FORMAT,
     ) -> None:
         """
         Args:
-            storage_uri:  S3 URI (s3://bucket/prefix) or local path for the store.
-            branch:       IceChunk branch name.
-            endpoint_url: Custom S3 endpoint for MinIO/on-prem storage.
-                          Falls back to the AWS_ENDPOINT_URL environment variable.
+            storage_uri:              S3 URI (s3://bucket/prefix) or local path.
+            branch:                   IceChunk branch name.
+            endpoint_url:             Custom S3 endpoint (MinIO/on-prem).
+                                      Falls back to AWS_ENDPOINT_URL env var.
+            commit_message_template:  Python format-string for commit messages.
+                                      Receives ``date`` (ISO str) and ``run_hour`` (int).
+            tag_format:               Python format-string for snapshot tags.
+                                      Receives ``date`` (ISO str) and ``run_hour`` (int).
         """
         self.storage_uri = storage_uri
         self.branch = branch
+        self._commit_message_template = commit_message_template
+        self._tag_format = tag_format
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
 
@@ -114,7 +126,7 @@ class IceChainStore:
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
-        tag = f"{forecast_date.isoformat()}T{run_hour:02d}Z"
+        tag = self._tag_format.format(date=forecast_date.isoformat(), run_hour=run_hour)
         # Each day is written to its own zarr group so multiple dates can
         # coexist in the same IceChunk store without path conflicts.
         date_group = forecast_date.isoformat()
@@ -135,7 +147,9 @@ class IceChainStore:
         virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
         commit_hash = session.commit(
-            message=message or f"GIK ingest: {tag}",
+            message=message or self._commit_message_template.format(
+                date=forecast_date.isoformat(), run_hour=run_hour
+            ),
             metadata={
                 "forecast_date": forecast_date.isoformat(),
                 "run_hour": str(run_hour),
@@ -197,6 +211,15 @@ class IceChainStore:
         # Resolve the tag date to find the matching group.
         target_date = latest_tag[:10]
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
+
+    def readonly_session(self) -> Any:
+        """Return a read-only session on the current branch.
+
+        Raises RuntimeError if the store has not been opened yet.
+        """
+        if self._repo is None:
+            raise RuntimeError("Store not opened. Call create_or_open() first.")
+        return self._repo.readonly_session(branch=self.branch)
 
     def open_latest(self) -> xr.Dataset:
         """Open the most recent snapshot of the store, returning the latest date's group."""

@@ -62,9 +62,17 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.conversion.virtualizer import parquet_to_virtual_dataset
 
-    catalog = GIKCatalog(cfg.sources.gik_hf_dataset)
+    catalog = GIKCatalog(
+        cfg.sources.gik_hf_dataset,
+        catalog_file=cfg.sources.gik_catalog_file,
+    )
     catalog.load_catalog()
-    store = IceChainStore(cfg.outputs.icechunk_store_uri)
+    store = IceChainStore(
+        cfg.outputs.icechunk_store_uri,
+        branch=cfg.component1.icechunk.branch,
+        commit_message_template=cfg.component1.icechunk.commit_message_template,
+        tag_format=cfg.component1.icechunk.tag_format,
+    )
     store.create_or_open()
 
     last_commit = ""
@@ -154,7 +162,7 @@ def _run_exceedance(
 
     results: dict[date, xr.DataArray] = {}
     confidence_results: dict[date, xr.DataArray] = {}
-    session = store_obj._repo.readonly_session(branch=store_obj.branch)
+    session = store_obj.readonly_session()
 
     for date_str in committed_dates:
         day = date.fromisoformat(date_str)
@@ -202,6 +210,7 @@ def _run_exceedance(
     write_exceedance_store(
         results,
         output_uri,
+        chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
     )
@@ -313,7 +322,11 @@ def exceedance(
         try:
             from dask.distributed import Client
 
-            Client(n_workers=workers, threads_per_worker=2, silence_logs=True)
+            Client(
+                n_workers=workers,
+                threads_per_worker=cfg.component2.dask.threads_per_worker,
+                silence_logs=True,
+            )
         except ImportError:
             log.warning("dask_not_available", workers=workers, msg="running single-threaded")
 

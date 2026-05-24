@@ -284,8 +284,12 @@ class CRMAModel:
     def build(self) -> None:
         """Construct the static BN, the 2-slice DBN, and the inference lookup table."""
         cpds = self._build_cpds()
-        cpd_compound = next(c for c in cpds if c.variable == "Compound_Risk")
-        cpd_risk = next(c for c in cpds if c.variable == "Risk_State")
+        cpd_compound = next((c for c in cpds if c.variable == "Compound_Risk"), None)
+        cpd_risk = next((c for c in cpds if c.variable == "Risk_State"), None)
+        if cpd_compound is None:
+            raise ValueError("CPD for 'Compound_Risk' missing from _build_cpds()")
+        if cpd_risk is None:
+            raise ValueError("CPD for 'Risk_State' missing from _build_cpds()")
 
         self._model = DiscreteBayesianNetwork(_INTRA_EDGES)
         self._model.add_cpds(*cpds)

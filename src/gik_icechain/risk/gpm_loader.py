@@ -60,7 +60,7 @@ def load_gpm_daily(gpm_dir: Path, day: date) -> xr.DataArray | None:
                         return ds[var].squeeze()
             except Exception:
                 continue
-    log.debug("gpm_file_not_found", date=day)
+    log.warning("gpm_file_not_found", date=day, msg="risk computed with zero obs precipitation")
     return None
 
 
