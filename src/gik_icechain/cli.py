@@ -182,11 +182,12 @@ def _run_risk(
     from gik_icechain.risk.crma_model import CRMAModel
     from gik_icechain.risk.risk_engine import run_risk_batch
 
-    crma = CRMAModel()
+    crma = CRMAModel(crma_cfg=cfg.component3.crma_model)
     crma.build()
     if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
         crma.load_cpts(Path(cfg.component3.crma.cpt_path))
 
+    crma_cfg = cfg.component3.crma_model
     return run_risk_batch(
         exceedance_store_uri=exc_uri,
         gpm_dir=Path(cfg.sources.gpm_imerg_path),
@@ -196,6 +197,9 @@ def _run_risk(
         start=start,
         end=end,
         api_decay=cfg.component3.api.decay_factor,
+        initial_api_mm=cfg.component3.api.initial_api_mm,
+        signal_threshold=crma_cfg.signal_threshold_prob,
+        rp_signal=crma_cfg.rp_signal,
     )
 
 

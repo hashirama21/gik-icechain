@@ -1,8 +1,11 @@
-"""Pipeline configuration backed by configs/default.yaml.
+"""Pipeline configuration loaded via OmegaConf + validated by Pydantic.
 
-Loads and validates the YAML config using Pydantic Settings.
-Use ``load_config()`` to obtain a ``GIKConfig`` instance; downstream
-modules should import the config object rather than reading YAML directly.
+OmegaConf handles YAML loading and CLI-override composition (via Hydra or
+manual merge); Pydantic validates types and supplies defaults.
+
+Usage:
+    cfg = load_config()                          # load configs/default.yaml
+    cfg = load_config(Path("my_override.yaml"))  # merge on top of defaults
 """
 
 from __future__ import annotations
@@ -12,10 +15,11 @@ from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _DEFAULT_CONFIG = Path(__file__).parents[4] / "configs" / "default.yaml"
 
+
+# ── Sources ────────────────────────────────────────────────────────────────
 
 class SourcesConfig(BaseModel):
     gik_hf_dataset: str = "E4DRR/gik-ecmwf-par"
@@ -29,12 +33,16 @@ class SourcesConfig(BaseModel):
     admin_boundaries_path: str = "data/admin_boundaries/east_africa_admin1.gpkg"
 
 
+# ── Outputs ────────────────────────────────────────────────────────────────
+
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
     exceedance_store_uri: str = ""
     risk_output_dir: str = "results/admin1_risk/"
     dashboard_data_dir: str = "dashboard/calendar_map/data/"
 
+
+# ── Component 1 ────────────────────────────────────────────────────────────
 
 class IceChunkConfig(BaseModel):
     branch: str = "main"
@@ -55,6 +63,8 @@ class Component1Config(BaseModel):
     icechunk: IceChunkConfig = Field(default_factory=IceChunkConfig)
     gap_fill: GapFillConfig = Field(default_factory=GapFillConfig)
 
+
+# ── Component 2 ────────────────────────────────────────────────────────────
 
 class ThresholdsConfig(BaseModel):
     adaptive: bool = True
@@ -95,6 +105,80 @@ class Component2Config(BaseModel):
     )
 
 
+# ── Component 3 — CRMA model parameters ───────────────────────────────────
+
+class CompoundScoreThresholdsConfig(BaseModel):
+    fresh: list[float] = Field(default_factory=lambda: [1.5, 4.0, 7.0])
+    prolonged: list[float] = Field(default_factory=lambda: [1.0, 3.0, 6.0])
+
+
+class CompoundCPTBucketSetConfig(BaseModel):
+    low: list[float] = Field(default_factory=lambda: [0.85, 0.12, 0.02, 0.01])
+    mid: list[float] = Field(default_factory=lambda: [0.20, 0.60, 0.15, 0.05])
+    mod: list[float] = Field(default_factory=lambda: [0.05, 0.20, 0.55, 0.20])
+    high: list[float] = Field(default_factory=lambda: [0.02, 0.08, 0.30, 0.60])
+
+
+class CompoundCPTBucketsConfig(BaseModel):
+    fresh: CompoundCPTBucketSetConfig = Field(default_factory=CompoundCPTBucketSetConfig)
+    prolonged: CompoundCPTBucketSetConfig = Field(
+        default_factory=lambda: CompoundCPTBucketSetConfig(
+            low=[0.75, 0.18, 0.05, 0.02],
+            mid=[0.10, 0.45, 0.30, 0.15],
+            mod=[0.02, 0.13, 0.45, 0.40],
+            high=[0.01, 0.04, 0.20, 0.75],
+        )
+    )
+
+
+class ClusterWeightConfig(BaseModel):
+    forecast: float = 2.0
+    obs: float = 1.5
+    api: float = 1.5
+
+
+class CRMAModelConfig(BaseModel):
+    """All CRMA BN parameters — no hardcoded values in source modules."""
+
+    # Evidence discretization thresholds
+    gpm_obs_normal_mmday: float = 5.0
+    gpm_obs_above_mmday: float = 25.0
+    api_threshold_normal_mm: float = 30.0
+    api_threshold_saturated_mm: float = 80.0
+    spatial_threshold_regional: float = 0.25
+    spatial_threshold_extensive: float = 0.75
+    consecutive_signal_threshold: int = 3
+    soil_memory_days: int = 7       # days of saturation → SoilMemory_State=1
+
+    # Exceedance signal thresholds
+    signal_threshold_prob: float = 0.15
+    rp_signal: int = 5
+
+    # CPT parameters
+    compound_score_thresholds: CompoundScoreThresholdsConfig = Field(
+        default_factory=CompoundScoreThresholdsConfig
+    )
+    compound_cpt_buckets: CompoundCPTBucketsConfig = Field(
+        default_factory=CompoundCPTBucketsConfig
+    )
+    cluster_weights: dict[str, ClusterWeightConfig] = Field(
+        default_factory=lambda: {
+            "equatorial_east": ClusterWeightConfig(forecast=2.0, obs=1.5, api=1.5),
+            "horn_arid": ClusterWeightConfig(forecast=2.5, obs=1.0, api=2.0),
+            "great_rift": ClusterWeightConfig(forecast=2.0, obs=1.5, api=1.8),
+            "nile_basin": ClusterWeightConfig(forecast=1.8, obs=2.0, api=1.5),
+        }
+    )
+    # API_State inter-slice DBN transition matrix (rows: API_t, cols: API_{t-1})
+    api_transition: list[list[float]] = Field(
+        default_factory=lambda: [
+            [0.70, 0.20, 0.05],
+            [0.25, 0.55, 0.35],
+            [0.05, 0.25, 0.60],
+        ]
+    )
+
+
 class CRMAConfig(BaseModel):
     cpt_path: str | None = None
     use_refined_cpts: bool = False
@@ -127,10 +211,13 @@ class Component3OutputConfig(BaseModel):
 class Component3Config(BaseModel):
     crma: CRMAConfig = Field(default_factory=CRMAConfig)
     api: APIConfig = Field(default_factory=APIConfig)
+    crma_model: CRMAModelConfig = Field(default_factory=CRMAModelConfig)
     emdat_refinement: EMDATRefinementConfig = Field(default_factory=EMDATRefinementConfig)
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
     output: Component3OutputConfig = Field(default_factory=Component3OutputConfig)
 
+
+# ── Dashboard ──────────────────────────────────────────────────────────────
 
 class TiTilerConfig(BaseModel):
     endpoint: str = ""
@@ -153,13 +240,17 @@ class DashboardConfig(BaseModel):
     veda_ui: VedaUIConfig = Field(default_factory=VedaUIConfig)
 
 
+# ── Logging ────────────────────────────────────────────────────────────────
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "json"
     output: str = "stderr"
 
 
-class GIKConfig(BaseSettings):
+# ── Root config ────────────────────────────────────────────────────────────
+
+class GIKConfig(BaseModel):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     outputs: OutputsConfig = Field(default_factory=OutputsConfig)
     component1: Component1Config = Field(default_factory=Component1Config)
@@ -168,36 +259,27 @@ class GIKConfig(BaseSettings):
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
-    model_config = SettingsConfigDict(
-        yaml_file=str(_DEFAULT_CONFIG),
-        yaml_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        from pydantic_settings.main import YamlConfigSettingsSource
-
-        return (init_settings, YamlConfigSettingsSource(settings_cls))
-
 
 def load_config(path: Path | None = None) -> GIKConfig:
-    """Load and validate the pipeline configuration from a YAML file.
+    """Load and validate the pipeline configuration via OmegaConf + Pydantic.
+
+    Loads ``configs/default.yaml`` first, then deep-merges any override file
+    on top.  The merged dict is validated by Pydantic before returning.
 
     Args:
-        path: Path to a YAML config file. Defaults to configs/default.yaml.
+        path: Optional override YAML file merged on top of defaults.
 
     Returns:
         Validated GIKConfig instance.
     """
-    if path is None:
-        return GIKConfig()
+    from omegaconf import OmegaConf
 
-    return GIKConfig.model_validate(yaml.safe_load(path.read_text()))
+    base_cfg = OmegaConf.load(_DEFAULT_CONFIG)
+
+    if path is not None and path.exists():
+        override = OmegaConf.load(path)
+        merged = OmegaConf.merge(base_cfg, override)
+    else:
+        merged = base_cfg
+
+    return GIKConfig.model_validate(OmegaConf.to_container(merged, resolve=True))
