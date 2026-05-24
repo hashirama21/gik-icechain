@@ -6,11 +6,11 @@ Unit tests for the CRMA Bayesian Network model.
 import pytest
 
 from gik_icechain.risk.crma_model import (
+    _CLUSTER_WEIGHTS,
     RISK_LEVELS,
     CRMAEvidence,
     CRMAModel,
     EastAfricaCluster,
-    _CLUSTER_WEIGHTS,
 )
 
 
@@ -214,8 +214,6 @@ class TestCRMAModelInference:
     def test_soil_memory_amplifies_risk(self, built_model):
         """Key DBN scientific test: 15-day saturated soil + 50mm MUST produce
         higher P(Red) than dry soil + 50mm (same forecast hazard)."""
-        from gik_icechain.risk.dynamic_bn import init_state
-        from gik_icechain.risk.dynamic_bn import step as bn_step
 
         shared = dict(
             exceedance_prob_24h_5y=0.30,

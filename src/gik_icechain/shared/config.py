@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[3] / "configs" / "default.yaml"
