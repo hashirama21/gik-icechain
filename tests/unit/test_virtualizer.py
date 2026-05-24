@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from gik_icechain.conversion.virtualizer import GIKFlatParquetParser, _to_ref_value
 
@@ -70,7 +68,7 @@ class TestGIKFlatParquetParser:
         return str(path)
 
     def test_step_hours_extracted(self, tmp_path):
-        parser = GIKFlatParquetParser()
+        GIKFlatParquetParser()
         path = self._make_parquet(tmp_path, steps=[0, 6, 12])
         # Call the parser directly (registry not used for step_hours extraction)
         # Just verify that after parsing, step_hours is populated correctly

@@ -11,6 +11,7 @@ Requires Lithops configured for Google Cloud Run (deploy/cloud_run/).
 
 from __future__ import annotations
 
+import importlib.util
 import io
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -92,10 +93,8 @@ def fill_one_day(
     Returns:
         URI of the written Parquet file.
     """
-    try:
-        import cfgrib
-    except ImportError as exc:
-        raise RuntimeError("cfgrib is required for gap_filler.fill_one_day") from exc
+    if not importlib.util.find_spec("cfgrib"):
+        raise RuntimeError("cfgrib is required for gap_filler.fill_one_day")
 
     vars_to_process = variables or FLOOD_RELEVANT_VARS
     fs = get_s3_filesystem(no_sign=True, region=s3_region)

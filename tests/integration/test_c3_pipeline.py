@@ -33,7 +33,8 @@ def built_crma():
 def fake_exceedance_store(tmp_path):
     """Write a minimal exceedance Zarr store for TEST_DATE."""
     rng = np.random.default_rng(0)
-    p_data = rng.uniform(0.0, 0.5, (1, NLAT, NLON, len(WINDOWS_H), len(RETURN_PERIODS))).astype(np.float32)
+    shape = (1, NLAT, NLON, len(WINDOWS_H), len(RETURN_PERIODS))
+    p_data = rng.uniform(0.0, 0.5, shape).astype(np.float32)
     conf_data = rng.integers(0, 3, (1, NLAT, NLON), dtype=np.int8)
 
     ds = xr.Dataset(
@@ -72,7 +73,11 @@ def fake_admin_boundaries(tmp_path):
     from shapely.geometry import box
 
     gdf = gpd.GeoDataFrame(
-        {"admin1_pcode": ["KE001", "KE002"], "admin1_name": ["West", "East"], "country_code": ["KE", "KE"]},
+        {
+            "admin1_pcode": ["KE001", "KE002"],
+            "admin1_name": ["West", "East"],
+            "country_code": ["KE", "KE"],
+        },
         geometry=[box(35.2, 0.2, 36.8, 1.8), box(37.0, 0.2, 38.5, 1.8)],
         crs="EPSG:4326",
     )
@@ -155,6 +160,7 @@ class TestRiskBatch:
     ):
         pytest.importorskip("regionmask", reason="regionmask not installed")
         from datetime import timedelta
+
         from gik_icechain.risk.risk_engine import run_risk_batch
 
         wrong_date = TEST_DATE + timedelta(days=30)
