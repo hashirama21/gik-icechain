@@ -21,7 +21,7 @@ import xarray as xr
 log = structlog.get_logger(__name__)
 
 try:
-    import icechunk  # noqa: F401
+    import icechunk
 
     ICECHUNK_AVAILABLE = True
 except ImportError:
@@ -29,7 +29,7 @@ except ImportError:
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
 try:
-    import virtualizarr  # noqa: F401
+    import virtualizarr
 
     VIRTUALIZARR_AVAILABLE = True
 except ImportError:

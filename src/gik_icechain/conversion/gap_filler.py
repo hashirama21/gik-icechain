@@ -181,7 +181,7 @@ def _extract_references(
     fs: Any,
 ) -> list[dict[str, Any]]:
     """Read a GRIB2 file and return byte-range reference dicts for *variables*."""
-    import cfgrib  # type: ignore[import-untyped]
+    import cfgrib
 
     rows: list[dict[str, Any]] = []
     with fs.open(grib_uri, "rb") as raw:

@@ -19,8 +19,6 @@ from pydantic import BaseModel, Field
 _DEFAULT_CONFIG = Path(__file__).parents[4] / "configs" / "default.yaml"
 
 
-# ── Sources ────────────────────────────────────────────────────────────────
-
 class SourcesConfig(BaseModel):
     gik_hf_dataset: str = "E4DRR/gik-ecmwf-par"
     gik_catalog_file: str = "catalog.parquet"
@@ -33,7 +31,7 @@ class SourcesConfig(BaseModel):
     admin_boundaries_path: str = "data/admin_boundaries/east_africa_admin1.gpkg"
 
 
-# ── Outputs ────────────────────────────────────────────────────────────────
+# Outputs
 
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
@@ -42,7 +40,7 @@ class OutputsConfig(BaseModel):
     dashboard_data_dir: str = "dashboard/calendar_map/data/"
 
 
-# ── Component 1 ────────────────────────────────────────────────────────────
+#  Component 1
 
 class IceChunkConfig(BaseModel):
     branch: str = "main"
@@ -64,7 +62,7 @@ class Component1Config(BaseModel):
     gap_fill: GapFillConfig = Field(default_factory=GapFillConfig)
 
 
-# ── Component 2 ────────────────────────────────────────────────────────────
+#  Component 2
 
 class ThresholdsConfig(BaseModel):
     adaptive: bool = True
@@ -105,7 +103,7 @@ class Component2Config(BaseModel):
     )
 
 
-# ── Component 3 — CRMA model parameters ───────────────────────────────────
+#  Component 3 — CRMA model parameters
 
 class CompoundScoreThresholdsConfig(BaseModel):
     fresh: list[float] = Field(default_factory=lambda: [1.5, 4.0, 7.0])
@@ -217,7 +215,7 @@ class Component3Config(BaseModel):
     output: Component3OutputConfig = Field(default_factory=Component3OutputConfig)
 
 
-# ── Dashboard ──────────────────────────────────────────────────────────────
+# Dashboard
 
 class TiTilerConfig(BaseModel):
     endpoint: str = ""
@@ -240,7 +238,7 @@ class DashboardConfig(BaseModel):
     veda_ui: VedaUIConfig = Field(default_factory=VedaUIConfig)
 
 
-# ── Logging ────────────────────────────────────────────────────────────────
+#  Logging
 
 class LoggingConfig(BaseModel):
     level: str = "INFO"
@@ -248,7 +246,7 @@ class LoggingConfig(BaseModel):
     output: str = "stderr"
 
 
-# ── Root config ────────────────────────────────────────────────────────────
+#  Root config
 
 class GIKConfig(BaseModel):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
