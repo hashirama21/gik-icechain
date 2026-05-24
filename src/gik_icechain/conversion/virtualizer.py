@@ -242,7 +242,7 @@ def parquet_to_virtual_dataset(
     def _fetch(idx: int, path: str) -> tuple[int, xr.Dataset | None]:
         try:
             return idx, _open_one_virtual(path, variables, registry)
-        except Exception:
+        except (OSError, ValueError, KeyError, RuntimeError):
             log.warning("parquet_skipped", path=path, exc_info=True)
             return idx, None
 

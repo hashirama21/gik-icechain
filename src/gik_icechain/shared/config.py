@@ -16,7 +16,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-_DEFAULT_CONFIG = Path(__file__).parents[4] / "configs" / "default.yaml"
+DEFAULT_CONFIG_PATH = Path(__file__).parents[3] / "configs" / "default.yaml"
 
 
 class SourcesConfig(BaseModel):
@@ -67,7 +67,6 @@ class Component1Config(BaseModel):
 class ThresholdsConfig(BaseModel):
     adaptive: bool = True
     enso_iod_index_path: str = "data/enso_iod_index.csv"
-    fit_from_cmorph: bool = False
     enso_nino34_threshold: float = 0.5   # °C Niño-3.4 for El Niño / La Niña
     iod_dmi_threshold: float = 0.4       # °C DMI for Positive / Negative IOD
 
@@ -150,6 +149,9 @@ class CRMAModelConfig(BaseModel):
     consecutive_signal_threshold: int = 3
     soil_memory_days: int = 7       # days of saturation → SoilMemory_State=1
 
+    # Forecast_Hazard discretization thresholds (exceedance prob)
+    hazard_medium_threshold: float = 0.15   # Low → Medium boundary
+    hazard_high_threshold: float = 0.40     # Medium → High boundary
     # Exceedance signal thresholds
     signal_threshold_prob: float = 0.15
     rp_signal: int = 5
@@ -274,7 +276,7 @@ def load_config(path: Path | None = None) -> GIKConfig:
     """
     from omegaconf import OmegaConf
 
-    base_cfg = OmegaConf.load(_DEFAULT_CONFIG)
+    base_cfg = OmegaConf.load(DEFAULT_CONFIG_PATH)
 
     if path is not None and path.exists():
         override = OmegaConf.load(path)

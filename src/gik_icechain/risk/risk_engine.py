@@ -113,9 +113,13 @@ def _process_day(
         log.warning("exceedance_date_missing", date=day)
         return None
 
-    exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
-    exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
-    exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
+    try:
+        exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
+        exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
+        exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
+    except KeyError as exc:
+        log.warning("exceedance_window_missing", date=day, rp=rp_signal, error=str(exc))
+        return None
     gpm_da = load_gpm_daily(gpm_dir, day)
 
     p_24h_s = aggregate_to_admin1(exc_24h, admin)
@@ -128,9 +132,9 @@ def _process_day(
     # Defaults to High (2) when the variable is absent (stores written before this fix).
     if "ensemble_confidence" in exc_day:
         conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
-        conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0)
+        conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0).astype("int8")
     else:
-        conf_s = pd.Series(dtype=float)
+        conf_s = pd.Series(dtype="int8")
 
     features = []
     for _, unit in admin.iterrows():

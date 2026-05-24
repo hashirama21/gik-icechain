@@ -19,6 +19,8 @@ from typing import Annotated
 import structlog
 import typer
 
+from gik_icechain.shared.config import DEFAULT_CONFIG_PATH
+
 log = structlog.get_logger(__name__)
 
 
@@ -41,14 +43,15 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-_DEFAULT_CONFIG = Path("configs/default.yaml")
+_DEFAULT_CONFIG = DEFAULT_CONFIG_PATH
 
 
 def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
     from gik_icechain.shared.config import load_config
     from gik_icechain.shared.logging import configure_logging
 
-    cfg = load_config(config_path if config_path.exists() else None)
+    resolved = config_path if config_path.exists() else _DEFAULT_CONFIG
+    cfg = load_config(resolved)
     configure_logging(level=cfg.logging.level, fmt=cfg.logging.format)
     return cfg
 
@@ -146,6 +149,7 @@ def _run_exceedance(
                 classify_iod(float(row["dmi"]), threshold=iod_thr),
             )
         except KeyError:
+            log.warning("enso_iod_index_missing", date=d, using="neutral_phase")
             return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
     results: dict[date, xr.DataArray] = {}
@@ -311,7 +315,7 @@ def exceedance(
 
             Client(n_workers=workers, threads_per_worker=2, silence_logs=True)
         except ImportError:
-            pass
+            log.warning("dask_not_available", workers=workers, msg="running single-threaded")
 
     try:
         n = _run_exceedance(cfg, store, output, s, e)
