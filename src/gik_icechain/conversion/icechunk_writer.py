@@ -316,10 +316,13 @@ class IceChainStore:
         """Return the authorize_virtual_chunk_access map for ECMWF public S3.
 
         IceChunk requires explicit authorization per virtual chunk container
-        prefix as a security measure.  ``None`` means use anonymous / env
-        credentials (the ECMWF bucket is public).
+        prefix as a security measure.  We use explicit anonymous credentials
+        rather than ``None`` (which falls back to env vars that may contain
+        MinIO credentials inappropriate for the ECMWF bucket).
         """
-        return {"s3://ecmwf-forecasts/": None}
+        return icechunk.containers_credentials(
+            {"s3://ecmwf-forecasts/": icechunk.s3_anonymous_credentials()}
+        )
 
     def _build_repo_config(self) -> Any:
         """Build a RepositoryConfig that authorises virtual chunks from s3://ecmwf-forecasts/.
