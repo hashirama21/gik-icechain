@@ -1,0 +1,41 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: gik-icechain-c1
+  labels:
+    component: c1-ingest
+    pipeline: gik-icechain
+spec:
+  template:
+    spec:
+      template:
+        spec:
+          serviceAccountName: gik-icechain-sa@PROJECT_ID.iam.gserviceaccount.com
+          containers:
+            - image: ghcr.io/hashirama21/gik-icechain:latest
+              command: ["python", "-m", "gik_icechain.conversion.gik_loader"]
+              args: ["--config", "configs/east_africa.yaml"]
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+              env:
+                - name: GIK_ICECHUNK_STORE_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: gik-icechain-secrets
+                      key: icechunk-store-uri
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: gik-icechain-secrets
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: gik-icechain-secrets
+                      key: aws-secret-access-key
+                - name: HDF5_USE_FILE_LOCKING
+                  value: "FALSE"
+          maxRetries: 2
+          timeoutSeconds: 3600

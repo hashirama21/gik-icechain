@@ -16,6 +16,7 @@ name: Daily Pipeline Update
 on:
   schedule:
     - cron: "0 8 * * *"   # 08:00 UTC daily
+    - cron: "0 2 1 * *"   # 02:00 UTC on the 1st of each month (compaction)
   workflow_dispatch:       # Allow manual trigger
     inputs:
       target_date:
@@ -60,7 +61,7 @@ jobs:
         run: |
           TARGET_DATE="${{ inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
-            TARGET_DATE=$(date -u -d "yesterday" +%Y-%m-%d)
+            TARGET_DATE=$(python -c "from datetime import date, timedelta; print(date.today() - timedelta(1))")
           fi
           echo "Processing date: $TARGET_DATE"
 
@@ -84,6 +85,15 @@ jobs:
     needs: ingest-daily-gik
     environment: production
     steps:
+      - name: Verify C1 produced a commit
+        run: |
+          COMMIT="${{ needs.ingest-daily-gik.outputs.commit_hash }}"
+          if [ -z "$COMMIT" ]; then
+            echo "::error title=C1 produced no commit::Ingest job completed but commit_hash is empty — no new data for ${{ needs.ingest-daily-gik.outputs.processed_date }}. C2 skipped."
+            exit 1
+          fi
+          echo "C1 commit: $COMMIT"
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -168,14 +178,64 @@ jobs:
   #           git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
   #         git push
 
-  #  Notify on failure
+  #  Monthly IceChunk compaction (runs on 1st of each month at 02:00 UTC)
+  compact-icechunk:
+    name: "Maintenance: Monthly IceChunk compaction"
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.event_name == 'schedule' && github.event.schedule == '0 2 1 * *'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - run: pip install -e ".[cloud]"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Compact IceChunk store
+        run: |
+          python - <<'EOF'
+          from gik_icechain.conversion.icechunk_writer import IceChainStore
+          import os, json
+          store = IceChainStore(os.environ["GIK_ICECHUNK_STORE_URI"])
+          store.create_or_open()
+          result = store.compact(keep_days=30)
+          print(json.dumps(result))
+          EOF
+        env:
+          GIK_ICECHUNK_STORE_URI: ${{ secrets.GIK_ICECHUNK_STORE_URI }}
+
+  #  Notify on failure — opens a GitHub Issue and posts a workflow annotation
   notify-failure:
     name: Notify on failure
     runs-on: ubuntu-latest
     needs: [ingest-daily-gik, update-exceedance, update-risk]
-    if: failure()
+    if: failure() && github.event.schedule != '0 2 1 * *'
+    permissions:
+      issues: write
     steps:
-      - name: Send failure alert
+      - name: Post workflow error annotation
         run: |
-          echo "Daily pipeline failed for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
-          # Add Slack/email notification here
+          echo "::error title=Daily pipeline failed::Pipeline failed for ${{ needs.ingest-daily-gik.outputs.processed_date }}. Check run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Open GitHub Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const date = '${{ needs.ingest-daily-gik.outputs.processed_date }}' || 'unknown';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[PIPELINE FAILURE] Daily update failed for ${date}`,
+              body: `## Daily pipeline failure\n\n**Date**: ${date}\n**Run**: ${runUrl}\n\nOne or more pipeline jobs (C1 ingest / C2 exceedance / C3 risk) failed.\nPlease investigate and re-run the failed job manually if needed.\n\n_Auto-opened by \`daily_update.yaml\` \`notify-failure\` job._`,
+              labels: ['pipeline-failure', 'automated'],
+            });

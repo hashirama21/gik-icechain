@@ -11,7 +11,14 @@ license     = { file = "LICENSE" }
 requires-python = ">=3.12"
 
 authors = [
-  { name = "Code for Earth 2026 Team" },
+  { name = "Vincess Dongmo",  email = "sodiaque806@gmail.com" },
+  { name = "Dylan Kemekoum",  email = "kemekoum.dylan@gmail.com" },
+  { name = "Donald Feudjio",   email = "feudjiodonal78@gmail.com" },
+  { name = "Chris Venyl" },
+]
+
+maintainers = [
+  { name = "SYNTHI-AI Inc." },
 ]
 
 keywords = [
@@ -31,7 +38,7 @@ classifiers = [
 
 dependencies = [
   "zarr>=3.0.8",
-  "icechunk>=2.0",
+  "icechunk>=2.0.5",
   "virtualizarr>=2.0",
   "obstore>=0.9",
   "obspec-utils>=0.9",
@@ -66,7 +73,8 @@ dependencies = [
 
   # Configuration
   "pydantic>=2.7",
-  "pydantic-settings>=2.3",
+  "omegaconf>=2.3",
+  "hydra-core>=1.3",
   "pyyaml>=6.0",
 
   # CLI
@@ -125,7 +133,7 @@ packages = ["src/gik_icechain"]
 
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length    = 100
 src            = ["src"]
 exclude        = ["notebooks/"]
@@ -144,6 +152,10 @@ select = [
   "RUF",
 ]
 ignore = [
+  "ANN001",
+  "ANN002",
+  "ANN201",
+  "ANN202",
   "ANN401",
   "RUF001",
   "RUF002",

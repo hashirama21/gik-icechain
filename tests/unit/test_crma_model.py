@@ -6,6 +6,7 @@ Unit tests for the CRMA Bayesian Network model.
 import pytest
 
 from gik_icechain.risk.crma_model import (
+    _CLUSTER_WEIGHTS,
     RISK_LEVELS,
     CRMAEvidence,
     CRMAModel,
@@ -23,6 +24,7 @@ class TestCRMAEvidenceDiscretisation:
             api_mm=15.0,
             spatial_coverage_fraction=0.1,
             consecutive_signal_days=0,
+            sat_consecutive_days=0,
         )
         defaults.update(kwargs)
         return CRMAEvidence(**defaults)
@@ -83,6 +85,13 @@ class TestCRMAEvidenceDiscretisation:
         e = self._make_evidence(spatial_coverage_fraction=0.80)
         assert e.spatial_coverage_state == 2
 
+    def test_soil_memory_fresh(self):
+        e = self._make_evidence(sat_consecutive_days=6)
+        assert e.soil_memory_state == 0
+
+    def test_soil_memory_prolonged(self):
+        e = self._make_evidence(sat_consecutive_days=7)
+        assert e.soil_memory_state == 1
 
 
 @pytest.fixture(scope="module")
@@ -104,6 +113,7 @@ class TestCRMAModelInference:
             api_mm=15.0,
             spatial_coverage_fraction=0.1,
             consecutive_signal_days=0,
+            sat_consecutive_days=0,
         )
         defaults.update(kwargs)
         return CRMAEvidence(**defaults)
@@ -120,9 +130,10 @@ class TestCRMAModelInference:
             exceedance_prob_24h_5y=0.80,
             exceedance_prob_72h_5y=0.75,
             gpm_obs_24h=50.0,
-            api_mm=120.0,  # saturated
+            api_mm=120.0,
             spatial_coverage_fraction=0.90,
             consecutive_signal_days=5,
+            sat_consecutive_days=10,
         )
         result = built_model.infer(evidence)
         assert result["risk_state"] in (2, 3), f"Expected high risk, got {result['risk_label']}"
@@ -134,7 +145,7 @@ class TestCRMAModelInference:
         assert abs(total - 1.0) < 1e-6, f"Probabilities don't sum to 1: {total}"
 
     def test_risk_monotonic_with_hazard(self, built_model):
-        """Higher forecast hazard → should produce higher expected risk state."""
+        """Higher forecast hazard → higher expected risk state."""
         low = self._make_evidence(exceedance_prob_24h_5y=0.05)
         high = self._make_evidence(exceedance_prob_24h_5y=0.80)
 
@@ -144,9 +155,7 @@ class TestCRMAModelInference:
         expected_low = result_low["p_orange"] + result_low["p_red"]
         expected_high = result_high["p_orange"] + result_high["p_red"]
 
-        assert expected_high > expected_low, (
-            "Higher hazard should produce higher Orange+Red probability"
-        )
+        assert expected_high > expected_low
 
     def test_api_increases_risk(self, built_model):
         """Saturated soil (API=120) should increase risk vs dry soil (API=10)."""
@@ -165,13 +174,8 @@ class TestCRMAModelInference:
         evidence = self._make_evidence()
         result = built_model.infer(evidence)
         expected_keys = {
-            "risk_state",
-            "risk_label",
-            "p_green",
-            "p_yellow",
-            "p_orange",
-            "p_red",
-            "evidence",
+            "risk_state", "risk_label",
+            "p_green", "p_yellow", "p_orange", "p_red", "evidence",
         }
         assert expected_keys.issubset(result.keys())
 
@@ -192,6 +196,7 @@ class TestCRMAModelInference:
             gpm_obs_24h=15.0,
             spatial_coverage_fraction=0.5,
             consecutive_signal_days=1,
+            sat_consecutive_days=0,
         )
         ev_dry = self._make_evidence(api_mm=5.0, **shared_kwargs)
         ev_sat = self._make_evidence(api_mm=120.0, **shared_kwargs)
@@ -206,10 +211,56 @@ class TestCRMAModelInference:
         risk_sat = result_sat["p_orange"] + result_sat["p_red"]
         assert risk_sat >= risk_dry, "Saturated soil must not reduce flood risk"
 
+    def test_soil_memory_amplifies_risk(self, built_model):
+        """Key DBN scientific test: 15-day saturated soil + 50mm MUST produce
+        higher P(Red) than dry soil + 50mm (same forecast hazard)."""
+
+        shared = dict(
+            exceedance_prob_24h_5y=0.30,
+            exceedance_prob_72h_5y=0.25,
+            exceedance_prob_7d_5y=0.20,
+            gpm_obs_24h=50.0,
+            spatial_coverage_fraction=0.5,
+            consecutive_signal_days=1,
+        )
+        # Case A: soil saturated for 15 days
+        ev_prolonged = self._make_evidence(
+            api_mm=120.0, sat_consecutive_days=15, **shared
+        )
+        # Case B: dry soil, no prior saturation
+        ev_dry = self._make_evidence(
+            api_mm=10.0, sat_consecutive_days=0, **shared
+        )
+
+        result_prolonged = built_model.infer(ev_prolonged)
+        result_dry = built_model.infer(ev_dry)
+
+        p_red_prolonged = result_prolonged["p_red"]
+        p_red_dry = result_dry["p_red"]
+
+        assert p_red_prolonged > p_red_dry, (
+            f"15-day saturated soil + 50mm should produce higher P(Red) than dry + 50mm. "
+            f"Got P(Red|prolonged)={p_red_prolonged:.3f} vs P(Red|dry)={p_red_dry:.3f}"
+        )
+
+    def test_dynamic_bn_sat_days_accumulate(self, built_model):
+        """sat_consecutive_days in DynamicBNState must increment each saturated day."""
+        from gik_icechain.risk.dynamic_bn import init_state
+        from gik_icechain.risk.dynamic_bn import step as bn_step
+
+        state = init_state(initial_api_mm=120.0)  # start saturated
+        ev = self._make_evidence(
+            exceedance_prob_24h_5y=0.20, gpm_obs_24h=10.0, api_mm=120.0
+        )
+
+        for day in range(1, 9):
+            _, state = bn_step(state, ev, built_model, gpm_obs_mm=30.0)
+            assert state.sat_consecutive_days == day, (
+                f"sat_consecutive_days should be {day}, got {state.sat_consecutive_days}"
+            )
+
     def test_horn_arid_cluster_higher_api_weight(self):
         """Horn-arid cluster must weight API more heavily than equatorial."""
-        from gik_icechain.risk.crma_model import _CLUSTER_WEIGHTS, EastAfricaCluster
-
         eq = _CLUSTER_WEIGHTS[EastAfricaCluster.EQUATORIAL_EAST]
         horn = _CLUSTER_WEIGHTS[EastAfricaCluster.HORN_ARID]
         assert horn["api"] > eq["api"]

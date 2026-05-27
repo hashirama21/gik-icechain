@@ -11,6 +11,7 @@ underlying GRIB2 files on s3://ecmwf-forecasts are never copied.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -21,20 +22,41 @@ import xarray as xr
 log = structlog.get_logger(__name__)
 
 try:
-    import icechunk  # noqa: F401
+    import icechunk
 
     ICECHUNK_AVAILABLE = True
 except ImportError:
     ICECHUNK_AVAILABLE = False
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
+# Register the kerchunk GRIBCodec so Zarr can decode GRIB2 virtual chunks at read time.
 try:
-    import virtualizarr  # noqa: F401
+    import numcodecs
+    from kerchunk.codecs import GRIBCodec
 
-    VIRTUALIZARR_AVAILABLE = True
-except ImportError:
-    VIRTUALIZARR_AVAILABLE = False
+    numcodecs.register_codec(GRIBCodec, "grib")
+except (ImportError, ValueError):
+    pass
+
+# Bridge GRIBCodec into Zarr v3 registry (see virtualizer.py for rationale).
+try:
+    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
+    from zarr.registry import register_codec
+
+    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
+        pass
+
+    register_codec("numcodecs.grib", GribNumcodecs)
+except (ImportError, ValueError):
+    pass
+
+VIRTUALIZARR_AVAILABLE = importlib.util.find_spec("virtualizarr") is not None
+if not VIRTUALIZARR_AVAILABLE:
     log.warning("virtualizarr_not_installed", msg="pip install virtualizarr")
+
+
+_DEFAULT_MESSAGE_TEMPLATE = "GIK ingest: {date}T{run_hour:02d}Z"
+_DEFAULT_TAG_FORMAT = "{date}T{run_hour:02d}Z"
 
 
 class IceChainStore:
@@ -49,18 +71,34 @@ class IceChainStore:
         storage_uri: str,
         branch: str = "main",
         endpoint_url: str | None = None,
+        region: str | None = None,
+        commit_message_template: str = _DEFAULT_MESSAGE_TEMPLATE,
+        tag_format: str = _DEFAULT_TAG_FORMAT,
     ) -> None:
         """
         Args:
-            storage_uri:  S3 URI (s3://bucket/prefix) or local path for the store.
-            branch:       IceChunk branch name.
-            endpoint_url: Custom S3 endpoint for MinIO/on-prem storage.
-                          Falls back to the AWS_ENDPOINT_URL environment variable.
+            storage_uri:              S3 URI (s3://bucket/prefix) or local path.
+            branch:                   IceChunk branch name.
+            endpoint_url:             Custom S3 endpoint (MinIO/on-prem).
+                                      Falls back to AWS_ENDPOINT_URL env var.
+            region:                   AWS region for the S3 bucket.  Falls back to
+                                      AWS_REGION / AWS_DEFAULT_REGION environment variables.
+            commit_message_template:  Python format-string for commit messages.
+                                      Receives ``date`` (ISO str) and ``run_hour`` (int).
+            tag_format:               Python format-string for snapshot tags.
+                                      Receives ``date`` (ISO str) and ``run_hour`` (int).
         """
         self.storage_uri = storage_uri
         self.branch = branch
+        self._commit_message_template = commit_message_template
+        self._tag_format = tag_format
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
+        self._region: str | None = (
+            region
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
 
     def _check_deps(self) -> None:
         if not ICECHUNK_AVAILABLE:
@@ -68,28 +106,55 @@ class IceChainStore:
         if not VIRTUALIZARR_AVAILABLE:
             raise ImportError("virtualizarr is required: pip install virtualizarr")
 
+    @staticmethod
+    def _clear_aws_credential_env() -> None:
+        """Remove AWS credential env vars so IceChunk uses explicit credentials.
+
+        IceChunk reads AWS_* env vars at virtual-chunk-fetch time, overriding
+        the anonymous credentials we set for the public ECMWF bucket.  Since we
+        pass explicit credentials to s3_storage() for the metadata store, the
+        env vars are no longer needed after storage is built.
+
+        AWS_REGION is preserved — it is harmless and may be needed by other
+        libraries in the same process.
+        """
+        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                     "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL"):
+            os.environ.pop(key, None)
+
     def create(self) -> None:
         """Create a new IceChunk repository at storage_uri."""
         self._check_deps()
+        storage = self._build_storage()
+        self._clear_aws_credential_env()
         self._repo = icechunk.Repository.create(
-            self._build_storage(), config=self._build_repo_config()
+            storage,
+            config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_created", uri=self.storage_uri)
 
     def open(self) -> None:
         """Open an existing IceChunk repository."""
         self._check_deps()
+        storage = self._build_storage()
+        self._clear_aws_credential_env()
         self._repo = icechunk.Repository.open(
-            self._build_storage(), config=self._build_repo_config()
+            storage,
+            config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_opened", uri=self.storage_uri)
 
     def create_or_open(self) -> None:
         """Open the store if it exists, otherwise create it."""
         self._check_deps()
+        storage = self._build_storage()
+        self._clear_aws_credential_env()
         self._repo = icechunk.Repository.open_or_create(
-            self._build_storage(),
+            storage,
             config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_ready", uri=self.storage_uri)
 
@@ -117,7 +182,7 @@ class IceChainStore:
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
-        tag = f"{forecast_date.isoformat()}T{run_hour:02d}Z"
+        tag = self._tag_format.format(date=forecast_date.isoformat(), run_hour=run_hour)
         # Each day is written to its own zarr group so multiple dates can
         # coexist in the same IceChunk store without path conflicts.
         date_group = forecast_date.isoformat()
@@ -138,7 +203,9 @@ class IceChainStore:
         virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
         commit_hash = session.commit(
-            message=message or f"GIK ingest: {tag}",
+            message=message or self._commit_message_template.format(
+                date=forecast_date.isoformat(), run_hour=run_hour
+            ),
             metadata={
                 "forecast_date": forecast_date.isoformat(),
                 "run_hour": str(run_hour),
@@ -200,6 +267,15 @@ class IceChainStore:
         # Resolve the tag date to find the matching group.
         target_date = latest_tag[:10]
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
+
+    def readonly_session(self) -> Any:
+        """Return a read-only session on the current branch.
+
+        Raises RuntimeError if the store has not been opened yet.
+        """
+        if self._repo is None:
+            raise RuntimeError("Store not opened. Call create_or_open() first.")
+        return self._repo.readonly_session(branch=self.branch)
 
     def open_latest(self) -> xr.Dataset:
         """Open the most recent snapshot of the store, returning the latest date's group."""
@@ -281,6 +357,18 @@ class IceChainStore:
         log.info("store_validation", **{k: v for k, v in result.items() if k != "gap_details"})
         return result
 
+    def _virtual_chunk_credentials(self) -> dict[str, Any]:
+        """Return the authorize_virtual_chunk_access map for ECMWF public S3.
+
+        IceChunk requires explicit authorization per virtual chunk container
+        prefix as a security measure.  We use explicit anonymous credentials
+        rather than ``None`` (which falls back to env vars that may contain
+        MinIO credentials inappropriate for the ECMWF bucket).
+        """
+        return icechunk.containers_credentials(
+            {"s3://ecmwf-forecasts/": icechunk.s3_anonymous_credentials()}
+        )
+
     def _build_repo_config(self) -> Any:
         """Build a RepositoryConfig that authorises virtual chunks from s3://ecmwf-forecasts/.
 
@@ -288,7 +376,7 @@ class IceChainStore:
         knows which external S3 prefixes are trusted for byte-range references.
         The ECMWF bucket is public (anonymous S3 access).
         """
-        ecmwf_store = icechunk.s3_store(region="eu-west-1", anonymous=True)
+        ecmwf_store = icechunk.s3_store(region="eu-central-1", anonymous=True)
         container = icechunk.VirtualChunkContainer(
             url_prefix="s3://ecmwf-forecasts/",
             store=ecmwf_store,
@@ -302,15 +390,35 @@ class IceChainStore:
 
         Supports S3 (AWS or MinIO) and local filesystem paths.
         MinIO: set AWS_ENDPOINT_URL env var or pass endpoint_url to __init__.
+
+        Note: we pass explicit credentials instead of ``from_env=True`` because
+        ``from_env`` leaks the storage credentials into IceChunk's virtual chunk
+        fetcher, overriding the anonymous credentials required for the public
+        ECMWF S3 bucket.
         """
         if self.storage_uri.startswith("s3://"):
             path = self.storage_uri[5:]
             parts = path.split("/", 1)
             bucket = parts[0]
             prefix = parts[1].rstrip("/") if len(parts) > 1 else None
-            kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix, "from_env": True}
+            kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix}
+            if self._region:
+                kwargs["region"] = self._region
+            # Read AWS credentials explicitly to avoid from_env leaking into
+            # virtual chunk access (IceChunk bug/design issue).
+            access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+            session_token = os.environ.get("AWS_SESSION_TOKEN")
+            if access_key and secret_key:
+                kwargs["access_key_id"] = access_key
+                kwargs["secret_access_key"] = secret_key
+                if session_token:
+                    kwargs["session_token"] = session_token
+            else:
+                kwargs["from_env"] = True
             if self._endpoint_url:
                 kwargs["endpoint_url"] = self._endpoint_url
+                kwargs["allow_http"] = True
                 kwargs["force_path_style"] = True
                 log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
             return icechunk.s3_storage(**kwargs)

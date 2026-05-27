@@ -39,6 +39,7 @@ _EVIDENCE_COLS = [
     "Spatial_Coverage",
     "Data_Confidence",
     "API_State",
+    "Soil_Memory",
     "Risk_State",
 ]
 
@@ -49,6 +50,7 @@ _STATE_NAMES: dict[str, list[int]] = {
     "Spatial_Coverage": [0, 1, 2],
     "Data_Confidence": [0, 1, 2],
     "API_State": [0, 1, 2],
+    "Soil_Memory": [0, 1],
     "Compound_Risk": [0, 1, 2, 3],
     "Risk_State": [0, 1, 2, 3],
 }
@@ -165,6 +167,9 @@ def build_training_dataset(
                 consecutive_signal_days=int(
                     _col_or_default(exc_row, "consecutive_signal_days", 1.0)
                 ),
+                sat_consecutive_days=int(
+                    _col_or_default(api_row, "sat_consecutive_days", 0.0)
+                ),
             )
 
             rows.append(
@@ -175,6 +180,7 @@ def build_training_dataset(
                     "Spatial_Coverage": evidence.spatial_coverage_state,
                     "Data_Confidence": evidence.data_confidence_state,
                     "API_State": evidence.api_state,
+                    "Soil_Memory": evidence.soil_memory_state,
                     "Risk_State": 3,
                     "source": "emdat_positive",
                     "event_id": record.event_id,
@@ -215,6 +221,9 @@ def build_training_dataset(
             api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
             spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
             consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
+            sat_consecutive_days=int(
+                _col_or_default(api_row, "sat_consecutive_days", 0.0)
+            ),
         )
 
         rows.append(
@@ -225,6 +234,7 @@ def build_training_dataset(
                 "Spatial_Coverage": evidence.spatial_coverage_state,
                 "Data_Confidence": evidence.data_confidence_state,
                 "API_State": evidence.api_state,
+                "Soil_Memory": evidence.soil_memory_state,
                 "Risk_State": min(evidence.forecast_hazard_state, 1),
                 "source": "negative_sample",
                 "event_id": None,
@@ -234,11 +244,12 @@ def build_training_dataset(
         )
 
     df = pd.DataFrame(rows)
+    dist = df["Risk_State"].value_counts().to_dict() if not df.empty else {}
     log.info(
         "training_dataset_built",
         n_positive=n_positive,
         n_negative=len(df) - n_positive,
-        risk_state_distribution=df["Risk_State"].value_counts().to_dict(),
+        risk_state_distribution=dist,
     )
     return df
 
@@ -284,8 +295,12 @@ def refine_cpts_with_emdat(
     if not model.check_model():
         raise ValueError("Refined model failed validation")
 
-    # Rebuild the inference engine to pick up the updated CPD
-    crma._inference = VariableElimination(model)  # type: ignore[operator]
+    # Rebuild the O(1) lookup table to pick up the updated CPD
+    crma.load_cpts({
+        node: model.get_cpds(node).values.tolist()
+        for node in model.nodes()
+        if model.get_cpds(node) is not None
+    })
 
     if output_path is not None:
         cpts = {
@@ -301,3 +316,92 @@ def refine_cpts_with_emdat(
         n_training_samples=len(training_df),
         laplace_alpha=laplace_alpha,
     )
+
+
+def run_validation(
+    risk_results_df: pd.DataFrame,
+    emdat_records: list[EMDATFloodRecord],
+    output_path: Path,
+    risk_threshold: int = 2,
+) -> dict[str, float]:
+    """Compute precision, recall, F1, and AUC-ROC against EM-DAT flood events.
+
+    Treats any day × admin-1 where ``risk_state >= risk_threshold`` as a
+    positive prediction. EM-DAT event days are positive ground-truth labels.
+
+    Args:
+        risk_results_df:  DataFrame with columns: date, admin1_pcode, risk_state, p_red.
+        emdat_records:    EM-DAT flood records from :func:`load_emdat_east_africa`.
+        output_path:      CSV path for the per-event hit/miss table.
+        risk_threshold:   Minimum risk_state to count as a predicted flood (default 2=Orange).
+
+    Returns:
+        Dict with keys: precision, recall, f1, auc_roc, hit_rate, false_alarm_rate.
+    """
+    try:
+        from sklearn.metrics import roc_auc_score
+    except ImportError:
+        raise ImportError("scikit-learn is required: pip install scikit-learn") from None
+
+    from datetime import timedelta
+
+    flood_days: set[tuple[str, str]] = set()
+    for rec in emdat_records:
+        current = rec.start_date.date()
+        end = rec.end_date.date()
+        while current <= end:
+            flood_days.add((str(current), rec.admin1_pcode))
+            current += timedelta(days=1)
+
+    df = risk_results_df.copy()
+    df["date"] = df["date"].astype(str)
+    df["label"] = df.apply(
+        lambda r: 1 if (r["date"], r["admin1_pcode"]) in flood_days else 0, axis=1
+    )
+    df["predicted"] = (df["risk_state"] >= risk_threshold).astype(int)
+    df["score"] = df["p_red"].fillna(0.0)
+
+    tp = int(((df["predicted"] == 1) & (df["label"] == 1)).sum())
+    fp = int(((df["predicted"] == 1) & (df["label"] == 0)).sum())
+    fn = int(((df["predicted"] == 0) & (df["label"] == 1)).sum())
+    tn = int(((df["predicted"] == 0) & (df["label"] == 0)).sum())
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    far = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+
+    try:
+        roc_auc = float(roc_auc_score(df["label"], df["score"]))
+    except Exception:
+        roc_auc = float("nan")
+
+    per_event: list[dict] = []
+    for rec in emdat_records:
+        day_str = str(rec.start_date.date())
+        hit_row = df[(df["date"] == day_str) & (df["admin1_pcode"] == rec.admin1_pcode)]
+        predicted_state = int(hit_row["risk_state"].iloc[0]) if not hit_row.empty else -1
+        per_event.append(
+            {
+                "event_id": rec.event_id,
+                "date": day_str,
+                "admin1_pcode": rec.admin1_pcode,
+                "predicted_risk_state": predicted_state,
+                "hit": int(predicted_state >= risk_threshold),
+                "p_red": float(hit_row["p_red"].iloc[0]) if not hit_row.empty else 0.0,
+            }
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(per_event).to_csv(output_path, index=False)
+
+    metrics = {
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+        "auc_roc": round(roc_auc, 4),
+        "hit_rate": round(recall, 4),
+        "false_alarm_rate": round(far, 4),
+    }
+    log.info("emdat_validation_complete", **metrics, n_events=len(emdat_records))
+    return metrics

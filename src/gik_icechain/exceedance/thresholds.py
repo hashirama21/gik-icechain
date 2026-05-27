@@ -112,6 +112,17 @@ class AdaptiveGEVThresholds:
 
     def __init__(self) -> None:
         self._thresholds: dict[str, dict[int, dict[int, xr.DataArray]]] = {}
+        self._call_count: int = 0
+        self._fallback_count: int = 0
+
+    @property
+    def fallback_rate(self) -> float:
+        """Fraction of get() calls that fell back to the neutral-phase threshold."""
+        return self._fallback_count / self._call_count if self._call_count else 0.0
+
+    def reset_stats(self) -> None:
+        self._call_count = 0
+        self._fallback_count = 0
 
     @classmethod
     def from_cmorph(
@@ -247,6 +258,109 @@ class AdaptiveGEVThresholds:
 
         log.info("thresholds_saved", directory=str(directory))
 
+    def save_zarr(self, path: str | Path) -> None:
+        """Save all thresholds to a single consolidated Zarr store.
+
+        Replaces 252 per-mode NetCDF files with a single
+        (mode_key, window_h, return_period, lat, lon) Zarr array.
+        """
+        path = str(path)
+
+        mode_keys = sorted(self._thresholds)
+        all_windows: list[int] = sorted(
+            {w for mk in mode_keys for w in self._thresholds[mk]}
+        )
+        all_rps: list[int] = sorted(
+            {
+                rp
+                for mk in mode_keys
+                for w in self._thresholds[mk]
+                for rp in self._thresholds[mk][w]
+            }
+        )
+
+        sample_da: xr.DataArray | None = None
+        for mk in mode_keys:
+            for w in self._thresholds[mk]:
+                for _rp, da in self._thresholds[mk][w].items():
+                    sample_da = da
+                    break
+                if sample_da is not None:
+                    break
+            if sample_da is not None:
+                break
+
+        if sample_da is None:
+            raise ValueError("No thresholds to save")
+
+        lat_name = next((c for c in sample_da.coords if c in ("lat", "latitude")), "lat")
+        lon_name = next((c for c in sample_da.coords if c in ("lon", "longitude")), "lon")
+        lat_vals = sample_da[lat_name].values
+        lon_vals = sample_da[lon_name].values
+
+        data = np.full(
+            (len(mode_keys), len(all_windows), len(all_rps), len(lat_vals), len(lon_vals)),
+            np.nan,
+            dtype=np.float32,
+        )
+        for i, mk in enumerate(mode_keys):
+            for j, wh in enumerate(all_windows):
+                for k, rp in enumerate(all_rps):
+                    da = self._thresholds.get(mk, {}).get(wh, {}).get(rp)
+                    if da is not None:
+                        data[i, j, k] = da.values.astype(np.float32)
+
+        ds = xr.Dataset(
+            {
+                "thresholds": (
+                    ["mode_key", "window_h", "return_period", lat_name, lon_name],
+                    data,
+                )
+            },
+            coords={
+                "mode_key": mode_keys,
+                "window_h": np.array(all_windows, dtype=np.int16),
+                "return_period": np.array(all_rps, dtype=np.int16),
+                lat_name: lat_vals,
+                lon_name: lon_vals,
+            },
+            attrs={
+                "title": "GIK-IceChain adaptive GEV thresholds",
+                "source": "CMORPH v1.0 + GEV fit",
+                "conventions": "CF-1.8",
+            },
+        )
+        ds.to_zarr(path, mode="w", consolidated=True)
+        log.info("thresholds_saved_zarr", path=path, n_modes=len(mode_keys))
+
+    @classmethod
+    def load_zarr(cls, path: str | Path) -> AdaptiveGEVThresholds:
+        """Load pre-computed thresholds from a consolidated Zarr store."""
+        instance = cls()
+        ds = xr.open_zarr(str(path), consolidated=True)
+
+        mode_keys: list[str] = ds["mode_key"].values.tolist()
+        window_sizes: list[int] = ds["window_h"].values.tolist()
+        return_periods_list: list[int] = ds["return_period"].values.tolist()
+
+        for i, mk in enumerate(mode_keys):
+            rp_dicts: dict[int, dict[int, xr.DataArray]] = {}
+            for j, wh in enumerate(window_sizes):
+                rp_dict: dict[int, xr.DataArray] = {}
+                for k, rp in enumerate(return_periods_list):
+                    da = ds["thresholds"].isel(
+                        mode_key=i, window_h=j, return_period=k
+                    ).drop_vars(["mode_key", "window_h", "return_period"], errors="ignore")
+                    if not np.all(np.isnan(da.values)):
+                        rp_dict[int(rp)] = da
+                if rp_dict:
+                    rp_dicts[int(wh)] = rp_dict
+            if rp_dicts:
+                instance._thresholds[mk] = rp_dicts
+
+        log.info("thresholds_loaded_zarr", path=str(path), n_modes=len(instance._thresholds))
+        return instance
+
     def get(
         self,
         window_h: int,
@@ -272,14 +386,22 @@ class AdaptiveGEVThresholds:
             rp_dict = windows.get(window_h, {})
             return rp_dict.get(return_period)
 
+        self._call_count += 1
+
         result = _lookup(mode.key)
         if result is not None:
             return result
 
+        self._fallback_count += 1
         fallback = ClimateMode(mode.season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
         result = _lookup(fallback.key)
         if result is not None:
-            log.debug("threshold_fallback", requested=mode.key, using=fallback.key)
+            log.warning(
+                "threshold_fallback_to_neutral",
+                requested=mode.key,
+                using=fallback.key,
+                fallback_rate=f"{self.fallback_rate:.1%}",
+            )
             return result
 
         raise KeyError(

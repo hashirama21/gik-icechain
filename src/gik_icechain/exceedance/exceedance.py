@@ -22,11 +22,56 @@ log = structlog.get_logger(__name__)
 _STEP_DIM_CANDIDATES = ("step", "time", "forecast_period")
 
 
-def _find_step_dim(da: xr.DataArray) -> str | None:
+def _find_step_dim(da: xr.DataArray) -> str:
     for candidate in _STEP_DIM_CANDIDATES:
         if candidate in da.dims:
             return candidate
-    return None
+    raise ValueError(
+        f"No step/time dimension found in DataArray (dims={list(da.dims)}). "
+        f"Expected one of {_STEP_DIM_CANDIDATES}."
+    )
+
+
+def _align_threshold_to_forecast(
+    threshold: xr.DataArray, forecast: xr.DataArray
+) -> xr.DataArray:
+    """Rename and interpolate threshold grid to match the forecast spatial grid.
+
+    CMORPH thresholds use (lat, lon) at ~1° over East Africa, while ECMWF
+    forecasts use (latitude, longitude) at 0.25° globally.  This function
+    standardises dimension names and bilinearly interpolates the threshold
+    to the forecast grid so that the comparison broadcasts element-wise.
+    Grid cells outside the threshold domain become NaN (→ exceedance = 0).
+    """
+    # Detect spatial dimension names in each array
+    thr_lat = next((d for d in threshold.dims if d in ("lat", "latitude")), None)
+    thr_lon = next((d for d in threshold.dims if d in ("lon", "longitude")), None)
+    fc_lat = next((d for d in forecast.dims if d in ("lat", "latitude")), None)
+    fc_lon = next((d for d in forecast.dims if d in ("lon", "longitude")), None)
+
+    if not all([thr_lat, thr_lon, fc_lat, fc_lon]):
+        return threshold  # Can't align — return as-is
+
+    # Already aligned: same dim names and same sizes
+    if thr_lat == fc_lat and thr_lon == fc_lon:
+        if threshold.sizes[thr_lat] == forecast.sizes[fc_lat]:
+            return threshold
+
+    # Rename threshold dims to match forecast
+    rename_map = {}
+    if thr_lat != fc_lat:
+        rename_map[thr_lat] = fc_lat
+    if thr_lon != fc_lon:
+        rename_map[thr_lon] = fc_lon
+    if rename_map:
+        threshold = threshold.rename(rename_map)
+
+    # Interpolate to the forecast grid (bilinear; NaN outside domain)
+    threshold = threshold.interp(
+        {fc_lat: forecast[fc_lat], fc_lon: forecast[fc_lon]},
+        method="linear",
+    )
+    return threshold
 
 
 def compute_exceedance_probabilities(
@@ -46,13 +91,14 @@ def compute_exceedance_probabilities(
                        containing variable ``tp_{window_h}h`` with dims
                        (step, number, latitude, longitude) — or equivalent.
         thresholds_ds: xr.Dataset with GEV threshold variable ``rp_{return_period}y``
-                       (lat × lon).
+                       (lat × lon).  Dimension names and grid resolution may
+                       differ from acc_ds — they will be aligned automatically.
         window_h:      Accumulation window in hours; selects ``tp_{window_h}h``.
         return_period: Return period in years; selects ``rp_{return_period}y``.
         member_dim:    Name of the ensemble member dimension.
 
     Returns:
-        xr.DataArray (lat × lon) of exceedance probabilities in [0, 1].
+        xr.DataArray (latitude × longitude) of exceedance probabilities in [0, 1].
     """
     var_name = f"tp_{window_h}h"
     if var_name not in acc_ds:
@@ -64,9 +110,11 @@ def compute_exceedance_probabilities(
     threshold = thresholds_ds[f"rp_{return_period}y"]
     tp = acc_ds[var_name]
 
-    # Worst-case accumulation over the forecast horizon, per member per grid cell
     step_dim = _find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim) if step_dim is not None else tp
+    tp_worst = tp.max(dim=step_dim)
+
+    # Align threshold grid to forecast grid (handles dim name + resolution mismatch)
+    threshold = _align_threshold_to_forecast(threshold, tp_worst)
 
     exceedance = (tp_worst > threshold).mean(dim=member_dim)
     exceedance.attrs.update(
@@ -112,7 +160,7 @@ def compute_ensemble_confidence(
 
     tp = acc_ds[var_name]
     step_dim = _find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim) if step_dim is not None else tp
+    tp_worst = tp.max(dim=step_dim)
 
     q25 = tp_worst.quantile(0.25, dim=member_dim)
     q75 = tp_worst.quantile(0.75, dim=member_dim)

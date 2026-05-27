@@ -12,7 +12,7 @@ sources:
 
   # ECMWF S3 archive (byte-range reads only)
   ecmwf_s3_bucket: "ecmwf-forecasts"
-  ecmwf_s3_region: "eu-west-1"
+  ecmwf_s3_region: "eu-central-1"
   ecmwf_s3_no_sign: true   # Public bucket — no authentication needed
 
   # CMORPH return-period thresholds
@@ -32,6 +32,7 @@ sources:
 outputs:
   # Component 1: IceChunk virtual store
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
+  icechunk_store_region: "eu-west-1"
 
   # Component 2: Exceedance probabilities Zarr
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
@@ -83,7 +84,6 @@ component2:
   thresholds:
     adaptive: true    # false → use static climatological percentiles
     enso_iod_index_path: "data/enso_iod_index.csv"
-    fit_from_cmorph: false   # true → fit from raw CMORPH (slow), false → load pre-computed
 
   # AIFS parallel track (Innovation 3)
   aifs_track:
@@ -127,6 +127,54 @@ component3:
     enabled: true
     decay_factor: 0.8       # API(t) = observed(t) + decay_factor * API(t-1)
     initial_api_mm: 20.0    # Starting API value for first day of run
+
+  # CRMA model parameters (no hardcoded values in source)
+  crma_model:
+    # Evidence discretization thresholds — White et al. (2021) Nzoia basin
+    gpm_obs_normal_mmday: 5.0
+    gpm_obs_above_mmday: 25.0
+    api_threshold_normal_mm: 30.0
+    api_threshold_saturated_mm: 80.0
+    spatial_threshold_regional: 0.25
+    spatial_threshold_extensive: 0.75
+    consecutive_signal_threshold: 3   # days with signal → temporal persistence = Yes
+    # Soil-memory threshold: consecutive days of API_State=Saturated
+    # that triggers SoilMemory_State=1 (prolonged saturation — DBN Innovation 1a)
+    soil_memory_days: 7
+    # Forecast_Hazard discretization thresholds
+    hazard_medium_threshold: 0.15   # Low → Medium exceedance boundary
+    hazard_high_threshold: 0.40     # Medium → High exceedance boundary
+    # Exceedance signal thresholds
+    signal_threshold_prob: 0.15
+    rp_signal: 5
+    # Compound-risk CPT bucket boundaries (additive score scale 0-10)
+    compound_score_thresholds:        # [low|mid, mid|mod, mod|high]
+      fresh: [1.5, 4.0, 7.0]         # SoilMemory_State=0
+      prolonged: [1.0, 3.0, 6.0]     # SoilMemory_State=1 (lower thresholds → more sensitive)
+    # Compound-risk CPT bucket distributions [P_Green, P_Yellow, P_Orange, P_Red]
+    compound_cpt_buckets:
+      fresh:
+        low:  [0.85, 0.12, 0.02, 0.01]
+        mid:  [0.20, 0.60, 0.15, 0.05]
+        mod:  [0.05, 0.20, 0.55, 0.20]
+        high: [0.02, 0.08, 0.30, 0.60]
+      prolonged:
+        low:  [0.75, 0.18, 0.05, 0.02]
+        mid:  [0.10, 0.45, 0.30, 0.15]
+        mod:  [0.02, 0.13, 0.45, 0.40]
+        high: [0.01, 0.04, 0.20, 0.75]
+    # Per-cluster compound-risk score weights {forecast, obs, api}
+    cluster_weights:
+      equatorial_east: {forecast: 2.0, obs: 1.5, api: 1.5}
+      horn_arid:       {forecast: 2.5, obs: 1.0, api: 2.0}
+      great_rift:      {forecast: 2.0, obs: 1.5, api: 1.8}
+      nile_basin:      {forecast: 1.8, obs: 2.0, api: 1.5}
+    # API_State inter-slice DBN transition matrix
+    # Rows: API_t ∈ {Dry=0, Normal=1, Saturated=2}; cols: API_{t-1}
+    api_transition:
+      - [0.70, 0.20, 0.05]
+      - [0.25, 0.55, 0.35]
+      - [0.05, 0.25, 0.60]
 
   # EM-DAT CPT refinement (Innovation 5)
   emdat_refinement:

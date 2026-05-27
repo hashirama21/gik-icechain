@@ -65,8 +65,13 @@ class GIKCatalog:
     by date and run hour.
     """
 
-    def __init__(self, hf_dataset: str = GIK_HF_DATASET) -> None:
+    def __init__(
+        self,
+        hf_dataset: str = GIK_HF_DATASET,
+        catalog_file: str = GIK_CATALOG_FILE,
+    ) -> None:
         self.hf_dataset = hf_dataset
+        self.catalog_file = catalog_file
         self._catalog: pd.DataFrame | None = None
         self._fs = HfFileSystem()
 
@@ -95,7 +100,7 @@ class GIKCatalog:
                 log.info("gik_catalog_loaded_from_cache", path=str(cache_file), rows=len(catalog))
                 return catalog
 
-        catalog_path = f"datasets/{self.hf_dataset}/{GIK_CATALOG_FILE}"
+        catalog_path = f"datasets/{self.hf_dataset}/{self.catalog_file}"
         log.info("loading_gik_catalog", path=catalog_path)
         with self._fs.open(catalog_path) as f:
             catalog = pd.read_parquet(f)

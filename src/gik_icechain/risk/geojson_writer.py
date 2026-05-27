@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger(__name__)
 
@@ -97,14 +94,17 @@ def build_feature(
     result: dict[str, Any],
     evidence: Any,
     day: date,
+    emdat_flood_match: bool = False,
 ) -> dict[str, Any]:
     """Build a single GeoJSON Feature dict from CRMA inference outputs.
 
     Args:
-        unit:     A pandas Series row from the admin-1 GeoDataFrame.
-        result:   Output of ``CRMAModel.infer()``.
-        evidence: ``CRMAEvidence`` instance used for inference.
-        day:      Forecast date.
+        unit:              A pandas Series row from the admin-1 GeoDataFrame.
+        result:            Output of ``CRMAModel.infer()``.
+        evidence:          ``CRMAEvidence`` instance used for inference.
+        day:               Forecast date.
+        emdat_flood_match: True when this day × unit matches an EM-DAT event
+                           (used for retrospective validation overlays).
 
     Returns:
         GeoJSON Feature dict with geometry and flattened risk properties.
@@ -127,5 +127,6 @@ def build_feature(
             "exceedance_72h_5y": evidence.exceedance_prob_72h_5y,
             "api_mm": evidence.api_mm,
             "spatial_coverage": evidence.spatial_coverage_fraction,
+            "emdat_flood_match": emdat_flood_match,
         },
     }

@@ -45,6 +45,14 @@ def compute_rolling_accumulations(
             f"Variable '{precip_var}' not found in Dataset. Available: {list(ds.data_vars)}"
         )
 
+    # Auto-detect step resolution from the 'step' coordinate when available
+    da = ds[precip_var]
+    if "step" in da.coords and da.sizes.get("step", 0) >= 2:
+        steps = da.coords["step"].values
+        detected = int(steps[1] - steps[0])
+        if detected > 0:
+            step_hours = detected
+
     accum_vars: dict[str, xr.DataArray] = {}
     for w in windows_h:
         accum_vars[f"tp_{w}h"] = accumulation_for_window(
@@ -92,7 +100,7 @@ def accumulation_for_window(
     n = da.sizes[step_dim]
 
     if n_back >= n:
-        return da.copy()
+        return da
 
     current = da.isel({step_dim: slice(n_back, None)})
     lagged = da.isel({step_dim: slice(0, n - n_back)}).assign_coords({step_dim: current[step_dim]})

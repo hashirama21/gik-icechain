@@ -2,14 +2,12 @@
 
 Iterates over the requested date range, loads exceedance probabilities from
 the C2 Zarr store and GPM IMERG daily observations, propagates the Antecedent
-Precipitation Index (API) across days with exponential decay, and writes one
-GeoJSON FeatureCollection per day.
+Precipitation Index (API) and soil-saturation day-count across days, and
+writes one GeoJSON FeatureCollection per day.
 
-Expected exceedance store schema:
-  variable:    exceedance_prob
-  dimensions:  (date, lat, lon, window, return_period)
-  window:      accumulation window in hours, e.g. [3, 6, 12, 24, 48, 72, 168]
-  return_period: return period in years, e.g. [2, 5, 10, 20, 40, 100]
+All numeric thresholds and initial values are read from GIKConfig
+(configs/default.yaml component3.crma_model / component3.api) — no
+hardcoded constants.
 """
 
 from __future__ import annotations
@@ -32,10 +30,6 @@ from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
 
-_RP_SIGNAL = 5
-_SIGNAL_THRESHOLD = 0.15
-_INITIAL_API_MM = 20.0
-
 
 def run_risk_batch(
     exceedance_store_uri: str,
@@ -46,6 +40,9 @@ def run_risk_batch(
     start: date,
     end: date,
     api_decay: float = 0.8,
+    initial_api_mm: float = 20.0,
+    signal_threshold: float = 0.15,
+    rp_signal: int = 5,
 ) -> list[Path]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -58,6 +55,9 @@ def run_risk_batch(
         start:                 First forecast date (inclusive).
         end:                   Last forecast date (inclusive).
         api_decay:             Exponential decay factor for API carry-over.
+        initial_api_mm:        Starting API for the first day (mm).
+        signal_threshold:      Exceedance probability → rainfall-signal flag.
+        rp_signal:             Return period (years) used for signal detection.
 
     Returns:
         Sorted list of written GeoJSON file paths.
@@ -68,7 +68,9 @@ def run_risk_batch(
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
 
     pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
-    bn_states: dict[str, DynamicBNState] = {p: init_state(_INITIAL_API_MM) for p in pcodes}
+    bn_states: dict[str, DynamicBNState] = {
+        p: init_state(initial_api_mm) for p in pcodes
+    }
 
     written: list[Path] = []
     current = start
@@ -82,6 +84,8 @@ def run_risk_batch(
             output_dir,
             bn_states,
             api_decay,
+            signal_threshold,
+            rp_signal,
         )
         if path is not None:
             written.append(path)
@@ -100,6 +104,8 @@ def _process_day(
     output_dir: Path,
     bn_states: dict[str, DynamicBNState],
     api_decay: float,
+    signal_threshold: float,
+    rp_signal: int,
 ) -> Path | None:
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day))
@@ -107,16 +113,28 @@ def _process_day(
         log.warning("exceedance_date_missing", date=day)
         return None
 
-    exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=_RP_SIGNAL)
-    exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=_RP_SIGNAL)
-    exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=_RP_SIGNAL)
+    try:
+        exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
+        exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
+        exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
+    except KeyError as exc:
+        log.warning("exceedance_window_missing", date=day, rp=rp_signal, error=str(exc))
+        return None
     gpm_da = load_gpm_daily(gpm_dir, day)
 
     p_24h_s = aggregate_to_admin1(exc_24h, admin)
     p_72h_s = aggregate_to_admin1(exc_72h, admin)
     p_7d_s = aggregate_to_admin1(exc_7d, admin)
-    cov_s = coverage_fraction(exc_24h, admin, _SIGNAL_THRESHOLD)
+    cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+
+    # Ensemble confidence (Data_Confidence BN node): IQR/median spread per admin-1.
+    # Defaults to High (2) when the variable is absent (stores written before this fix).
+    if "ensemble_confidence" in exc_day:
+        conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
+        conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0).astype("int8")
+    else:
+        conf_s = pd.Series(dtype="int8")
 
     features = []
     for _, unit in admin.iterrows():
@@ -132,16 +150,17 @@ def _process_day(
             api_mm=bn_states[pcode].api_mm,
             spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
             consecutive_signal_days=bn_states[pcode].consecutive_days,
+            sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
+            gpm_quality=int(conf_s.get(pcode, 2.0)),
         )
 
-        # bn_step overrides api_mm and consecutive_signal_days from state,
-        # then advances the state for the next day.
         result, bn_states[pcode] = bn_step(
             bn_states[pcode],
             evidence,
             crma_model,
             api_decay=api_decay,
             gpm_obs_mm=gpm_24h,
+            signal_threshold=signal_threshold,
         )
         features.append(build_feature(unit, result, evidence, day))
 

@@ -23,9 +23,35 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
+# Register the kerchunk GRIBCodec so that Zarr can decode GRIB2 virtual chunks.
+try:
+    import numcodecs
+    from kerchunk.codecs import GRIBCodec
+
+    numcodecs.register_codec(GRIBCodec, "grib")
+except (ImportError, ValueError):
+    # ValueError: codec already registered; ImportError: kerchunk not installed
+    pass
+
+# Bridge the numcodecs GRIBCodec into the Zarr v3 codec registry.
+# VirtualiZarr converts v2 filters {"id": "grib"} to v3 {"name": "numcodecs.grib"},
+# but Zarr v3 only knows about pre-registered numcodecs wrappers.  This subclass
+# uses Zarr's built-in _NumcodecsArrayBytesCodec bridge to make "numcodecs.grib"
+# resolvable at both write time (VirtualiZarr metadata conversion) and read time.
+try:
+    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
+    from zarr.registry import register_codec
+
+    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
+        pass
+
+    register_codec("numcodecs.grib", GribNumcodecs)
+except (ImportError, ValueError):
+    pass
+
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
-_ECMWF_REGION = "eu-west-1"
+_ECMWF_REGION = "eu-central-1"
 
 # Matches sfc chunk refs only: step_NNN/{var}/sfc/{member}/{chunk_idx}
 _SFC_STEP_RE = re.compile(r"^step_(\d+)/([^/]+)/sfc/[^/]+/(.+)$")
@@ -45,6 +71,47 @@ def _to_ref_value(v: object) -> str | list:
     if isinstance(v, (list, str)):
         return v
     return json.dumps(v)
+
+
+# Matches the old ECMWF path: {date}/{tz}/0p25/ → needs ifs/ inserted.
+# Captures any resolution-like directory (0p25, 0p4-beta, 1p0, etc.) that
+# follows the timezone directly, without the ifs/ or aifs/ model prefix.
+_OLD_ECMWF_PATH_RE = re.compile(
+    r"^(s3://ecmwf-forecasts/\d{8}/\d{2}z/)(?!ifs/|aifs/)(\dp[^/]+/)"
+)
+
+
+def _fix_ecmwf_uri(ref: str | list) -> str | list:
+    """Fix ECMWF S3 URIs for two known issues in GIK parquet references.
+
+    1. Append ``.grib2`` when the file extension is missing.
+    2. Insert ``ifs/`` into the path when the old pre-2024 layout is used.
+
+    The ECMWF S3 bucket was restructured: the resolution directory (e.g.
+    ``0p25/``) moved from ``{date}/{tz}/0p25/`` to ``{date}/{tz}/ifs/0p25/``.
+    The GIK flat-parquet files on HuggingFace still reference the old paths.
+    """
+    if isinstance(ref, list) and len(ref) >= 3:
+        uri = str(ref[0])
+        if uri.startswith(_ECMWF_S3_PREFIX):
+            uri = _OLD_ECMWF_PATH_RE.sub(r"\1ifs/\2", uri)
+            if not uri.endswith((".grib2", ".index")):
+                uri += ".grib2"
+            return [uri] + list(ref[1:])
+    elif isinstance(ref, str):
+        try:
+            parsed = json.loads(ref)
+            if isinstance(parsed, list) and len(parsed) >= 3:
+                uri = str(parsed[0])
+                if uri.startswith(_ECMWF_S3_PREFIX):
+                    uri = _OLD_ECMWF_PATH_RE.sub(r"\1ifs/\2", uri)
+                    if not uri.endswith((".grib2", ".index")):
+                        uri += ".grib2"
+                    parsed[0] = uri
+                    return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return ref
 
 
 class GIKFlatParquetParser:
@@ -78,14 +145,12 @@ class GIKFlatParquetParser:
 
         df["key"] = df["key"].astype(str)
 
-        chunk_rows: list[dict] = []
-        for _, row in df.iterrows():
-            m = _SFC_STEP_RE.match(row["key"])
-            if m:
-                step_num, var, _chunk_idx = m.groups()
-                chunk_rows.append({"step_num": int(step_num), "var": var, "value": row["value"]})
+        # Vectorised extraction: regex match on all keys in one pass (~10× faster
+        # than iterrows on the 5 920-row parquet files typical of ENFO archive).
+        extracted = df["key"].str.extract(_SFC_STEP_RE, expand=True)
+        sfc_mask = extracted[0].notna()
 
-        if not chunk_rows:
+        if not sfc_mask.any():
             log.warning("gik_parquet_no_sfc_chunk_refs", url=url)
             self.step_hours = []
             store_refs = KerchunkStoreRefs({"refs": {".zgroup": '{"zarr_format": 2}'}})
@@ -93,23 +158,50 @@ class GIKFlatParquetParser:
                 group=manifestgroup_from_kerchunk_refs(store_refs), registry=registry
             )
 
-        # Infer spatial dimensions from any sfc .zarray entry in the metadata
-        nlat, nlon, default_dtype = 181, 360, "<f4"
-        for _, row in df[df["key"].str.endswith(".zarray")].head(5).iterrows():
-            v = row["value"]
-            if isinstance(v, (bytes, bytearray)):
-                v = v.decode()
-            try:
-                meta = json.loads(v)
-                sh = meta.get("shape", [])
-                if len(sh) >= 2:
-                    nlat, nlon = int(sh[-2]), int(sh[-1])
-                    default_dtype = meta.get("dtype", default_dtype)
-                    break
-            except Exception:
-                pass
+        chunk_df = pd.DataFrame({
+            "step_num": extracted.loc[sfc_mask, 0].astype(int).values,
+            "var": extracted.loc[sfc_mask, 1].values,
+            "value": df.loc[sfc_mask, "value"].values,
+        })
 
-        chunk_df = pd.DataFrame(chunk_rows)
+        # Infer spatial dimensions.  The parquet .zarray entries often carry
+        # incorrect spatial shape (e.g. 181×360 for 1° while the actual GRIB2
+        # messages on s3://ecmwf-forecasts/ are 0.25° = 721×1440).  We detect
+        # the grid resolution from the S3 URI pattern and override when possible.
+        nlat, nlon, default_dtype = 721, 1440, "<f4"
+        first_uri = ""
+        for val in chunk_df["value"].head(3):
+            ref = _to_ref_value(val)
+            if isinstance(ref, str):
+                try:
+                    ref = json.loads(ref)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            if isinstance(ref, list) and len(ref) >= 1:
+                first_uri = str(ref[0])
+                break
+        if "/0p25/" in first_uri:
+            nlat, nlon = 721, 1440
+        elif "/0p4-beta/" in first_uri:
+            nlat, nlon = 451, 900
+        elif "/1p0/" in first_uri or "/1p/" in first_uri:
+            nlat, nlon = 181, 360
+        else:
+            # Fall back to parquet .zarray metadata
+            for v in df.loc[df["key"].str.endswith(".zarray"), "value"].head(5):
+                if isinstance(v, (bytes, bytearray)):
+                    v = v.decode()
+                try:
+                    meta = json.loads(v)
+                    sh = meta.get("shape", [])
+                    if len(sh) >= 2:
+                        nlat, nlon = int(sh[-2]), int(sh[-1])
+                        default_dtype = meta.get("dtype", default_dtype)
+                        break
+                except Exception:
+                    pass
+        log.debug("gik_grid_resolution", nlat=nlat, nlon=nlon, uri_hint=first_uri[:80])
+
         # Persist step hours so _open_one_virtual can assign step coordinates
         self.step_hours = sorted(chunk_df["step_num"].unique().tolist())
 
@@ -119,14 +211,17 @@ class GIKFlatParquetParser:
             grp = grp.sort_values("step_num").reset_index(drop=True)
             n_steps = len(grp)
 
-            # Flat key: {var}/.zarray so that find_var_names picks it up at depth 1
+            # Flat key: {var}/.zarray so that find_var_names picks it up at depth 1.
+            # The GRIBCodec filter is required so that Zarr decodes the compressed
+            # GRIB2 byte-ranges (fetched via virtual chunk refs) into float arrays
+            # before the BytesCodec tries to reinterpret them.
             refs[f"{var}/.zarray"] = json.dumps(
                 {
                     "chunks": [1, nlat, nlon],
                     "compressor": None,
                     "dtype": default_dtype,
                     "fill_value": "NaN",
-                    "filters": None,
+                    "filters": [{"id": "grib", "var": var}],
                     "order": "C",
                     "shape": [n_steps, nlat, nlon],
                     "zarr_format": 2,
@@ -136,8 +231,8 @@ class GIKFlatParquetParser:
                 {"_ARRAY_DIMENSIONS": ["step", "latitude", "longitude"]}
             )
 
-            for step_pos, (_, row) in enumerate(grp.iterrows()):
-                refs[f"{var}/{step_pos}.0.0"] = _to_ref_value(row["value"])
+            for step_pos, val in enumerate(grp["value"]):
+                refs[f"{var}/{step_pos}.0.0"] = _fix_ecmwf_uri(_to_ref_value(val))
 
         log.debug(
             "gik_refs_built",
@@ -240,7 +335,7 @@ def parquet_to_virtual_dataset(
     def _fetch(idx: int, path: str) -> tuple[int, xr.Dataset | None]:
         try:
             return idx, _open_one_virtual(path, variables, registry)
-        except Exception:
+        except (OSError, ValueError, KeyError, RuntimeError):
             log.warning("parquet_skipped", path=path, exc_info=True)
             return idx, None
 
