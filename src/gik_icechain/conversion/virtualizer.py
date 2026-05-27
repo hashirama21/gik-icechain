@@ -51,7 +51,7 @@ except (ImportError, ValueError):
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
-_ECMWF_REGION = "eu-west-1"
+_ECMWF_REGION = "eu-central-1"
 
 # Matches sfc chunk refs only: step_NNN/{var}/sfc/{member}/{chunk_idx}
 _SFC_STEP_RE = re.compile(r"^step_(\d+)/([^/]+)/sfc/[^/]+/(.+)$")
@@ -71,6 +71,31 @@ def _to_ref_value(v: object) -> str | list:
     if isinstance(v, (list, str)):
         return v
     return json.dumps(v)
+
+
+def _fix_ecmwf_uri(ref: str | list) -> str | list:
+    """Append ``.grib2`` to ECMWF S3 URIs missing the file extension.
+
+    The GIK flat-parquet files on HuggingFace store byte-range references
+    whose S3 keys omit the ``.grib2`` extension, but the actual objects on
+    ``s3://ecmwf-forecasts/`` include it.  Without this fix the virtual
+    chunk fetch returns ``NoSuchKey``.
+    """
+    if isinstance(ref, list) and len(ref) >= 3:
+        uri = str(ref[0])
+        if uri.startswith(_ECMWF_S3_PREFIX) and not uri.endswith((".grib2", ".index")):
+            return [uri + ".grib2"] + list(ref[1:])
+    elif isinstance(ref, str):
+        try:
+            parsed = json.loads(ref)
+            if isinstance(parsed, list) and len(parsed) >= 3:
+                uri = str(parsed[0])
+                if uri.startswith(_ECMWF_S3_PREFIX) and not uri.endswith((".grib2", ".index")):
+                    parsed[0] = uri + ".grib2"
+                    return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return ref
 
 
 class GIKFlatParquetParser:
@@ -123,20 +148,43 @@ class GIKFlatParquetParser:
             "value": df.loc[sfc_mask, "value"].values,
         })
 
-        # Infer spatial dimensions from any .zarray metadata entry (≤5 rows checked)
-        nlat, nlon, default_dtype = 181, 360, "<f4"
-        for v in df.loc[df["key"].str.endswith(".zarray"), "value"].head(5):
-            if isinstance(v, (bytes, bytearray)):
-                v = v.decode()
-            try:
-                meta = json.loads(v)
-                sh = meta.get("shape", [])
-                if len(sh) >= 2:
-                    nlat, nlon = int(sh[-2]), int(sh[-1])
-                    default_dtype = meta.get("dtype", default_dtype)
-                    break
-            except Exception:
-                pass
+        # Infer spatial dimensions.  The parquet .zarray entries often carry
+        # incorrect spatial shape (e.g. 181×360 for 1° while the actual GRIB2
+        # messages on s3://ecmwf-forecasts/ are 0.25° = 721×1440).  We detect
+        # the grid resolution from the S3 URI pattern and override when possible.
+        nlat, nlon, default_dtype = 721, 1440, "<f4"
+        first_uri = ""
+        for val in chunk_df["value"].head(3):
+            ref = _to_ref_value(val)
+            if isinstance(ref, str):
+                try:
+                    ref = json.loads(ref)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            if isinstance(ref, list) and len(ref) >= 1:
+                first_uri = str(ref[0])
+                break
+        if "/0p25/" in first_uri:
+            nlat, nlon = 721, 1440
+        elif "/0p4-beta/" in first_uri:
+            nlat, nlon = 451, 900
+        elif "/1p0/" in first_uri or "/1p/" in first_uri:
+            nlat, nlon = 181, 360
+        else:
+            # Fall back to parquet .zarray metadata
+            for v in df.loc[df["key"].str.endswith(".zarray"), "value"].head(5):
+                if isinstance(v, (bytes, bytearray)):
+                    v = v.decode()
+                try:
+                    meta = json.loads(v)
+                    sh = meta.get("shape", [])
+                    if len(sh) >= 2:
+                        nlat, nlon = int(sh[-2]), int(sh[-1])
+                        default_dtype = meta.get("dtype", default_dtype)
+                        break
+                except Exception:
+                    pass
+        log.debug("gik_grid_resolution", nlat=nlat, nlon=nlon, uri_hint=first_uri[:80])
 
         # Persist step hours so _open_one_virtual can assign step coordinates
         self.step_hours = sorted(chunk_df["step_num"].unique().tolist())
@@ -168,7 +216,7 @@ class GIKFlatParquetParser:
             )
 
             for step_pos, val in enumerate(grp["value"]):
-                refs[f"{var}/{step_pos}.0.0"] = _to_ref_value(val)
+                refs[f"{var}/{step_pos}.0.0"] = _fix_ecmwf_uri(_to_ref_value(val))
 
         log.debug(
             "gik_refs_built",

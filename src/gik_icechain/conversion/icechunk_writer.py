@@ -98,7 +98,9 @@ class IceChainStore:
         """Create a new IceChunk repository at storage_uri."""
         self._check_deps()
         self._repo = icechunk.Repository.create(
-            self._build_storage(), config=self._build_repo_config()
+            self._build_storage(),
+            config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_created", uri=self.storage_uri)
 
@@ -106,7 +108,9 @@ class IceChainStore:
         """Open an existing IceChunk repository."""
         self._check_deps()
         self._repo = icechunk.Repository.open(
-            self._build_storage(), config=self._build_repo_config()
+            self._build_storage(),
+            config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_opened", uri=self.storage_uri)
 
@@ -116,6 +120,7 @@ class IceChainStore:
         self._repo = icechunk.Repository.open_or_create(
             self._build_storage(),
             config=self._build_repo_config(),
+            authorize_virtual_chunk_access=self._virtual_chunk_credentials(),
         )
         log.info("icechunk_store_ready", uri=self.storage_uri)
 
@@ -307,6 +312,15 @@ class IceChainStore:
         log.info("store_validation", **{k: v for k, v in result.items() if k != "gap_details"})
         return result
 
+    def _virtual_chunk_credentials(self) -> dict[str, Any]:
+        """Return the authorize_virtual_chunk_access map for ECMWF public S3.
+
+        IceChunk requires explicit authorization per virtual chunk container
+        prefix as a security measure.  ``None`` means use anonymous / env
+        credentials (the ECMWF bucket is public).
+        """
+        return {"s3://ecmwf-forecasts/": None}
+
     def _build_repo_config(self) -> Any:
         """Build a RepositoryConfig that authorises virtual chunks from s3://ecmwf-forecasts/.
 
@@ -314,7 +328,7 @@ class IceChainStore:
         knows which external S3 prefixes are trusted for byte-range references.
         The ECMWF bucket is public (anonymous S3 access).
         """
-        ecmwf_store = icechunk.s3_store(region="eu-west-1", anonymous=True)
+        ecmwf_store = icechunk.s3_store(region="eu-central-1", anonymous=True)
         container = icechunk.VirtualChunkContainer(
             url_prefix="s3://ecmwf-forecasts/",
             store=ecmwf_store,
