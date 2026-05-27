@@ -73,25 +73,41 @@ def _to_ref_value(v: object) -> str | list:
     return json.dumps(v)
 
 
-def _fix_ecmwf_uri(ref: str | list) -> str | list:
-    """Append ``.grib2`` to ECMWF S3 URIs missing the file extension.
+# Matches the old ECMWF path: {date}/{tz}/0p25/ → needs ifs/ inserted.
+# Captures any resolution-like directory (0p25, 0p4-beta, 1p0, etc.) that
+# follows the timezone directly, without the ifs/ or aifs/ model prefix.
+_OLD_ECMWF_PATH_RE = re.compile(
+    r"^(s3://ecmwf-forecasts/\d{8}/\d{2}z/)(?!ifs/|aifs/)(\dp[^/]+/)"
+)
 
-    The GIK flat-parquet files on HuggingFace store byte-range references
-    whose S3 keys omit the ``.grib2`` extension, but the actual objects on
-    ``s3://ecmwf-forecasts/`` include it.  Without this fix the virtual
-    chunk fetch returns ``NoSuchKey``.
+
+def _fix_ecmwf_uri(ref: str | list) -> str | list:
+    """Fix ECMWF S3 URIs for two known issues in GIK parquet references.
+
+    1. Append ``.grib2`` when the file extension is missing.
+    2. Insert ``ifs/`` into the path when the old pre-2024 layout is used.
+
+    The ECMWF S3 bucket was restructured: the resolution directory (e.g.
+    ``0p25/``) moved from ``{date}/{tz}/0p25/`` to ``{date}/{tz}/ifs/0p25/``.
+    The GIK flat-parquet files on HuggingFace still reference the old paths.
     """
     if isinstance(ref, list) and len(ref) >= 3:
         uri = str(ref[0])
-        if uri.startswith(_ECMWF_S3_PREFIX) and not uri.endswith((".grib2", ".index")):
-            return [uri + ".grib2"] + list(ref[1:])
+        if uri.startswith(_ECMWF_S3_PREFIX):
+            uri = _OLD_ECMWF_PATH_RE.sub(r"\1ifs/\2", uri)
+            if not uri.endswith((".grib2", ".index")):
+                uri += ".grib2"
+            return [uri] + list(ref[1:])
     elif isinstance(ref, str):
         try:
             parsed = json.loads(ref)
             if isinstance(parsed, list) and len(parsed) >= 3:
                 uri = str(parsed[0])
-                if uri.startswith(_ECMWF_S3_PREFIX) and not uri.endswith((".grib2", ".index")):
-                    parsed[0] = uri + ".grib2"
+                if uri.startswith(_ECMWF_S3_PREFIX):
+                    uri = _OLD_ECMWF_PATH_RE.sub(r"\1ifs/\2", uri)
+                    if not uri.endswith((".grib2", ".index")):
+                        uri += ".grib2"
+                    parsed[0] = uri
                     return parsed
         except (json.JSONDecodeError, ValueError):
             pass

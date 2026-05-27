@@ -89,6 +89,70 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
     return last_commit
 
 
+def _subset_to_bbox(
+    ds: xr.Dataset,
+    bbox: tuple[float, float, float, float],
+) -> xr.Dataset:
+    """Subset a dataset to a geographic bounding box.
+
+    Handles both proper geographic coordinates and raw integer indices
+    (as produced by VirtualiZarr when lat/lon aren't assigned).
+
+    For a 0.25° ECMWF global grid with integer indices:
+      latitude[i]  = 90 - i * 0.25   (721 values, 90N to 90S)
+      longitude[j] = j * 0.25        (1440 values, 0E to 359.75E)
+    """
+    lat_min, lat_max, lon_min, lon_max = bbox
+    lat_name = "latitude" if "latitude" in ds.dims else "lat"
+    lon_name = "longitude" if "longitude" in ds.dims else "lon"
+    nlat = ds.sizes[lat_name]
+    nlon = ds.sizes[lon_name]
+
+    lat_vals = ds[lat_name].values
+    if float(lat_vals.max()) <= nlat:
+        # Integer indices — convert geographic bounds to index bounds.
+        # Infer grid: 0.25° global grid (721×1440) or similar.
+        dlat = 180.0 / (nlat - 1)
+        dlon = 360.0 / nlon
+        # ECMWF grids: latitude[0]=90°N (descending), longitude[0]=0°E
+        i_min = max(0, int((90.0 - lat_max) / dlat))
+        i_max = min(nlat - 1, int((90.0 - lat_min) / dlat))
+        j_min = max(0, int(lon_min / dlon))
+        j_max = min(nlon - 1, int(lon_max / dlon))
+        return ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+
+    # Proper geographic coordinates — use .sel()
+    if float(lat_vals[0]) > float(lat_vals[-1]):
+        return ds.sel({lat_name: slice(lat_max, lat_min), lon_name: slice(lon_min, lon_max)})
+    return ds.sel({lat_name: slice(lat_min, lat_max), lon_name: slice(lon_min, lon_max)})
+
+
+def _threshold_bbox(
+    thresholds: object,
+    buffer: float = 1.0,
+) -> tuple[float, float, float, float] | None:
+    """Extract the spatial bounding box from loaded GEV thresholds.
+
+    Returns (lat_min, lat_max, lon_min, lon_max) with a buffer, or None if
+    the threshold object has no spatial data.
+    """
+    try:
+        for mode_key in thresholds._thresholds:
+            for wh in thresholds._thresholds[mode_key]:
+                for _rp, da in thresholds._thresholds[mode_key][wh].items():
+                    lat_name = next((c for c in da.coords if c in ("lat", "latitude")), None)
+                    lon_name = next((c for c in da.coords if c in ("lon", "longitude")), None)
+                    if lat_name and lon_name:
+                        lat_min = float(da[lat_name].min()) - buffer
+                        lat_max = float(da[lat_name].max()) + buffer
+                        lon_min = float(da[lon_name].min()) - buffer
+                        lon_max = float(da[lon_name].max()) + buffer
+                        return (lat_min, lat_max, lon_min, lon_max)
+    except Exception:
+        pass
+    return None
+
+
 def _run_exceedance(
     cfg: GIKConfig,  # noqa: F821
     store_uri: str,
@@ -156,12 +220,22 @@ def _run_exceedance(
     confidence_results: dict[date, xr.DataArray] = {}
     session = store_obj._repo.readonly_session(branch=store_obj.branch)
 
+    # Determine the threshold spatial domain for subsetting.
+    # Reading the full global grid (721×1440 × 50 members × 85 steps) would
+    # saturate bandwidth; subsetting to the East Africa CMORPH domain first
+    # reduces transferred data by ~97%.
+    _thr_bbox = _threshold_bbox(thresholds)
+
     for date_str in committed_dates:
         day = date.fromisoformat(date_str)
         mode = _mode_for(day)
 
         try:
             day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+            # Spatial subset to the threshold domain (East Africa) before
+            # any computation — avoids fetching GRIB2 chunks for the whole globe.
+            if _thr_bbox is not None:
+                day_ds = _subset_to_bbox(day_ds, _thr_bbox)
             day_ds = day_ds.chunk(cfg.component2.dask.chunk_dims)
         except Exception as exc:
             log.warning("exceedance_date_open_failed", date=date_str, error=str(exc)[:120])
