@@ -20,6 +20,7 @@ def open_icechunk_store(
     store_uri: str,
     as_of_date: date | None = None,
     chunks: dict | None = None,
+    region: str | None = None,
 ) -> xr.Dataset:
     """Open the GIK IceChunk virtual store as a lazy Dask-backed Dataset.
 
@@ -40,7 +41,7 @@ def open_icechunk_store(
     from gik_icechain.conversion.icechunk_writer import IceChainStore
 
     effective_chunks = chunks or _DEFAULT_CHUNKS
-    store_obj = IceChainStore(store_uri)
+    store_obj = IceChainStore(store_uri, region=region)
     store_obj.create_or_open()
 
     if as_of_date is not None:

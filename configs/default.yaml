@@ -12,7 +12,7 @@ sources:
 
   # ECMWF S3 archive (byte-range reads only)
   ecmwf_s3_bucket: "ecmwf-forecasts"
-  ecmwf_s3_region: "eu-west-1"
+  ecmwf_s3_region: "eu-central-1"
   ecmwf_s3_no_sign: true   # Public bucket — no authentication needed
 
   # CMORPH return-period thresholds
@@ -32,6 +32,7 @@ sources:
 outputs:
   # Component 1: IceChunk virtual store
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
+  icechunk_store_region: "eu-west-1"
 
   # Component 2: Exceedance probabilities Zarr
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
