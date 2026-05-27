@@ -32,6 +32,7 @@ sources:
 outputs:
   # Component 1: IceChunk virtual store
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
+  icechunk_store_region: "eu-west-1"
 
   # Component 2: Exceedance probabilities Zarr
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"

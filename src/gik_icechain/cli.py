@@ -64,7 +64,7 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
 
     catalog = GIKCatalog(cfg.sources.gik_hf_dataset)
     catalog.load_catalog()
-    store = IceChainStore(cfg.outputs.icechunk_store_uri)
+    store = IceChainStore(cfg.outputs.icechunk_store_uri, region=cfg.outputs.icechunk_store_region)
     store.create_or_open()
 
     last_commit = ""
@@ -118,7 +118,7 @@ def _run_exceedance(
 
     # Iterate over committed date groups directly — IceChunk stores one zarr
     # group per forecast date (step-based), not a time-series dataset.
-    store_obj = IceChainStore(store_uri)
+    store_obj = IceChainStore(store_uri, region=cfg.outputs.icechunk_store_region)
     store_obj.create_or_open()
     snapshots = store_obj.list_snapshots()
     committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})

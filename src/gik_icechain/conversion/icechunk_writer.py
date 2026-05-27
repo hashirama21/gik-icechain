@@ -29,6 +29,27 @@ except ImportError:
     ICECHUNK_AVAILABLE = False
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
+# Register the kerchunk GRIBCodec so Zarr can decode GRIB2 virtual chunks at read time.
+try:
+    import numcodecs
+    from kerchunk.codecs import GRIBCodec
+
+    numcodecs.register_codec(GRIBCodec, "grib")
+except (ImportError, ValueError):
+    pass
+
+# Bridge GRIBCodec into Zarr v3 registry (see virtualizer.py for rationale).
+try:
+    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
+    from zarr.registry import register_codec
+
+    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
+        pass
+
+    register_codec("numcodecs.grib", GribNumcodecs)
+except (ImportError, ValueError):
+    pass
+
 VIRTUALIZARR_AVAILABLE = importlib.util.find_spec("virtualizarr") is not None
 if not VIRTUALIZARR_AVAILABLE:
     log.warning("virtualizarr_not_installed", msg="pip install virtualizarr")
@@ -46,6 +67,7 @@ class IceChainStore:
         storage_uri: str,
         branch: str = "main",
         endpoint_url: str | None = None,
+        region: str | None = None,
     ) -> None:
         """
         Args:
@@ -53,11 +75,18 @@ class IceChainStore:
             branch:       IceChunk branch name.
             endpoint_url: Custom S3 endpoint for MinIO/on-prem storage.
                           Falls back to the AWS_ENDPOINT_URL environment variable.
+            region:       AWS region for the S3 bucket.  Falls back to
+                          AWS_REGION / AWS_DEFAULT_REGION environment variables.
         """
         self.storage_uri = storage_uri
         self.branch = branch
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
+        self._region: str | None = (
+            region
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
 
     def _check_deps(self) -> None:
         if not ICECHUNK_AVAILABLE:
@@ -306,6 +335,8 @@ class IceChainStore:
             bucket = parts[0]
             prefix = parts[1].rstrip("/") if len(parts) > 1 else None
             kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix, "from_env": True}
+            if self._region:
+                kwargs["region"] = self._region
             if self._endpoint_url:
                 kwargs["endpoint_url"] = self._endpoint_url
                 kwargs["force_path_style"] = True

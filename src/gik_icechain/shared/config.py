@@ -35,6 +35,7 @@ class SourcesConfig(BaseModel):
 
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
+    icechunk_store_region: str = "eu-west-1"
     exceedance_store_uri: str = ""
     risk_output_dir: str = "results/admin1_risk/"
     dashboard_data_dir: str = "dashboard/calendar_map/data/"

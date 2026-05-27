@@ -23,6 +23,32 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
+# Register the kerchunk GRIBCodec so that Zarr can decode GRIB2 virtual chunks.
+try:
+    import numcodecs
+    from kerchunk.codecs import GRIBCodec
+
+    numcodecs.register_codec(GRIBCodec, "grib")
+except (ImportError, ValueError):
+    # ValueError: codec already registered; ImportError: kerchunk not installed
+    pass
+
+# Bridge the numcodecs GRIBCodec into the Zarr v3 codec registry.
+# VirtualiZarr converts v2 filters {"id": "grib"} to v3 {"name": "numcodecs.grib"},
+# but Zarr v3 only knows about pre-registered numcodecs wrappers.  This subclass
+# uses Zarr's built-in _NumcodecsArrayBytesCodec bridge to make "numcodecs.grib"
+# resolvable at both write time (VirtualiZarr metadata conversion) and read time.
+try:
+    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
+    from zarr.registry import register_codec
+
+    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
+        pass
+
+    register_codec("numcodecs.grib", GribNumcodecs)
+except (ImportError, ValueError):
+    pass
+
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
 _ECMWF_REGION = "eu-west-1"
@@ -121,14 +147,17 @@ class GIKFlatParquetParser:
             grp = grp.sort_values("step_num").reset_index(drop=True)
             n_steps = len(grp)
 
-            # Flat key: {var}/.zarray so that find_var_names picks it up at depth 1
+            # Flat key: {var}/.zarray so that find_var_names picks it up at depth 1.
+            # The GRIBCodec filter is required so that Zarr decodes the compressed
+            # GRIB2 byte-ranges (fetched via virtual chunk refs) into float arrays
+            # before the BytesCodec tries to reinterpret them.
             refs[f"{var}/.zarray"] = json.dumps(
                 {
                     "chunks": [1, nlat, nlon],
                     "compressor": None,
                     "dtype": default_dtype,
                     "fill_value": "NaN",
-                    "filters": None,
+                    "filters": [{"id": "grib", "var": var}],
                     "order": "C",
                     "shape": [n_steps, nlat, nlon],
                     "zarr_format": 2,
