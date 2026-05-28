@@ -1,0 +1,266 @@
+
+  ## V. Pré-calcul offline des excédances comme artefact versionné dans IceChunk
+
+  C'est la piste qui réconcilie le principe "zéro duplication" avec la réalité opérationnelle.
+
+  La proposition promet time-travel sur les données. Mais la vraie valeur opérationnelle n'est pas de pouvoir rejouer l'accès aux données brutes GRIB2 à une date passée — c'est de pouvoir rejouer
+  les décisions de risque. Les météorologistes ICPAC n'ont pas besoin de ré-accéder aux données brutes du 25 octobre 2023. Ils ont besoin de savoir quelle était la probabilité d'excédance calculée
+  ce jour-là avec les données disponibles à ce moment.
+
+  Le changement architectural est le suivant : IceChunk ne stocke plus des manifests vers les GRIB2 bruts. IceChunk stocke les probabilités d'excédance calculées (output de C2) et les scores de
+  risque admin-1 (output de C3), versionnés avec les snapshots quotidiens. Les données GRIB2 brutes restent accessibles via les Parquet GIK pour quiconque veut reprocesser.
+
+  Cela réduit le volume du store IceChunk de 18.5 GB de manifests à environ 300 MB de probabilités d'excédance pour 1 200 jours (date × lat × lon × window × return_period en float32 compressé). Le
+  time-travel s'applique à ce qui compte vraiment — les décisions — pas aux données sources qui sont immuables sur S3 ECMWF de toute façon.
+
+  C'est architecturalement la Solution C du document précédent, mais formulée différemment : pas comme un abandon, mais comme un choix délibéré de versionner les artefacts de décision plutôt que les
+   données sources.
+
+  ---
+
+  ## Résumé des gains attendus par piste
+
+  La pré-agrégation spatiale admin-1 (piste III) réduit la mémoire nécessaire de 100× sans changer le volume réseau, réalisable en une journée de travail.
+
+  Le parallélisme inter-jours (piste IV) réduit le temps total de traitement de 32× sur infrastructure cloud, réalisable en une demi-journée de travail.
+
+  Le versionning des artefacts de décision dans IceChunk (piste V) élimine le problème de bande passante pour le batch et renforce la proposition, réalisable en deux jours de travail.
+
+  Les pistes I et II (rechunking CCSDS et VirtualChunkSpec) sont des investigations techniques qui pourraient donner un résultat spectaculaire mais dont le résultat n'est pas garanti — à traiter
+  comme des explorations post-deadline, pas comme des engagements. , avec ta comprehensuion , l'etat actuelle du code et de ta critiques , prends aussi cs information et ressort moi une critiques
+  finale point par points de maniere asses detailles
+
+⏺ I see your message. Let me finish gathering the remaining data points for the critique, and then I'll produce the detailed point-by-point final critique integrating your observations about GRIB2
+  chunks, spatial subsetting, and the architectural alternatives.
+
+⏺ Read 3 files (ctrl+o to expand)
+
+⏺ I now have all the data needed. Here is the comprehensive, detailed critique.
+
+  ---
+  Critique finale — GIK-IceChain v2.0
+
+  1. Etat des merges et du CI
+
+  fix-decode a été fusionné dans develop (4083fc0) et main (3ebd7b5), les deux poussés sur origin. Les tests unitaires passent à 104/105 (1 échec pyarrow environnemental, pas un bug de code). Le linter
+  ruff signale 5 erreurs mineures (SIM, TRY) et 24 fichiers test mal formatés. Ce n'est pas bloquant mais devrait être nettoyé.
+
+  ---
+  2. Architecture — Ce qui fonctionne bien
+
+  a) Séparation en 3 composants (C1/C2/C3) : La décomposition est propre. Chaque composant a ses propres modules avec des responsabilités claires. Le pipeline C1→C2→C3 est cohérent.
+
+  b) Configuration externalisée : Tous les paramètres numériques (seuils CRMA, decay API, fenêtres d'accumulation, return periods) sont dans configs/default.yaml et validés par Pydantic
+  (shared/config.py). Aucune constante magique dans le code source.
+
+  c) Modèle Bayésien CRMA : L'implémentation BN est solide (crma_model.py:398-415). La lookup table pré-calculée (972 combinaisons → 4 états de risque) donne une inférence O(1). Le DBN avec API decay +
+  Soil_Memory est scientifiquement justifié. Les CPTs sont sérialisables et raffinables via EM-DAT.
+
+  d) Seuils GEV adaptatifs : La stratification saison × ENSO × IOD (thresholds.py:101-409) avec fallback neutral est le bon choix. Le fit L-BFGS-B avec regularisation L2 sur ξ et fallback Gumbel est
+  robuste.
+
+  e) Structured logging via structlog est cohérent partout — bon pour le debugging en production.
+
+  ---
+  3. La contrainte fondamentale non résolue : les chunks GRIB2
+
+  C'est le problème central du projet. Il conditionne la viabilité opérationnelle de C2.
+
+  Le fait : Chaque message GRIB2 ECMWF encode la grille globale 721×1440 en un seul bloc Data Section (~1 MB compressé). Les byte-ranges dans les Parquet GIK pointent vers des messages GRIB2 entiers. Un
+  chunk virtuel IceChunk = un message GRIB2 = la grille globale.
+
+  Conséquence : _subset_to_bbox() dans cli.py:101-136 est un leurre. Le subsetting spatial s'applique après le téléchargement du chunk complet. Pour 50 membres × 85 steps = 4 250 messages × ~1 MB = ~4 GB
+   par jour. Sur 1 200 jours rétrospectifs, c'est ~4.8 TB de transfert réseau.
+
+  Le _subset_to_bbox() ne réduit pas le transfert, il réduit seulement la mémoire après décodage. Le commentaire dans cli.py:233-235 ("reduces transferred data by ~97%") est incorrect — il réduit la
+  mémoire de travail, pas le volume réseau.
+
+  Impact : Le pipeline C2 batch est infaisable en streaming pur depuis un poste de travail. Les timeouts et connection resets rencontrés pendant le développement en sont la preuve directe.
+
+  ---
+  4. Pistes de résolution de la contrainte GRIB2
+
+  a) Pré-agrégation spatiale admin-1 (Piste III de votre analyse)
+
+  C'est la piste la plus immédiatement implémentable. Au lieu de :
+
+  GRIB2 global → décode 721×1440 → subset EA → excédance pixel → agrège admin-1
+
+  On fait :
+
+  GRIB2 global → décode 721×1440 → masque admin-1 → précip moyenne par polygone → excédance admin-1
+
+  Le code existe déjà dans aggregator.py (aggregate_to_admin1, coverage_fraction). Il faudrait le déplacer avant le calcul d'excédance au lieu d'après. On passe de 141×141 matrices par membre par step à
+  300 scalaires. Le transfert reste identique (~4 GB/jour) mais la mémoire chute de ~100×.
+
+  L'implémentation nécessiterait ~50 lignes de modification dans _run_exceedance() et exceedance.py.
+
+  b) Parallélisme inter-jours (Piste IV)
+
+  _run_exceedance() dans cli.py:165-292 traite les jours séquentiellement via un for date_str in committed_dates. Passer à un ProcessPoolExecutor avec 32 workers sur une VM cloud dans eu-central-1 divise
+   le temps total par ~32×. C'est ~20 lignes de modification.
+
+  Attention : le IceChainStore avec _clear_aws_credential_env() est un singleton qui modifie os.environ globalement (icechunk_writer.py:109-111). En multi-process, chaque worker hérite d'un environnement
+   propre via fork, donc ça fonctionne. Mais en multi-thread, c'est une race condition.
+
+  c) Versionner les artefacts de décision plutôt que les données sources (Piste V)
+
+  C'est le changement architectural le plus profond. IceChunk stockerait les probabilités d'excédance (output C2) et les scores de risque admin-1 (output C3) au lieu des manifests vers les GRIB2 bruts.
+
+  Volume : ~300 MB pour 1 200 jours (date × lat × lon × window × return_period en float32 compressé) au lieu de 18.5 GB de manifests. Le time-travel s'applique à ce qui a de la valeur — les décisions —
+  pas aux données sources immuables sur S3 ECMWF.
+
+  d) Analyse CCSDS/JPEG2000 (Piste I)
+
+  Les messages GRIB2 ECMWF avec CCSDS ou JPEG2000 encodent par blocs de lignes. Si c'est le cas pour tp et ro, un byte-range ciblé sur les 141 lignes East Africa est théoriquement possible. C'est une
+  investigation — pas un engagement.
+
+  e) VirtualChunkSpec rechunking (Piste II)
+
+  IceChunk 2.x pourrait exposer des chunks logiques (141×141 East Africa) tout en stockant des byte-ranges vers des messages globaux (721×1440). Le codec décoderait le message complet puis retournerait
+  la sous-région. Pas de réduction réseau, mais l'interface C2 voit un dataset EA natif. Ergonomie + mémoire.
+
+  ---
+  5. Bugs et problèmes techniques concrets
+
+  a) _clear_aws_credential_env() est destructif (icechunk_writer.py:98-111)
+
+  for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+               "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL"):
+      os.environ.pop(key, None)
+
+  Cette méthode modifie irréversiblement l'environnement du processus. Si un autre composant du même processus a besoin de ces variables (boto3 pour GPM IMERG, par exemple), il sera cassé
+  silencieusement. La solution correcte serait un context manager qui restaure les variables, ou mieux, l'isolation par sous-processus.
+
+  b) _threshold_bbox() accède à des attributs internes (cli.py:149-151)
+
+  for mode_key in thresholds._thresholds:
+      for wh in thresholds._thresholds[mode_key]:
+
+  Accède directement à _thresholds (underscore = privé). Si AdaptiveGEVThresholds change son implémentation interne, ce code casse silencieusement. Il manque une méthode publique bbox() sur la classe.
+
+  c) readonly_session() non résolu (cli.py:230)
+
+  session = store_obj.readonly_session()
+
+  IceChainStore n'a pas de méthode readonly_session(). C'est soit du code mort, soit une méthode qui existe sur _repo directement. Si c'est self._repo.readonly_session(branch=self.branch), il faudrait un
+   wrapper dans IceChainStore.
+
+  d) L'exceedance confidence est calculée uniquement sur la fenêtre 24h (cli.py:276)
+
+  conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim="member")
+
+  Hardcodé à 24h alors que les fenêtres vont de 3h à 168h. La confiance pour une fenêtre 168h peut être très différente de celle à 24h.
+
+  e) Le Dask Client est instancié mais jamais fermé (cli.py:400-404)
+
+  Client(n_workers=workers, threads_per_worker=..., silence_logs=True)
+
+  Le Client est créé dans le scope de la commande exceedance() mais jamais assigné à une variable ni fermé. Il devient le client global par défaut, ce qui fonctionne, mais c'est un anti-pattern qui peut
+  laisser des processus orphelins.
+
+  f) admin.iterrows() dans risk_engine.py:70 et aggregator.py:50
+
+  iterrows() est O(n) avec une copie par ligne. Pour 26 admin-1 units c'est insignifiant, mais pour les 300 mentionnés dans la config, c'est potentiellement lent combiné avec
+  regionmask.Regions([geom]).mask() qui est O(lat×lon) par appel. La mask devrait être pré-calculée une fois pour toutes les unités admin-1.
+
+  g) member_dim="member" hardcodé dans _run_exceedance() (cli.py:265-266)
+
+  Le Parquet GIK produit une dimension number (convention ECMWF) mais le parquet_to_virtual_dataset avec xr.concat(..., dim=member_idx) crée une dimension member. Si un seul fichier Parquet est chargé
+  (pas de concat), la dimension s'appelle number. Le code assume member mais ça dépend du nombre de fichiers.
+
+  ---
+  6. Tests — Couverture et qualité
+
+  104/105 tests passent (le 1 qui échoue est un conflit pyarrow, pas un bug de code).
+
+  Points positifs :
+  - Tests unitaires couvrent les modules critiques (CRMA, DBN, exceedance, thresholds, virtualizer)
+  - Fixtures synthétiques bien construites (conftest.py)
+  - Tests d'intégration avec tmp_path (pas de dépendances externes)
+
+  Lacunes :
+  - Pas de test E2E réel : Aucun test ne vérifie le pipeline complet C1→C2→C3 avec de vraies données. Le notebook 07_e2e_pipeline_test.ipynb existe mais ne fait pas partie de la CI.
+  - Coverage à 20% : Le seuil est très bas. cli.py (500 lignes) n'a aucun test unitaire.
+  - _align_threshold_to_forecast() n'est pas testé : C'est le fix le plus critique du sprint (résout le bug de dimension 7D), et il n'a pas de test dédié.
+  - _fix_ecmwf_uri() partiellement testé : Le regex _OLD_ECMWF_PATH_RE pour l'insertion de ifs/ n'a pas de test vérifiant le comportement avec les URIs nouvelles (qui ne doivent PAS être modifiées).
+  - Pas de test pour _clear_aws_credential_env() : Un comportement destructif sur os.environ devrait avoir un test qui vérifie que les bonnes variables sont supprimées et que les mauvaises ne le sont
+  pas.
+
+  ---
+  7. Qualité du code
+
+  Points positifs :
+  - Type hints partout (PEP 604 X | Y style)
+  - Docstrings complètes avec sections Args/Returns
+  - Pas de code mort visible
+  - Imports lazy dans les fonctions CLI (évite le chargement de tout l'écosystème scientifique au démarrage)
+
+  Points faibles :
+  - 5 erreurs ruff non corrigées (SIM102, TRY003, SIM105)
+  - 24 fichiers test non formatés
+  - from __future__ import annotations est utilisé partout sauf dans les modules qui en ont vraiment besoin — c'est une question de style mais c'est cohérent
+  - Le type object est utilisé pour registry dans virtualizer.py:136 au lieu du type réel — c'est de la paresse de typage
+
+  ---
+  8. Configuration et déploiement
+
+  Bien :
+  - OmegaConf + Pydantic : bon pattern pour la validation
+  - Docker + Cloud Run + Lithops : infrastructure correcte
+  - daily_update.yaml avec notification GitHub sur échec
+
+  Problèmes :
+  - default.yaml et config.py ont des défauts incohérents pour icechunk_store_region : le YAML dit eu-west-1, config.py dit eu-west-1, mais le code actuel (virtualizer.py:54) hardcode eu-central-1. Le
+  bucket ECMWF est effectivement dans eu-central-1.
+  - icechunk_store_uri est vide par défaut dans config.py:36 — le pipeline crashe si non renseigné, mais sans message d'erreur clair.
+  - La daily_update.yaml CI workflow assume des secrets AWS qui ne sont documentés nulle part dans le README.
+
+  ---
+  9. Architecture scientifique
+
+  Solide :
+  - GEV avec regularisation L2 et fallback Gumbel
+  - CRMA BN avec 9 nœuds, lookup O(1), CPTs configurables
+  - API exponential decay + Soil_Memory DBN
+  - EM-DAT refinement MLE avec Laplace smoothing
+
+  Discutable :
+  - La forecast_hazard_state prend le max(prob_24h, prob_72h) mais ignore la fenêtre 168h (crma_model.py:165). Un événement avec forte probabilité à 7 jours mais faible à 24h/72h sera classé Low.
+  - Les root-node CPTs (prior priors) sont des constantes hard-codées dans _build_cpds() (crma_model.py:445-451), pas dans la config YAML. Seuls les CPT de Compound_Risk et Risk_State sont config-driven.
+  - Le api_transition dans la config YAML ne normalise pas les colonnes à 1.0. La matrice par défaut a des colonnes qui somment à 1.0, mais si un utilisateur modifie les valeurs, pgmpy ne vérifie que
+  tardivement.
+
+  ---
+  10. Recommandations prioritaires
+
+  Court terme (avant deadline) :
+
+  1. Implémenter la pré-agrégation admin-1 (Piste III) — déplacer aggregate_to_admin1 avant le calcul d'excédance. ~50 lignes. Élimine le problème mémoire.
+  2. Ajouter le parallélisme inter-jours (Piste IV) — ProcessPoolExecutor dans _run_exceedance(). ~20 lignes. Réduit le temps batch de 32× sur cloud.
+  3. Corriger _clear_aws_credential_env() — sauvegarder et restaurer au lieu de supprimer, ou isoler par sous-processus.
+  4. Ajouter un test pour _align_threshold_to_forecast() — c'est le fix critique du sprint.
+  5. Fixer les 5 erreurs ruff et formater les 24 fichiers test.
+
+  Moyen terme :
+
+  6. Versionner les artefacts C2/C3 dans IceChunk (Piste V) — le vrai use-case opérationnel.
+  7. Pré-calculer les masques regionmask une seule fois au lieu de par-admin-1 par-jour.
+  8. Ajouter une méthode publique bbox() à AdaptiveGEVThresholds au lieu d'accéder à _thresholds.
+  9. Remonter le seuil de coverage à 50%+ et ajouter des tests pour cli.py.
+
+  Exploration :
+
+  10. Analyser la compression CCSDS/JPEG2000 sur les messages GRIB2 ECMWF ENS réels.
+  11. Investiguer VirtualChunkSpec pour le rechunking IceChunk.
+
+  ---
+  Résumé
+
+  Le code est propre, bien structuré, et scientifiquement solide. Le modèle CRMA est une contribution réelle. Mais la contrainte fondamentale — les chunks GRIB2 globaux rendent C2 batch infaisable en
+  streaming pur — n'est pas résolue dans l'implémentation actuelle. Les pistes III (pré-agrégation admin-1) et IV (parallélisme inter-jours) sont les plus directes et les plus impactantes. La piste V
+  (versionner les décisions) est le changement architectural qui réconcilie la proposition avec la réalité opérationnelle.
+
+✻ Cooked for 16m 59s
+
+● How is Claude doing this session? (optional)

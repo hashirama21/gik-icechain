@@ -22,7 +22,7 @@ class SourcesConfig(BaseModel):
     gik_hf_dataset: str = "E4DRR/gik-ecmwf-par"
     gik_catalog_file: str = "catalog.parquet"
     ecmwf_s3_bucket: str = "ecmwf-forecasts"
-    ecmwf_s3_region: str = "eu-west-1"
+    ecmwf_s3_region: str = "eu-central-1"
     ecmwf_s3_no_sign: bool = True
     cmorph_thresholds_path: str = "data/cmorph_thresholds/"
     gpm_imerg_path: str = "data/gpm_imerg/"
@@ -35,7 +35,10 @@ class SourcesConfig(BaseModel):
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
     icechunk_store_region: str = "eu-west-1"
+    endpoint_url: str = ""  # S3-compatible endpoint (MinIO); empty = default AWS
     exceedance_store_uri: str = ""
+    exceedance_icechunk_uri: str = ""
+    risk_icechunk_uri: str = ""
     risk_output_dir: str = "results/admin1_risk/"
     dashboard_data_dir: str = "dashboard/calendar_map/data/"
 

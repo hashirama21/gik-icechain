@@ -29,7 +29,6 @@ except ImportError:
     ICECHUNK_AVAILABLE = False
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
-# Register the kerchunk GRIBCodec so Zarr can decode GRIB2 virtual chunks at read time.
 try:
     import numcodecs
     from kerchunk.codecs import GRIBCodec
@@ -38,7 +37,6 @@ try:
 except (ImportError, ValueError):
     pass
 
-# Bridge GRIBCodec into Zarr v3 registry (see virtualizer.py for rationale).
 try:
     from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
     from zarr.registry import register_codec
@@ -106,27 +104,11 @@ class IceChainStore:
         if not VIRTUALIZARR_AVAILABLE:
             raise ImportError("virtualizarr is required: pip install virtualizarr")
 
-    @staticmethod
-    def _clear_aws_credential_env() -> None:
-        """Remove AWS credential env vars so IceChunk uses explicit credentials.
-
-        IceChunk reads AWS_* env vars at virtual-chunk-fetch time, overriding
-        the anonymous credentials we set for the public ECMWF bucket.  Since we
-        pass explicit credentials to s3_storage() for the metadata store, the
-        env vars are no longer needed after storage is built.
-
-        AWS_REGION is preserved — it is harmless and may be needed by other
-        libraries in the same process.
-        """
-        for key in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
-                     "AWS_SESSION_TOKEN", "AWS_ENDPOINT_URL"):
-            os.environ.pop(key, None)
-
     def create(self) -> None:
         """Create a new IceChunk repository at storage_uri."""
         self._check_deps()
         storage = self._build_storage()
-        self._clear_aws_credential_env()
+
         self._repo = icechunk.Repository.create(
             storage,
             config=self._build_repo_config(),
@@ -138,7 +120,7 @@ class IceChainStore:
         """Open an existing IceChunk repository."""
         self._check_deps()
         storage = self._build_storage()
-        self._clear_aws_credential_env()
+
         self._repo = icechunk.Repository.open(
             storage,
             config=self._build_repo_config(),
@@ -150,7 +132,7 @@ class IceChainStore:
         """Open the store if it exists, otherwise create it."""
         self._check_deps()
         storage = self._build_storage()
-        self._clear_aws_credential_env()
+
         self._repo = icechunk.Repository.open_or_create(
             storage,
             config=self._build_repo_config(),
@@ -183,13 +165,9 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         tag = self._tag_format.format(date=forecast_date.isoformat(), run_hour=run_hour)
-        # Each day is written to its own zarr group so multiple dates can
-        # coexist in the same IceChunk store without path conflicts.
         date_group = forecast_date.isoformat()
         session = self._repo.writable_session(self.branch)
 
-        # Idempotent re-run: delete the group if it already exists in this branch.
-        # This allows re-ingesting a date without creating a new store.
         try:
             import zarr
 
@@ -216,7 +194,6 @@ class IceChainStore:
         try:
             self._repo.create_tag(tag, commit_hash)
         except Exception as exc:
-            # Tags are immutable in IceChunk — skip re-creation on idempotent re-runs.
             log.debug("icechunk_tag_skipped", tag=tag, reason=str(exc)[:120])
         log.info(
             "icechunk_commit",
@@ -246,7 +223,6 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         all_tags = self._repo.list_tags()
-        # Tag format is "YYYY-MM-DDTHH Z"; ISO lexicographic comparison is correct.
         valid_tags = [t for t in all_tags if t[:10] <= as_of_date.isoformat()]
 
         if not valid_tags:
@@ -263,8 +239,6 @@ class IceChainStore:
         )
 
         session = self._repo.readonly_session(snapshot_id=snapshot_id)
-        # Each date's data lives in its own zarr group named after the date.
-        # Resolve the tag date to find the matching group.
         target_date = latest_tag[:10]
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
 
@@ -386,15 +360,10 @@ class IceChainStore:
         return config
 
     def _build_storage(self) -> Any:
-        """Build an icechunk Storage from storage_uri.
+        """Build an icechunk Storage from storage_uri (S3 or local).
 
-        Supports S3 (AWS or MinIO) and local filesystem paths.
-        MinIO: set AWS_ENDPOINT_URL env var or pass endpoint_url to __init__.
-
-        Note: we pass explicit credentials instead of ``from_env=True`` because
-        ``from_env`` leaks the storage credentials into IceChunk's virtual chunk
-        fetcher, overriding the anonymous credentials required for the public
-        ECMWF S3 bucket.
+        Uses explicit credentials to avoid leaking store credentials into
+        IceChunk's virtual chunk fetcher (which needs anonymous access for ECMWF).
         """
         if self.storage_uri.startswith("s3://"):
             path = self.storage_uri[5:]
@@ -404,8 +373,6 @@ class IceChainStore:
             kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix}
             if self._region:
                 kwargs["region"] = self._region
-            # Read AWS credentials explicitly to avoid from_env leaking into
-            # virtual chunk access (IceChunk bug/design issue).
             access_key = os.environ.get("AWS_ACCESS_KEY_ID")
             secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
             session_token = os.environ.get("AWS_SESSION_TOKEN")
@@ -423,5 +390,4 @@ class IceChainStore:
                 log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
             return icechunk.s3_storage(**kwargs)
 
-        # Local filesystem (for testing)
         return icechunk.local_filesystem_storage(self.storage_uri)

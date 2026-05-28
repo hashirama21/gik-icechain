@@ -13,6 +13,7 @@ skipped because their level-count cannot be reliably inferred from the metadata.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -23,21 +24,15 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
-# Register the kerchunk GRIBCodec so that Zarr can decode GRIB2 virtual chunks.
 try:
     import numcodecs
     from kerchunk.codecs import GRIBCodec
 
     numcodecs.register_codec(GRIBCodec, "grib")
 except (ImportError, ValueError):
-    # ValueError: codec already registered; ImportError: kerchunk not installed
     pass
 
-# Bridge the numcodecs GRIBCodec into the Zarr v3 codec registry.
-# VirtualiZarr converts v2 filters {"id": "grib"} to v3 {"name": "numcodecs.grib"},
-# but Zarr v3 only knows about pre-registered numcodecs wrappers.  This subclass
-# uses Zarr's built-in _NumcodecsArrayBytesCodec bridge to make "numcodecs.grib"
-# resolvable at both write time (VirtualiZarr metadata conversion) and read time.
+# Bridge numcodecs GRIBCodec into Zarr v3 so "numcodecs.grib" resolves at read/write time.
 try:
     from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
     from zarr.registry import register_codec
@@ -53,7 +48,6 @@ _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
 _ECMWF_REGION = "eu-central-1"
 
-# Matches sfc chunk refs only: step_NNN/{var}/sfc/{member}/{chunk_idx}
 _SFC_STEP_RE = re.compile(r"^step_(\d+)/([^/]+)/sfc/[^/]+/(.+)$")
 
 _DEFAULT_N_WORKERS = 10
@@ -97,7 +91,7 @@ def _fix_ecmwf_uri(ref: str | list) -> str | list:
             uri = _OLD_ECMWF_PATH_RE.sub(r"\1ifs/\2", uri)
             if not uri.endswith((".grib2", ".index")):
                 uri += ".grib2"
-            return [uri] + list(ref[1:])
+            return [uri, *list(ref[1:])]
     elif isinstance(ref, str):
         try:
             parsed = json.loads(ref)
@@ -145,8 +139,6 @@ class GIKFlatParquetParser:
 
         df["key"] = df["key"].astype(str)
 
-        # Vectorised extraction: regex match on all keys in one pass (~10× faster
-        # than iterrows on the 5 920-row parquet files typical of ENFO archive).
         extracted = df["key"].str.extract(_SFC_STEP_RE, expand=True)
         sfc_mask = extracted[0].notna()
 
@@ -173,10 +165,8 @@ class GIKFlatParquetParser:
         for val in chunk_df["value"].head(3):
             ref = _to_ref_value(val)
             if isinstance(ref, str):
-                try:
+                with contextlib.suppress(json.JSONDecodeError, ValueError):
                     ref = json.loads(ref)
-                except (json.JSONDecodeError, ValueError):
-                    pass
             if isinstance(ref, list) and len(ref) >= 1:
                 first_uri = str(ref[0])
                 break
@@ -202,7 +192,6 @@ class GIKFlatParquetParser:
                     pass
         log.debug("gik_grid_resolution", nlat=nlat, nlon=nlon, uri_hint=first_uri[:80])
 
-        # Persist step hours so _open_one_virtual can assign step coordinates
         self.step_hours = sorted(chunk_df["step_num"].unique().tolist())
 
         refs: dict[str, object] = {".zgroup": '{"zarr_format": 2}'}
@@ -211,10 +200,7 @@ class GIKFlatParquetParser:
             grp = grp.sort_values("step_num").reset_index(drop=True)
             n_steps = len(grp)
 
-            # Flat key: {var}/.zarray so that find_var_names picks it up at depth 1.
-            # The GRIBCodec filter is required so that Zarr decodes the compressed
-            # GRIB2 byte-ranges (fetched via virtual chunk refs) into float arrays
-            # before the BytesCodec tries to reinterpret them.
+            # Flat key so find_var_names picks it up; GRIBCodec filter decodes GRIB2 byte-ranges.
             refs[f"{var}/.zarray"] = json.dumps(
                 {
                     "chunks": [1, nlat, nlon],
@@ -284,8 +270,6 @@ def _open_one_virtual(url: str, variables: list[str] | None, registry: object) -
         if keep:
             vds = vds[keep]
 
-    # Assign step-hour coordinates so xr.concat(join="inner") can align
-    # members that differ by one step (e.g. 84 vs 85 steps in the ENFO archive).
     if parser.step_hours:
         step_coord = np.array(parser.step_hours, dtype=np.int32)
         vds = vds.assign_coords(step=("step", step_coord))
@@ -329,7 +313,7 @@ def parquet_to_virtual_dataset(
         log.info("virtualization_complete", variables=list(vds.data_vars), dims=dict(vds.dims))
         return vds
 
-    # Parallel I/O — preserve insertion order for stable member indexing
+    # Preserve insertion order for stable member indexing.
     datasets: list[xr.Dataset | None] = [None] * len(parquet_paths)
 
     def _fetch(idx: int, path: str) -> tuple[int, xr.Dataset | None]:
@@ -363,10 +347,7 @@ def parquet_to_virtual_dataset(
 
         import pandas as pd
 
-        # ManifestArrays do not support fancy indexing, so xr.concat with
-        # join="inner" (which reindexes along step) will always fail.
-        # Instead, group by step count and keep only the majority, then
-        # concat with join="override" (no reindexing needed when all shapes match).
+        # Group by step count (ManifestArrays can't reindex); keep the majority.
         step_sizes = Counter(ds.dims.get("step", 0) for ds in valid)
         majority_n = step_sizes.most_common(1)[0][0]
         majority = [ds for ds in valid if ds.dims.get("step", 0) == majority_n]
