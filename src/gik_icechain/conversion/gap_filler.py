@@ -26,7 +26,7 @@ from gik_icechain.shared.storage import get_s3_filesystem, list_s3_objects
 log = structlog.get_logger(__name__)
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
-_ECMWF_REGION = "eu-west-1"
+_ECMWF_REGION = "eu-central-1"
 _GRIB2_PREFIX_TEMPLATE = "{year}/{month:02d}/{date_str}/{run_hour:02d}z/"
 
 _DEFAULT_GAP_START = date(2023, 5, 1)
@@ -80,8 +80,7 @@ def fill_one_day(
 ) -> str:
     """Download GRIB2 messages for *day/run_hour*, build Parquet references, upload.
 
-    This function is designed to run inside a Lithops Cloud Run worker.
-    It is intentionally self-contained (no imports from the caller's scope).
+    Runs inside a Lithops Cloud Run worker (self-contained).
 
     Args:
         day:               Forecast date to process.
@@ -192,8 +191,6 @@ def _extract_references(
         if short_name not in variables:
             continue
         step_range: str = str(ds.attrs.get("GRIB_stepRange", "0"))
-        # stepRange can be "0", "6", or "0-24" for accumulated fields;
-        # take the end of the range as the canonical step value.
         step_hours = int(step_range.split("-")[-1])
         rows.append(
             {

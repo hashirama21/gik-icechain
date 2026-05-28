@@ -14,7 +14,12 @@ import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    import xarray as xr
+
+    from gik_icechain.shared.config import GIKConfig
 
 import structlog
 import typer
@@ -46,7 +51,7 @@ app = typer.Typer(
 _DEFAULT_CONFIG = DEFAULT_CONFIG_PATH
 
 
-def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
+def _bootstrap(config_path: Path) -> GIKConfig:
     from gik_icechain.shared.config import load_config
     from gik_icechain.shared.logging import configure_logging
 
@@ -56,7 +61,7 @@ def _bootstrap(config_path: Path) -> GIKConfig:  # noqa: F821
     return cfg
 
 
-def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
+def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:
     """Run C1 ingest. Returns the last IceChunk commit hash (empty string if nothing ingested)."""
     from gik_icechain.conversion.gik_loader import GIKCatalog
     from gik_icechain.conversion.icechunk_writer import IceChainStore
@@ -70,6 +75,7 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
     store = IceChainStore(
         cfg.outputs.icechunk_store_uri,
         region=cfg.outputs.icechunk_store_region,
+        endpoint_url=cfg.outputs.endpoint_url or None,
         branch=cfg.component1.icechunk.branch,
         commit_message_template=cfg.component1.icechunk.commit_message_template,
         tag_format=cfg.component1.icechunk.tag_format,
@@ -88,9 +94,6 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:  # noqa: F821
             )
             if not paths:
                 continue
-            # Pass the raw Parquet paths directly to VirtualiZarr; do not
-            # pre-load them as DataFrames (parquet_to_virtual_dataset
-            # needs the file paths, not the loaded content).
             vds = parquet_to_virtual_dataset(paths, variables=cfg.component1.variables)
             last_commit = store.commit_day(current, vds, run_hour)
         current += timedelta(days=1)
@@ -162,13 +165,63 @@ def _threshold_bbox(
     return None
 
 
-def _run_exceedance(
-    cfg: GIKConfig,  # noqa: F821
-    store_uri: str,
-    output_uri: str,
-    start: date | None,
-    end: date | None,
-) -> int:
+def _resolve_climate_mode(
+    day: date,
+    enso_iod: object,
+    enso_thr: float,
+    iod_thr: float,
+) -> object:
+    """Map a forecast date to a ClimateMode via ENSO/IOD index lookup."""
+    import pandas as pd
+
+    from gik_icechain.exceedance.thresholds import (
+        ClimateMode,
+        ENSOPhase,
+        IODPhase,
+        classify_enso,
+        classify_iod,
+        get_season,
+    )
+
+    season = get_season(day.month)
+    try:
+        row = enso_iod.loc[pd.Timestamp(day)]
+        return ClimateMode(
+            season,
+            classify_enso(float(row["nino34"]), threshold=enso_thr),
+            classify_iod(float(row["dmi"]), threshold=iod_thr),
+        )
+    except KeyError:
+        return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
+
+
+def _register_grib_codecs() -> None:
+    """Register GRIBCodec in numcodecs and Zarr v3 registries.
+
+    Must be called once per process — required in multiprocessing workers
+    since codec registries are not inherited across fork.
+    """
+    try:
+        import numcodecs
+        from kerchunk.codecs import GRIBCodec
+
+        numcodecs.register_codec(GRIBCodec, "grib")
+    except (ImportError, ValueError):
+        pass
+    try:
+        from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
+        from zarr.registry import register_codec
+
+        class _GribBridge(_NumcodecsArrayBytesCodec, codec_name="grib"):
+            pass
+
+        register_codec("numcodecs.grib", _GribBridge)
+    except (ImportError, ValueError):
+        pass
+
+
+def _process_exceedance_day(args: dict) -> dict:
+    """Compute exceedance for one forecast date. Module-level for multiprocessing pickling."""
     import pandas as pd
     import xarray as xr
 
@@ -178,20 +231,94 @@ def _run_exceedance(
         compute_ensemble_confidence,
         compute_exceedance_probabilities,
     )
-    from gik_icechain.exceedance.thresholds import (
-        AdaptiveGEVThresholds,
-        ClimateMode,
-        ENSOPhase,
-        IODPhase,
-        classify_enso,
-        classify_iod,
-        get_season,
-    )
-    from gik_icechain.exceedance.writer import build_exceedance_dataset, write_exceedance_store
+    from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
+    from gik_icechain.exceedance.writer import build_exceedance_dataset
 
-    # Iterate over committed date groups directly — IceChunk stores one zarr
-    # group per forecast date (step-based), not a time-series dataset.
-    store_obj = IceChainStore(store_uri, region=cfg.outputs.icechunk_store_region)
+    _register_grib_codecs()
+
+    date_str = args["date_str"]
+    day = date.fromisoformat(date_str)
+
+    try:
+        store_obj = IceChainStore(
+            args["store_uri"],
+            region=args["region"],
+            endpoint_url=args.get("endpoint_url"),
+        )
+        store_obj.create_or_open()
+        session = store_obj.readonly_session()
+
+        day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+        bbox = args.get("bbox")
+        if bbox is not None:
+            day_ds = _subset_to_bbox(day_ds, bbox)
+        day_ds = day_ds.chunk(args["chunk_dims"])
+    except Exception as exc:
+        return {"date_str": date_str, "success": False, "error": str(exc)[:200]}
+
+    thresholds = AdaptiveGEVThresholds.load(Path(args["thresholds_path"]))
+    enso_iod = pd.read_csv(
+        args["enso_iod_path"], parse_dates=["date"]
+    ).set_index("date")
+    mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
+
+    acc_ds = compute_rolling_accumulations(day_ds, windows_h=args["windows_h"])
+    member_dim = "member" if "member" in day_ds.dims else "number"
+
+    day_results: dict[tuple[int, int], xr.DataArray] = {}
+    for w in args["windows_h"]:
+        for rp in args["return_periods"]:
+            try:
+                thr = thresholds.get(w, rp, mode)
+                day_results[(w, rp)] = compute_exceedance_probabilities(
+                    acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
+                    window_h=w, return_period=rp, member_dim=member_dim,
+                )
+            except Exception:
+                pass
+
+    if not day_results:
+        return {"date_str": date_str, "success": False, "error": "no window/rp produced results"}
+
+    exceedance_da = build_exceedance_dataset(day_results, day)
+    tmp_path = str(Path(args["tmp_dir"]) / f"{date_str}.zarr")
+    exceedance_da.to_dataset(name="exceedance_prob").to_zarr(tmp_path, mode="w")
+
+    conf_path = None
+    try:
+        conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim=member_dim)
+        conf_da = conf_da.assign_coords(date=pd.Timestamp(day)).expand_dims("date")
+        conf_out = str(Path(args["tmp_dir"]) / f"{date_str}_conf.zarr")
+        conf_da.to_dataset(name="ensemble_confidence").to_zarr(conf_out, mode="w")
+        conf_path = conf_out
+    except Exception:
+        pass
+
+    return {"date_str": date_str, "success": True, "path": tmp_path, "conf_path": conf_path}
+
+
+def _run_exceedance(
+    cfg: GIKConfig,
+    store_uri: str,
+    output_uri: str,
+    start: date | None,
+    end: date | None,
+) -> int:
+    import os
+    import shutil
+    import tempfile
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    import xarray as xr
+
+    from gik_icechain.conversion.icechunk_writer import IceChainStore
+    from gik_icechain.exceedance.writer import write_exceedance_store
+
+    store_obj = IceChainStore(
+        store_uri,
+        region=cfg.outputs.icechunk_store_region,
+        endpoint_url=cfg.outputs.endpoint_url or None,
+    )
     store_obj.create_or_open()
     snapshots = store_obj.list_snapshots()
     committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})
@@ -204,96 +331,97 @@ def _run_exceedance(
         log.warning("no_committed_dates_in_range", start=start, end=end)
         return 0
 
+    from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
+
     thresholds = AdaptiveGEVThresholds.load(Path(cfg.sources.cmorph_thresholds_path))
-    enso_iod = pd.read_csv(
-        cfg.component2.thresholds.enso_iod_index_path, parse_dates=["date"]
-    ).set_index("date")
+    bbox = _threshold_bbox(thresholds)
 
-    enso_thr = cfg.component2.thresholds.enso_nino34_threshold
-    iod_thr  = cfg.component2.thresholds.iod_dmi_threshold
+    tmp_dir = tempfile.mkdtemp(prefix="gik_exc_")
+    worker_args = [
+        {
+            "date_str": d,
+            "store_uri": store_uri,
+            "region": cfg.outputs.icechunk_store_region,
+            "endpoint_url": cfg.outputs.endpoint_url or None,
+            "thresholds_path": str(Path(cfg.sources.cmorph_thresholds_path)),
+            "enso_iod_path": cfg.component2.thresholds.enso_iod_index_path,
+            "enso_thr": cfg.component2.thresholds.enso_nino34_threshold,
+            "iod_thr": cfg.component2.thresholds.iod_dmi_threshold,
+            "windows_h": cfg.component2.windows_h,
+            "return_periods": cfg.component2.return_periods,
+            "chunk_dims": dict(cfg.component2.dask.chunk_dims),
+            "bbox": bbox,
+            "tmp_dir": tmp_dir,
+        }
+        for d in committed_dates
+    ]
 
-    def _mode_for(d: date) -> ClimateMode:
-        season = get_season(d.month)
-        try:
-            row = enso_iod.loc[pd.Timestamp(d)]
-            return ClimateMode(
-                season,
-                classify_enso(float(row["nino34"]), threshold=enso_thr),
-                classify_iod(float(row["dmi"]), threshold=iod_thr),
-            )
-        except KeyError:
-            log.warning("enso_iod_index_missing", date=d, using="neutral_phase")
-            return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
+    n_workers = min(cfg.component2.dask.n_workers, len(committed_dates), os.cpu_count() or 4)
+    log.info("exceedance_parallel_start", n_dates=len(committed_dates), n_workers=n_workers)
+
+    succeeded: list[dict] = []
+    if n_workers <= 1 or len(committed_dates) == 1:
+        for args in worker_args:
+            result = _process_exceedance_day(args)
+            if result["success"]:
+                succeeded.append(result)
+            else:
+                log.warning("exceedance_day_failed", **result)
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_process_exceedance_day, a): a["date_str"] for a in worker_args}
+            for future in as_completed(futures):
+                result = future.result()
+                if result["success"]:
+                    succeeded.append(result)
+                else:
+                    log.warning("exceedance_day_failed", **result)
+
+    if not succeeded:
+        log.error("exceedance_all_days_failed", n_dates=len(committed_dates))
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return 0
 
     results: dict[date, xr.DataArray] = {}
     confidence_results: dict[date, xr.DataArray] = {}
-    session = store_obj.readonly_session()
-
-    # Determine the threshold spatial domain for subsetting.
-    # Reading the full global grid (721×1440 × 50 members × 85 steps) would
-    # saturate bandwidth; subsetting to the East Africa CMORPH domain first
-    # reduces transferred data by ~97%.
-    _thr_bbox = _threshold_bbox(thresholds)
-
-    for date_str in committed_dates:
-        day = date.fromisoformat(date_str)
-        mode = _mode_for(day)
-
-        try:
-            day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
-            # Spatial subset to the threshold domain (East Africa) before
-            # any computation — avoids fetching GRIB2 chunks for the whole globe.
-            if _thr_bbox is not None:
-                day_ds = _subset_to_bbox(day_ds, _thr_bbox)
-            day_ds = day_ds.chunk(cfg.component2.dask.chunk_dims)
-        except Exception as exc:
-            log.warning("exceedance_date_open_failed", date=date_str, error=str(exc)[:120])
-            continue
-
-        acc_ds = compute_rolling_accumulations(day_ds, windows_h=cfg.component2.windows_h)
-
-        day_results: dict[tuple[int, int], xr.DataArray] = {}
-        for w in cfg.component2.windows_h:
-            for rp in cfg.component2.return_periods:
-                try:
-                    thr = thresholds.get(w, rp, mode)
-                    p_exceed = compute_exceedance_probabilities(
-                        acc_ds,
-                        xr.Dataset({f"rp_{rp}y": thr}),
-                        window_h=w,
-                        return_period=rp,
-                        member_dim="member",
-                    )
-                    day_results[(w, rp)] = p_exceed
-                except Exception as exc:
-                    log.debug("exceedance_skip", window=w, rp=rp, error=str(exc)[:80])
-
-        if day_results:
-            results[day] = build_exceedance_dataset(day_results, day)
-            # Compute ensemble confidence from inter-member IQR spread (24h window).
-            # Stored alongside exceedance_prob → feeds Data_Confidence BN node in C3.
-            try:
-                conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim="member")
-                confidence_results[day] = (
-                    conf_da
-                    .assign_coords(date=pd.Timestamp(day))
-                    .expand_dims("date")
-                )
-            except Exception as exc:
-                log.debug("confidence_skip", date=date_str, error=str(exc)[:80])
+    for r in sorted(succeeded, key=lambda x: x["date_str"]):
+        day = date.fromisoformat(r["date_str"])
+        ds = xr.open_zarr(r["path"], consolidated=False)
+        results[day] = ds["exceedance_prob"]
+        if r.get("conf_path"):
+            cds = xr.open_zarr(r["conf_path"], consolidated=False)
+            confidence_results[day] = cds["ensemble_confidence"]
 
     write_exceedance_store(
-        results,
-        output_uri,
+        results, output_uri,
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
     )
+
+    if cfg.outputs.exceedance_icechunk_uri:
+        from gik_icechain.exceedance.icechunk_output import DecisionStore
+
+        decision = DecisionStore(
+            cfg.outputs.exceedance_icechunk_uri,
+            region=cfg.outputs.icechunk_store_region,
+            endpoint_url=cfg.outputs.endpoint_url or None,
+        )
+        decision.create_or_open()
+        for day, exc_da in results.items():
+            ds = exc_da.to_dataset(name="exceedance_prob")
+            if day in confidence_results:
+                ds["ensemble_confidence"] = confidence_results[day]
+            decision.commit_day(day, ds)
+        log.info("decision_store_committed", n_dates=len(results))
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    log.info("exceedance_complete", n_dates=len(results))
     return len(results)
 
 
 def _run_risk(
-    cfg: GIKConfig,  # noqa: F821
+    cfg: GIKConfig,
     exc_uri: str,
     output: Path,
     start: date,

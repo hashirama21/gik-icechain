@@ -1,7 +1,4 @@
-"""
-exceedance/exceedance.py
-=====================================
-Core exceedance probability computation.
+"""Core exceedance probability computation.
 
 For each forecast day, grid cell, accumulation window, and return-period:
   P_exceedance = fraction of 51 ensemble members where the worst-case
@@ -43,7 +40,6 @@ def _align_threshold_to_forecast(
     to the forecast grid so that the comparison broadcasts element-wise.
     Grid cells outside the threshold domain become NaN (→ exceedance = 0).
     """
-    # Detect spatial dimension names in each array
     thr_lat = next((d for d in threshold.dims if d in ("lat", "latitude")), None)
     thr_lon = next((d for d in threshold.dims if d in ("lon", "longitude")), None)
     fc_lat = next((d for d in forecast.dims if d in ("lat", "latitude")), None)
@@ -52,12 +48,13 @@ def _align_threshold_to_forecast(
     if not all([thr_lat, thr_lon, fc_lat, fc_lon]):
         return threshold  # Can't align — return as-is
 
-    # Already aligned: same dim names and same sizes
-    if thr_lat == fc_lat and thr_lon == fc_lon:
-        if threshold.sizes[thr_lat] == forecast.sizes[fc_lat]:
-            return threshold
+    if (
+        thr_lat == fc_lat
+        and thr_lon == fc_lon
+        and threshold.sizes[thr_lat] == forecast.sizes[fc_lat]
+    ):
+        return threshold
 
-    # Rename threshold dims to match forecast
     rename_map = {}
     if thr_lat != fc_lat:
         rename_map[thr_lat] = fc_lat
@@ -66,7 +63,6 @@ def _align_threshold_to_forecast(
     if rename_map:
         threshold = threshold.rename(rename_map)
 
-    # Interpolate to the forecast grid (bilinear; NaN outside domain)
     threshold = threshold.interp(
         {fc_lat: forecast[fc_lat], fc_lon: forecast[fc_lon]},
         method="linear",
@@ -113,7 +109,6 @@ def compute_exceedance_probabilities(
     step_dim = _find_step_dim(tp)
     tp_worst = tp.max(dim=step_dim)
 
-    # Align threshold grid to forecast grid (handles dim name + resolution mismatch)
     threshold = _align_threshold_to_forecast(threshold, tp_worst)
 
     exceedance = (tp_worst > threshold).mean(dim=member_dim)

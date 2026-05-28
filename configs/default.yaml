@@ -10,21 +10,16 @@ sources:
   gik_hf_dataset: "E4DRR/gik-ecmwf-par"
   gik_catalog_file: "catalog.parquet"
 
-  # ECMWF S3 archive (byte-range reads only)
   ecmwf_s3_bucket: "ecmwf-forecasts"
   ecmwf_s3_region: "eu-central-1"
   ecmwf_s3_no_sign: true   # Public bucket — no authentication needed
 
-  # CMORPH return-period thresholds
   cmorph_thresholds_path: "data/cmorph_thresholds/"
 
-  # GPM IMERG v7
   gpm_imerg_path: "data/gpm_imerg/"
 
-  # EM-DAT flood catalogue
   emdat_path: "data/emdat/east_africa_floods.csv"
 
-  # Admin-1 boundaries
   admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
 
 
@@ -33,9 +28,15 @@ outputs:
   # Component 1: IceChunk virtual store
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
   icechunk_store_region: "eu-west-1"
+  # S3-compatible endpoint for MinIO; empty = default AWS.
+  endpoint_url: ""
 
-  # Component 2: Exceedance probabilities Zarr
+  # Component 2: Exceedance probabilities Zarr (flat output)
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
+  # Component 2: Versioned decision artefacts (IceChunk time-travel)
+  exceedance_icechunk_uri: ""
+  # Component 3: Versioned risk artefacts (IceChunk time-travel)
+  risk_icechunk_uri: ""
 
   # Component 3: Admin-1 risk GeoJSON
   risk_output_dir: "results/admin1_risk/"
