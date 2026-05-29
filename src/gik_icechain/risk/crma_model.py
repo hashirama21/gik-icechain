@@ -29,7 +29,7 @@ CPTs are optionally refined via EM-DAT MLE (see cpt_refinement.py).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -114,25 +114,13 @@ _INTRA_EDGES = [
 
 
 @dataclass
-class CRMAEvidence:
-    """Evidence observed on a given day for one admin-1 unit.
+class EvidenceThresholds:
+    """Discretization thresholds for CRMAEvidence — instance fields (thread-safe).
 
-    All discretization thresholds are set from configs/default.yaml
-    (component3.crma_model) — defaults here match the YAML values.
+    Defaults match configs/default.yaml (component3.crma_model).
+    Use CRMAModel.make_evidence() to get instances pre-loaded from config.
     """
 
-    exceedance_prob_24h_5y: float
-    exceedance_prob_72h_5y: float
-    exceedance_prob_7d_5y: float
-    gpm_obs_24h: float
-    api_mm: float
-    spatial_coverage_fraction: float
-    consecutive_signal_days: int
-    sat_consecutive_days: int = 0
-    gpm_quality: int = 2
-    # Discretization thresholds — instance fields (thread-safe).
-    # Defaults match configs/default.yaml (component3.crma_model).
-    # Use CRMAModel.make_evidence() to get instances pre-loaded from config.
     gpm_normal_mmday: float = 5.0
     gpm_above_mmday: float = 25.0
     api_normal_mm: float = 30.0
@@ -144,14 +132,35 @@ class CRMAEvidence:
     hazard_medium_threshold: float = 0.15  # Low → Medium boundary for Forecast_Hazard
     hazard_high_threshold: float = 0.40    # Medium → High boundary for Forecast_Hazard
 
+
+@dataclass
+class CRMAEvidence:
+    """Evidence observed on a given day for one admin-1 unit.
+
+    All discretization thresholds are grouped in ``thresholds``
+    (:class:`EvidenceThresholds`).  Defaults match configs/default.yaml
+    (component3.crma_model).
+    """
+
+    exceedance_prob_24h_5y: float
+    exceedance_prob_72h_5y: float
+    exceedance_prob_7d_5y: float
+    gpm_obs_24h: float
+    api_mm: float
+    spatial_coverage_fraction: float
+    consecutive_signal_days: int
+    sat_consecutive_days: int = 0
+    gpm_quality: int = 2
+    thresholds: EvidenceThresholds = field(default_factory=EvidenceThresholds)
+
     def __post_init__(self) -> None:
-        for field, val in (
+        for fld, val in (
             ("exceedance_prob_24h_5y", self.exceedance_prob_24h_5y),
             ("exceedance_prob_72h_5y", self.exceedance_prob_72h_5y),
             ("exceedance_prob_7d_5y", self.exceedance_prob_7d_5y),
         ):
             if not (0.0 <= val <= 1.0):
-                raise ValueError(f"{field}={val!r} must be in [0, 1]")
+                raise ValueError(f"{fld}={val!r} must be in [0, 1]")
         if self.api_mm < 0:
             raise ValueError(f"api_mm={self.api_mm!r} must be >= 0")
         if not (0.0 <= self.spatial_coverage_fraction <= 1.0):
@@ -163,32 +172,32 @@ class CRMAEvidence:
     def forecast_hazard_state(self) -> int:
         """0=Low, 1=Medium, 2=High."""
         p = max(self.exceedance_prob_24h_5y, self.exceedance_prob_72h_5y)
-        if p >= self.hazard_high_threshold:
+        if p >= self.thresholds.hazard_high_threshold:
             return 2
-        if p >= self.hazard_medium_threshold:
+        if p >= self.thresholds.hazard_medium_threshold:
             return 1
         return 0
 
     @property
     def obs_antecedent_state(self) -> int:
         """0=Below normal, 1=Normal, 2=Above normal."""
-        if self.gpm_obs_24h >= self.gpm_above_mmday:
+        if self.gpm_obs_24h >= self.thresholds.gpm_above_mmday:
             return 2
-        if self.gpm_obs_24h >= self.gpm_normal_mmday:
+        if self.gpm_obs_24h >= self.thresholds.gpm_normal_mmday:
             return 1
         return 0
 
     @property
     def temporal_persistence_state(self) -> int:
         """0=No, 1=Yes (≥ persist_threshold days with signal)."""
-        return int(self.consecutive_signal_days >= self.persist_threshold)
+        return int(self.consecutive_signal_days >= self.thresholds.persist_threshold)
 
     @property
     def spatial_coverage_state(self) -> int:
         """0=Local, 1=Regional, 2=Extensive."""
-        if self.spatial_coverage_fraction >= self.spatial_extensive:
+        if self.spatial_coverage_fraction >= self.thresholds.spatial_extensive:
             return 2
-        if self.spatial_coverage_fraction >= self.spatial_regional:
+        if self.spatial_coverage_fraction >= self.thresholds.spatial_regional:
             return 1
         return 0
 
@@ -200,16 +209,16 @@ class CRMAEvidence:
     @property
     def api_state(self) -> int:
         """0=Dry, 1=Normal, 2=Saturated."""
-        if self.api_mm >= self.api_saturated_mm:
+        if self.api_mm >= self.thresholds.api_saturated_mm:
             return 2
-        if self.api_mm >= self.api_normal_mm:
+        if self.api_mm >= self.thresholds.api_normal_mm:
             return 1
         return 0
 
     @property
     def soil_memory_state(self) -> int:
         """0=Recent, 1=Prolonged (≥ soil_memory_days of consecutive saturation)."""
-        return int(self.sat_consecutive_days >= self.soil_memory_days)
+        return int(self.sat_consecutive_days >= self.thresholds.soil_memory_days)
 
     def to_obs_dict(self) -> dict[str, int]:
         """Discretised evidence as a plain dict keyed by BN node name."""
@@ -267,7 +276,7 @@ class CRMAModel:
         code to guarantee that threshold values always match the live config.
         """
         cfg = self._cfg
-        return CRMAEvidence(
+        thresholds = EvidenceThresholds(
             gpm_normal_mmday=cfg.gpm_obs_normal_mmday,
             gpm_above_mmday=cfg.gpm_obs_above_mmday,
             api_normal_mm=cfg.api_threshold_normal_mm,
@@ -278,8 +287,20 @@ class CRMAModel:
             soil_memory_days=cfg.soil_memory_days,
             hazard_medium_threshold=cfg.hazard_medium_threshold,
             hazard_high_threshold=cfg.hazard_high_threshold,
+        )
+        return CRMAEvidence(
+            thresholds=thresholds,
             **kwargs,  # type: ignore[arg-type]
         )
+
+    def get_pgmpy_model(self) -> Any:
+        """Return the underlying pgmpy DiscreteBayesianNetwork (public API).
+
+        Raises RuntimeError if the model has not been built yet.
+        """
+        if self._model is None:
+            raise RuntimeError("Model not built. Call build() first.")
+        return self._model
 
     def build(self) -> None:
         """Construct the static BN, the 2-slice DBN, and the inference lookup table."""

@@ -223,7 +223,7 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         all_tags = self._repo.list_tags()
-        valid_tags = [t for t in all_tags if t[:10] <= as_of_date.isoformat()]
+        valid_tags = [t for t in all_tags if date.fromisoformat(t[:10]) <= as_of_date]
 
         if not valid_tags:
             earliest = min(t[:10] for t in all_tags)

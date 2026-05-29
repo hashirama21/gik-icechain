@@ -1,5 +1,4 @@
 # .github/workflows/ci.yaml
-# ─────────────────────────────────────────────────────────────────────────────
 # Continuous Integration for GIK-IceChain
 #
 # Jobs:
@@ -7,7 +6,6 @@
 #   2. test-unit — pytest (unit tests only, no cloud credentials needed)
 #   3. test-int  — pytest integration tests (local tmp-path, no AWS required)
 #   4. notebooks — nbmake validates quickstart + walkthrough notebooks
-# ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
 

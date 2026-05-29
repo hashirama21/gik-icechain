@@ -1,4 +1,9 @@
-"""Spatial aggregation of gridded fields to admin-1 units."""
+"""Spatial aggregation of gridded fields to admin-1 units.
+
+Uses ``regionmask.from_geopandas()`` to rasterise all admin-1 polygons into a
+single mask in one pass, then vectorised groupby operations for mean/max.
+Only ``area_weighted`` falls back to a per-region loop.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,8 @@ import pandas as pd
 import structlog
 import xarray as xr
 
+from gik_icechain.shared.xarray_utils import find_dim, find_lat_dim, find_lon_dim
+
 try:
     import regionmask
     _REGIONMASK_AVAILABLE = True
@@ -18,6 +25,27 @@ except ImportError:
     _REGIONMASK_AVAILABLE = False
 
 log = structlog.get_logger(__name__)
+
+
+def _build_multi_region_mask(
+    da: xr.DataArray,
+    admin_gdf: gpd.GeoDataFrame,
+    pcode_col: str = "admin1_pcode",
+) -> tuple[xr.DataArray, dict[int, str]]:
+    """Rasterise all admin-1 polygons into a single integer mask (O(1) per region).
+
+    Returns:
+        Tuple of (mask DataArray with integer region IDs, mapping of region number → pcode).
+    """
+    lat_name = find_lat_dim(da)
+    lon_name = find_lon_dim(da)
+    regions = regionmask.from_geopandas(admin_gdf)
+    mask = regions.mask(da, lon_name=lon_name, lat_name=lat_name)
+    mask.name = "region"
+    num_to_pcode = dict(
+        zip(regions.numbers, admin_gdf[pcode_col].astype(str))
+    )
+    return mask, num_to_pcode
 
 
 def aggregate_to_admin1(
@@ -33,6 +61,9 @@ def aggregate_to_admin1(
     Admin-1 units whose coverage fraction is below *min_coverage* receive
     NaN rather than a potentially misleading statistic.
 
+    Uses a single ``regionmask.from_geopandas()`` call for all regions
+    (vectorised), then xarray groupby for mean/max.
+
     Args:
         da:           DataArray with dimensions (latitude, longitude) or
                       (lat, lon).
@@ -45,37 +76,48 @@ def aggregate_to_admin1(
     Returns:
         Series indexed by *pcode_col* with one value per admin-1 unit.
     """
+    try:
+        mask, num_to_pcode = _build_multi_region_mask(da, admin_gdf, pcode_col)
+    except Exception as exc:
+        log.warning("multi_region_mask_failed", error=str(exc))
+        return pd.Series(dtype=float, name=stat)
+
+    if stat == "area_weighted":
+        return _aggregate_area_weighted(da, mask, num_to_pcode, min_coverage, stat)
+
+    # Vectorised path for mean/max
+    da_masked = da.where(mask.notnull())
+
+    if stat == "mean":
+        grouped_stat = da_masked.groupby(mask).mean(skipna=True)
+    elif stat == "max":
+        grouped_stat = da_masked.groupby(mask).max(skipna=True)
+    else:
+        raise ValueError(f"Unknown stat: {stat!r}")
+
+    # Coverage: valid data cells / total cells inside each region
+    total_per_region = mask.notnull().groupby(mask).sum()
+    valid_per_region = da_masked.notnull().groupby(mask).sum()
+
     results: dict[str, float] = {}
-
-    for _, unit in admin_gdf.iterrows():
-        pcode = str(unit[pcode_col])
-        geom = unit.geometry
+    for region_num, pcode in num_to_pcode.items():
         try:
-            mask = regionmask.Regions([geom]).mask(
-                da,
-                lon_name=_find_dim(da, ("longitude", "lon")),
-                lat_name=_find_dim(da, ("latitude", "lat")),
-            )
-            inside = da.where(mask == 0)
-            total = int((mask == 0).sum())
-            valid = int(inside.count())
-            if total == 0 or (valid / total) < min_coverage:
-                results[pcode] = float("nan")
-                continue
+            total = float(total_per_region.sel(region=region_num))
+        except (KeyError, ValueError):
+            results[pcode] = float("nan")
+            continue
 
-            if stat == "mean":
-                val = float(inside.mean(skipna=True))
-            elif stat == "max":
-                val = float(inside.max(skipna=True))
-            elif stat == "area_weighted":
-                val = _area_weighted_mean(inside, geom)
-            else:
-                raise ValueError(f"Unknown stat: {stat!r}")
+        if total == 0:
+            results[pcode] = float("nan")
+            continue
 
-            results[pcode] = val if np.isfinite(val) else 0.0
-        except Exception as exc:
-            log.debug("aggregation_failed", pcode=pcode, error=str(exc))
-            results[pcode] = 0.0
+        valid = float(valid_per_region.sel(region=region_num))
+        if (valid / total) < min_coverage:
+            results[pcode] = float("nan")
+            continue
+
+        val = float(grouped_stat.sel(region=region_num))
+        results[pcode] = val if np.isfinite(val) else float("nan")
 
     return pd.Series(results, name=stat)
 
@@ -88,6 +130,9 @@ def coverage_fraction(
 ) -> pd.Series:
     """Fraction of grid cells within each admin-1 boundary exceeding *threshold*.
 
+    Uses a single ``regionmask.from_geopandas()`` call for all regions
+    (vectorised).
+
     Args:
         da:        DataArray with spatial dimensions (lat, lon).
         admin_gdf: GeoDataFrame with admin-1 boundaries.
@@ -97,42 +142,65 @@ def coverage_fraction(
     Returns:
         Series indexed by *pcode_col* with values in [0, 1].
     """
-    results: dict[str, float] = {}
+    try:
+        mask, num_to_pcode = _build_multi_region_mask(da, admin_gdf, pcode_col)
+    except Exception as exc:
+        log.warning("multi_region_mask_failed", error=str(exc))
+        return pd.Series(dtype=float, name="coverage_fraction")
 
-    for _, unit in admin_gdf.iterrows():
-        pcode = str(unit[pcode_col])
-        geom = unit.geometry
+    total_per_region = mask.notnull().groupby(mask).sum()
+    above_per_region = (da.where(mask.notnull()) > threshold).groupby(mask).sum(skipna=True)
+
+    results: dict[str, float] = {}
+    for region_num, pcode in num_to_pcode.items():
         try:
-            mask = regionmask.Regions([geom]).mask(
-                da,
-                lon_name=_find_dim(da, ("longitude", "lon")),
-                lat_name=_find_dim(da, ("latitude", "lat")),
-            )
-            inside = da.where(mask == 0)
-            total = int((mask == 0).sum())
-            if total == 0:
-                results[pcode] = 0.0
-                continue
-            above = int((inside > threshold).sum(skipna=True))
-            results[pcode] = above / total
-        except Exception as exc:
-            log.debug("coverage_fraction_failed", pcode=pcode, error=str(exc))
+            total = float(total_per_region.sel(region=region_num))
+        except (KeyError, ValueError):
             results[pcode] = 0.0
+            continue
+
+        if total == 0:
+            results[pcode] = 0.0
+            continue
+
+        above = float(above_per_region.sel(region=region_num))
+        results[pcode] = above / total
 
     return pd.Series(results, name="coverage_fraction")
 
 
-def _find_dim(da: xr.DataArray, candidates: tuple[str, ...]) -> str:
-    """Return the first dimension name from *candidates* that exists in *da*."""
-    for c in candidates:
-        if c in da.dims or c in da.coords:
-            return c
-    raise KeyError(f"None of {candidates} found in DataArray dims/coords: {list(da.dims)}")
+def _aggregate_area_weighted(
+    da: xr.DataArray,
+    mask: xr.DataArray,
+    num_to_pcode: dict[int, str],
+    min_coverage: float,
+    stat_name: str,
+) -> pd.Series:
+    """Cosine-latitude-weighted mean per region (loop-based for weighting)."""
+    lat_name = find_lat_dim(da)
+
+    results: dict[str, float] = {}
+    for region_num, pcode in num_to_pcode.items():
+        region_mask = mask == region_num
+        total = int(region_mask.sum())
+        if total == 0:
+            results[pcode] = float("nan")
+            continue
+
+        inside = da.where(region_mask)
+        valid = int(inside.count())
+        if (valid / total) < min_coverage:
+            results[pcode] = float("nan")
+            continue
+
+        val = _area_weighted_mean(inside, lat_name)
+        results[pcode] = val if np.isfinite(val) else float("nan")
+
+    return pd.Series(results, name=stat_name)
 
 
-def _area_weighted_mean(da: xr.DataArray, geom: Any) -> float:
-    """Cosine-latitude-weighted mean within *geom*."""
-    lat_name = _find_dim(da, ("latitude", "lat"))
+def _area_weighted_mean(da: xr.DataArray, lat_name: str) -> float:
+    """Cosine-latitude-weighted mean over valid cells."""
     lat_vals = da[lat_name].values
     weights = np.cos(np.deg2rad(lat_vals))
     weights_2d = np.broadcast_to(weights[:, None], da.shape) if da.ndim == 2 else weights
@@ -140,4 +208,7 @@ def _area_weighted_mean(da: xr.DataArray, geom: Any) -> float:
     mask_valid = np.isfinite(arr)
     if not mask_valid.any():
         return float("nan")
-    return float(np.sum(arr[mask_valid] * weights_2d[mask_valid]) / np.sum(weights_2d[mask_valid]))
+    return float(
+        np.sum(arr[mask_valid] * weights_2d[mask_valid])
+        / np.sum(weights_2d[mask_valid])
+    )

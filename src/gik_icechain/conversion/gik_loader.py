@@ -189,10 +189,9 @@ class GIKCatalog:
             log.warning("no_parquet_files_found", start=start, end=end, run_hours=run_hours)
             return []
 
-        paths = [
-            f"hf://datasets/{self.hf_dataset}/{row['hf_path']}"
-            for _, row in filtered.iterrows()
-        ]
+        paths = (
+            "hf://datasets/" + self.hf_dataset + "/" + filtered["hf_path"]
+        ).tolist()
         log.info("parquet_paths_resolved", count=len(paths), date_range=f"{start} to {end}")
         return paths
 

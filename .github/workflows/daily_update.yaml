@@ -1,5 +1,4 @@
 # .github/workflows/daily_update.yaml
-# ─────────────────────────────────────────────────────────────────────────────
 # Daily Pipeline Update
 #
 # Runs at 08:00 UTC every day (after ECMWF 00Z run is archived on S3).
@@ -9,7 +8,6 @@
 # This is the core of Innovation 1 (IceChunk Time-Travel Audit Trail):
 # each daily run produces a tagged IceChunk snapshot that captures the
 # exact forecast data available on that date.
-# ─────────────────────────────────────────────────────────────────────────────
 
 name: Daily Pipeline Update
 
@@ -145,38 +143,37 @@ jobs:
             --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
 
   #  Dashboard: regenerate calendar summary for new day
-  #  Disabled — dashboard/storymaps/generate_storymaps.py not yet implemented.
-  # update-dashboard:
-  #   name: "Dashboard: update calendar data"
-  #   runs-on: ubuntu-latest
-  #   needs: update-risk
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: ${{ env.PYTHON_VERSION }}
-  #         cache: pip
-  #     - run: pip install -e ".[viz]"
-  #     - uses: aws-actions/configure-aws-credentials@v4
-  #       with:
-  #         aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-  #         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  #         aws-region: eu-west-1
-  #     - name: Generate calendar summary JSON
-  #       run: |
-  #         python dashboard/storymaps/generate_storymaps.py \
-  #           --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
-  #           --risk-dir s3://${{ secrets.GIK_BUCKET }}/admin1_risk/ \
-  #           --output dashboard/calendar_map/data/ \
-  #           --date ${{ needs.ingest-daily-gik.outputs.processed_date }}
-  #     - name: Commit dashboard data update
-  #       run: |
-  #         git config user.name  "gik-icechain-bot"
-  #         git config user.email "bot@gik-icechain.earth"
-  #         git add dashboard/calendar_map/data/
-  #         git diff --staged --quiet || \
-  #           git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
-  #         git push
+  update-dashboard:
+    name: "Dashboard: update calendar data"
+    runs-on: ubuntu-latest
+    needs: update-risk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[viz]"
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Generate calendar summary JSON
+        run: |
+          python dashboard/storymaps/generate_storymaps.py \
+            --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
+            --risk-dir s3://${{ secrets.GIK_BUCKET }}/admin1_risk/ \
+            --output dashboard/calendar_map/data/ \
+            --date ${{ needs.ingest-daily-gik.outputs.processed_date }}
+      - name: Commit dashboard data update
+        run: |
+          git config user.name  "gik-icechain-bot"
+          git config user.email "bot@gik-icechain.earth"
+          git add dashboard/calendar_map/data/
+          git diff --staged --quiet || \
+            git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }}"
+          git push
 
   #  Monthly IceChunk compaction (runs on 1st of each month at 02:00 UTC)
   compact-icechunk:
