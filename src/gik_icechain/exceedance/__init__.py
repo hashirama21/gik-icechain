@@ -4,7 +4,6 @@ from gik_icechain.exceedance.accumulations import (
     compute_rolling_accumulations,
 )
 from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
-from gik_icechain.exceedance.loader import open_aifs_store, open_icechunk_store
 from gik_icechain.exceedance.thresholds import (
     ACCUMULATION_WINDOWS_H,
     RETURN_PERIODS,
@@ -38,7 +37,5 @@ __all__ = [
     "compute_exceedance_probabilities",
     "compute_rolling_accumulations",
     "get_season",
-    "open_aifs_store",
-    "open_icechunk_store",
     "write_exceedance_store",
 ]

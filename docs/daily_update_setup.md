@@ -59,9 +59,9 @@ and pass it downstream via `$GITHUB_OUTPUT`.
 | Flag | Status | Notes |
 |---|---|---|
 | `--store` / `--output` / `--start` / `--end` | done | Always existed |
-| `--thresholds` | done | Overrides `cfg.sources.cmorph_thresholds_path` |
-| `--region` | done | Accepted (informational; spatial filtering not yet applied) |
-| `--mode` | done | Accepted; append is always the default |
+| `--thresholds` | done | Overrides `cfg.component2.thresholds.cmorph_path` |
+| `--workers` | done | Overrides `cfg.component2.parallel.max_workers` + Dask client workers |
+| `--profile` | done | Overrides `cfg.component2.active_profile` (flash_flood, medium_range, full) |
 
 ### C3 — `risk`
 

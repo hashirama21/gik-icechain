@@ -13,9 +13,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[3] / "configs" / "default.yaml"
+
+
+def _validate_windows_h(v: list[int]) -> list[int]:
+    if any(w <= 0 for w in v):
+        raise ValueError("All windows_h values must be > 0")
+    if v != sorted(v):
+        raise ValueError("windows_h must be sorted in ascending order")
+    return v
 
 
 class SourcesConfig(BaseModel):
@@ -24,7 +32,6 @@ class SourcesConfig(BaseModel):
     ecmwf_s3_bucket: str = "ecmwf-forecasts"
     ecmwf_s3_region: str = "eu-central-1"
     ecmwf_s3_no_sign: bool = True
-    cmorph_thresholds_path: str = "data/cmorph_thresholds/"
     gpm_imerg_path: str = "data/gpm_imerg/"
     emdat_path: str = "data/emdat/east_africa_floods.csv"
     admin_boundaries_path: str = "data/admin_boundaries/east_africa_admin1.gpkg"
@@ -72,6 +79,11 @@ class ThresholdsConfig(BaseModel):
     enso_iod_index_path: str = "data/enso_iod_index.csv"
     enso_nino34_threshold: float = 0.5   # °C Niño-3.4 for El Niño / La Niña
     iod_dmi_threshold: float = 0.4       # °C DMI for Positive / Negative IOD
+    cmorph_path: str = "data/cmorph_thresholds/"
+    cmorph_hf_dataset: str = "E4DRR/virtualizarr-stores"
+    min_samples_for_gev: int = 30
+    fallback_strategy: str = "neutral"   # "neutral" | "climatology"
+    fallback_rate_warning_threshold: float = 0.20
 
 
 class AIFSTrackConfig(BaseModel):
@@ -79,21 +91,120 @@ class AIFSTrackConfig(BaseModel):
     aifs_store_uri: str = ""
 
 
+class SpatialConfig(BaseModel):
+    bbox: list[float] | None = Field(
+        default_factory=lambda: [-12.0, 23.0, 22.0, 52.0],
+    )
+    lat_dim: str = "latitude"
+    lon_dim: str = "longitude"
+
+    @property
+    def lat_slice(self) -> slice | None:
+        if self.bbox is None:
+            return None
+        return slice(self.bbox[1], self.bbox[0])  # descending lat
+
+    @property
+    def lon_slice(self) -> slice | None:
+        if self.bbox is None:
+            return None
+        return slice(self.bbox[2], self.bbox[3])
+
+    @property
+    def as_tuple(self) -> tuple[float, float, float, float] | None:
+        if self.bbox is None:
+            return None
+        return (self.bbox[0], self.bbox[1], self.bbox[2], self.bbox[3])
+
+
 class DaskConfig(BaseModel):
     scheduler: str = "distributed"
-    n_workers: int = 16
+    n_workers: int = 4
     threads_per_worker: int = 2
-    memory_limit: str = "8GB"
+    memory_limit: str = "4GB"
     dashboard_address: str = ":8787"
     chunk_dims: dict[str, Any] = Field(
-        default_factory=lambda: {"member": -1, "step": -1, "latitude": 50, "longitude": 50}
+        default_factory=lambda: {"member": 1, "step": 1, "latitude": 50, "longitude": 50}
     )
 
 
+class ByteRangeCoalescingConfig(BaseModel):
+    enabled: bool = True
+    max_gap_bytes: int = 65536       # 64 KB
+    max_merged_bytes: int = 5242880  # 5 MB
+
+
+class ParallelConfig(BaseModel):
+    max_workers: int | None = None   # None = auto (os.cpu_count())
+    multiprocessing: bool = True
+    day_timeout_s: int = 300
+
+    @field_validator("max_workers")
+    @classmethod
+    def _max_workers_positive(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError(f"max_workers must be >= 1, got {v}")
+        return v
+
+
+class WindowProfileConfig(BaseModel):
+    windows_h: list[int]
+    return_periods: list[int]
+    max_forecast_h: int
+
+    @field_validator("windows_h")
+    @classmethod
+    def _check_windows_h(cls, v: list[int]) -> list[int]:
+        return _validate_windows_h(v)
+
+
 class Component2Config(BaseModel):
+    # --- Dimension 1: Variables ---
+    compute_variables: list[str] = Field(default_factory=lambda: ["tp"])
+    risk_evidence_variables: list[str] = Field(
+        default_factory=lambda: ["2t", "10u", "10v", "ro"],
+    )
+
+    # --- Dimension 2: Steps ---
+    step_resolution_h: int = 6
+    max_forecast_h: int | None = None  # None = auto (max of active windows_h)
+    step_buffer: int = 1
+
+    # --- Dimension 3 + 7: Windows (direct + profiles) ---
     windows_h: list[int] = Field(default_factory=lambda: [3, 6, 12, 24, 48, 72, 168])
     return_periods: list[int] = Field(default_factory=lambda: [2, 5, 10, 20, 40, 100])
+    active_profile: str | None = None  # None = use top-level windows_h/return_periods
+    window_profiles: dict[str, WindowProfileConfig] = Field(
+        default_factory=lambda: {
+            "flash_flood": WindowProfileConfig(
+                windows_h=[3, 6, 12], return_periods=[2, 5, 10], max_forecast_h=24,
+            ),
+            "medium_range": WindowProfileConfig(
+                windows_h=[24, 48, 72], return_periods=[5, 10, 20], max_forecast_h=72,
+            ),
+            "full": WindowProfileConfig(
+                windows_h=[3, 6, 12, 24, 48, 72, 168],
+                return_periods=[2, 5, 10, 20, 40, 100],
+                max_forecast_h=168,
+            ),
+        }
+    )
+
+    # --- Dimension 4: Spatial ---
+    spatial: SpatialConfig = Field(default_factory=SpatialConfig)
+
+    # --- Dimension 5: Byte-range coalescing ---
+    byte_range_coalescing: ByteRangeCoalescingConfig = Field(
+        default_factory=ByteRangeCoalescingConfig,
+    )
+
+    # --- Dimension 6: Parallelism ---
+    parallel: ParallelConfig = Field(default_factory=ParallelConfig)
+
+    # --- Dimension 8: Thresholds ---
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
+
+    # --- Other ---
     aifs_track: AIFSTrackConfig = Field(default_factory=AIFSTrackConfig)
     dask: DaskConfig = Field(default_factory=DaskConfig)
     output_chunks: dict[str, Any] = Field(
@@ -105,6 +216,49 @@ class Component2Config(BaseModel):
             "return_period": -1,
         }
     )
+
+    @field_validator("windows_h")
+    @classmethod
+    def _check_windows_h(cls, v: list[int]) -> list[int]:
+        return _validate_windows_h(v)
+
+    @model_validator(mode="after")
+    def _validate_active_profile(self) -> Component2Config:
+        if self.active_profile and self.active_profile not in self.window_profiles:
+            available = list(self.window_profiles.keys())
+            raise ValueError(
+                f"active_profile '{self.active_profile}' not found in "
+                f"window_profiles (available: {available})"
+            )
+        return self
+
+    @property
+    def effective_windows_h(self) -> list[int]:
+        """Resolve windows from active profile or top-level config."""
+        if self.active_profile and self.active_profile in self.window_profiles:
+            return self.window_profiles[self.active_profile].windows_h
+        return self.windows_h
+
+    @property
+    def effective_return_periods(self) -> list[int]:
+        """Resolve return periods from active profile or top-level config."""
+        if self.active_profile and self.active_profile in self.window_profiles:
+            return self.window_profiles[self.active_profile].return_periods
+        return self.return_periods
+
+    @property
+    def effective_max_forecast_h(self) -> int:
+        """Resolve max forecast horizon from profile, explicit setting, or auto."""
+        if self.active_profile and self.active_profile in self.window_profiles:
+            return self.window_profiles[self.active_profile].max_forecast_h
+        if self.max_forecast_h is not None:
+            return self.max_forecast_h
+        return max(self.effective_windows_h)
+
+    @property
+    def max_steps_needed(self) -> int:
+        """Number of steps to load based on effective max forecast and resolution."""
+        return (self.effective_max_forecast_h // self.step_resolution_h) + self.step_buffer + 1
 
 
 #  Component 3 — CRMA model parameters
@@ -119,6 +273,17 @@ class CompoundCPTBucketSetConfig(BaseModel):
     mid: list[float] = Field(default_factory=lambda: [0.20, 0.60, 0.15, 0.05])
     mod: list[float] = Field(default_factory=lambda: [0.05, 0.20, 0.55, 0.20])
     high: list[float] = Field(default_factory=lambda: [0.02, 0.08, 0.30, 0.60])
+
+    @model_validator(mode="after")
+    def _buckets_sum_to_one(self) -> CompoundCPTBucketSetConfig:
+        for name in ("low", "mid", "mod", "high"):
+            probs = getattr(self, name)
+            total = sum(probs)
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"CPT bucket '{name}' sums to {total:.6f}, expected 1.0"
+                )
+        return self
 
 
 class CompoundCPTBucketsConfig(BaseModel):
@@ -183,6 +348,19 @@ class CRMAModelConfig(BaseModel):
         ]
     )
 
+    @model_validator(mode="after")
+    def _api_transition_stochastic(self) -> CRMAModelConfig:
+        matrix = self.api_transition
+        n = len(matrix)
+        for col_idx in range(n):
+            col_sum = sum(matrix[row_idx][col_idx] for row_idx in range(n))
+            if abs(col_sum - 1.0) > 1e-6:
+                raise ValueError(
+                    f"api_transition column {col_idx} sums to {col_sum:.6f}, "
+                    f"expected 1.0 (pgmpy requires column-stochastic matrices)"
+                )
+        return self
+
 
 class CRMAConfig(BaseModel):
     cpt_path: str | None = None
@@ -233,6 +411,20 @@ class CalendarMapConfig(BaseModel):
     signal_threshold_yellow: float = 0.15
     signal_threshold_orange: float = 0.30
     signal_threshold_red: float = 0.50
+
+    @model_validator(mode="after")
+    def _thresholds_ordered(self) -> CalendarMapConfig:
+        y, o, r = (
+            self.signal_threshold_yellow,
+            self.signal_threshold_orange,
+            self.signal_threshold_red,
+        )
+        if not (y < o < r):
+            raise ValueError(
+                f"Calendar map thresholds must satisfy yellow < orange < red, "
+                f"got {y} < {o} < {r}"
+            )
+        return self
 
 
 class VedaUIConfig(BaseModel):

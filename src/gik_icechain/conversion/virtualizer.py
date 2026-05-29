@@ -24,25 +24,9 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
-try:
-    import numcodecs
-    from kerchunk.codecs import GRIBCodec
+from gik_icechain.shared.codec_registry import register_grib_codecs
 
-    numcodecs.register_codec(GRIBCodec, "grib")
-except (ImportError, ValueError) as exc:
-    log.warning("grib_codec_numcodecs_unavailable", error=str(exc))
-
-# Bridge numcodecs GRIBCodec into Zarr v3 so "numcodecs.grib" resolves at read/write time.
-try:
-    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
-    from zarr.registry import register_codec
-
-    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
-        pass
-
-    register_codec("numcodecs.grib", GribNumcodecs)
-except (ImportError, ValueError) as exc:
-    log.warning("grib_codec_zarr_v3_unavailable", error=str(exc))
+register_grib_codecs()
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
@@ -189,7 +173,7 @@ class GIKFlatParquetParser:
                         default_dtype = meta.get("dtype", default_dtype)
                         break
                 except Exception:
-                    pass
+                    log.debug("zarray_meta_parse_skipped", exc_info=True)
         log.debug("gik_grid_resolution", nlat=nlat, nlon=nlon, uri_hint=first_uri[:80])
 
         self.step_hours = sorted(chunk_df["step_num"].unique().tolist())
