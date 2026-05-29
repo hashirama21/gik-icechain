@@ -4,8 +4,6 @@
 PYTHON        ?= python3
 PIP           ?= pip
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
-
 .PHONY: install
 install: ## Install package in editable mode with all dependencies
 	$(PIP) install -e ".[full]"
@@ -18,8 +16,6 @@ install-dev: ## Install with dev dependencies only
 pre-commit-install: ## Install pre-commit hooks
 	pre-commit install
 	pre-commit install --hook-type commit-msg
-
-# ── Quality ───────────────────────────────────────────────────────────────────
 
 .PHONY: lint
 lint: ## Run ruff linter
@@ -34,8 +30,6 @@ format: ## Auto-format with ruff
 .PHONY: typecheck
 typecheck: ## Run mypy type checker
 	mypy src/gik_icechain/ --ignore-missing-imports
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
 
 .PHONY: test
 test: ## Run all unit tests
@@ -59,8 +53,6 @@ test-notebooks: ## Test all notebooks with nbmake
 
 .PHONY: test-all
 test-all: test test-notebooks ## Run all tests
-
-# ── Pipeline ──────────────────────────────────────────────────────────────────
 
 .PHONY: download-data
 download-data: ## Download admin boundaries, CMORPH thresholds, EM-DAT
@@ -91,8 +83,6 @@ export-eahw: ## Export admin-1 risk to East Africa Hazard Watch Portal format
 	  --risk-dir results/admin1_risk/ \
 	  --output results/eahw_export/
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
-
 .PHONY: dashboard
 dashboard: ## Launch dashboard locally
 	$(PYTHON) -m gik_icechain dashboard --port 8080
@@ -103,8 +93,6 @@ build-storymaps: ## Regenerate all VEDA-UI storymap MDX files
 	  --exceedance-store $${GIK_EXCEEDANCE_STORE_URI} \
 	  --risk-dir results/admin1_risk/ \
 	  --output dashboard/calendar_map/data/
-
-# ── Docker ────────────────────────────────────────────────────────────────────
 
 .PHONY: docker-build
 docker-build: ## Build Docker image
@@ -120,8 +108,6 @@ docker-run: ## Run pipeline in Docker (demo)
 	  python -m gik_icechain run-all \
 	    --start 2024-10-01 \
 	    --end   2024-10-31
-
-# ── Utilities ─────────────────────────────────────────────────────────────────
 
 .PHONY: clean
 clean: ## Remove build artifacts, caches, temp files

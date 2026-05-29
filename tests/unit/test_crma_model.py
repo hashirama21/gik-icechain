@@ -11,87 +11,81 @@ from gik_icechain.risk.crma_model import (
     CRMAEvidence,
     CRMAModel,
     EastAfricaCluster,
+    EvidenceThresholds,
 )
 
 
 class TestCRMAEvidenceDiscretisation:
-    def _make_evidence(self, **kwargs) -> CRMAEvidence:
-        defaults = dict(
-            exceedance_prob_24h_5y=0.0,
-            exceedance_prob_72h_5y=0.0,
-            exceedance_prob_7d_5y=0.0,
-            gpm_obs_24h=0.0,
-            api_mm=15.0,
-            spatial_coverage_fraction=0.1,
-            consecutive_signal_days=0,
-            sat_consecutive_days=0,
-        )
-        defaults.update(kwargs)
-        return CRMAEvidence(**defaults)
-
-    def test_low_forecast_hazard(self):
-        e = self._make_evidence(exceedance_prob_24h_5y=0.05)
+    def test_low_forecast_hazard(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h_5y=0.05)
         assert e.forecast_hazard_state == 0
 
-    def test_medium_forecast_hazard(self):
-        e = self._make_evidence(exceedance_prob_24h_5y=0.20)
+    def test_medium_forecast_hazard(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h_5y=0.20)
         assert e.forecast_hazard_state == 1
 
-    def test_high_forecast_hazard(self):
-        e = self._make_evidence(exceedance_prob_24h_5y=0.50)
+    def test_high_forecast_hazard(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h_5y=0.50)
         assert e.forecast_hazard_state == 2
 
-    def test_below_normal_obs(self):
-        e = self._make_evidence(gpm_obs_24h=1.0)
+    def test_below_normal_obs(self, make_evidence):
+        e = make_evidence(gpm_obs_24h=1.0)
         assert e.obs_antecedent_state == 0
 
-    def test_normal_obs(self):
-        e = self._make_evidence(gpm_obs_24h=10.0)
+    def test_normal_obs(self, make_evidence):
+        e = make_evidence(gpm_obs_24h=10.0)
         assert e.obs_antecedent_state == 1
 
-    def test_above_normal_obs(self):
-        e = self._make_evidence(gpm_obs_24h=30.0)
+    def test_above_normal_obs(self, make_evidence):
+        e = make_evidence(gpm_obs_24h=30.0)
         assert e.obs_antecedent_state == 2
 
-    def test_no_persistence(self):
-        e = self._make_evidence(consecutive_signal_days=2)
+    def test_no_persistence(self, make_evidence):
+        e = make_evidence(consecutive_signal_days=2)
         assert e.temporal_persistence_state == 0
 
-    def test_yes_persistence(self):
-        e = self._make_evidence(consecutive_signal_days=3)
+    def test_yes_persistence(self, make_evidence):
+        e = make_evidence(consecutive_signal_days=3)
         assert e.temporal_persistence_state == 1
 
-    def test_dry_api(self):
-        e = self._make_evidence(api_mm=10.0)
+    def test_dry_api(self, make_evidence):
+        e = make_evidence(api_mm=10.0)
         assert e.api_state == 0
 
-    def test_normal_api(self):
-        e = self._make_evidence(api_mm=50.0)
+    def test_normal_api(self, make_evidence):
+        e = make_evidence(api_mm=50.0)
         assert e.api_state == 1
 
-    def test_saturated_api(self):
-        e = self._make_evidence(api_mm=100.0)
+    def test_saturated_api(self, make_evidence):
+        e = make_evidence(api_mm=100.0)
         assert e.api_state == 2
 
-    def test_local_spatial(self):
-        e = self._make_evidence(spatial_coverage_fraction=0.20)
+    def test_local_spatial(self, make_evidence):
+        e = make_evidence(spatial_coverage_fraction=0.20)
         assert e.spatial_coverage_state == 0
 
-    def test_regional_spatial(self):
-        e = self._make_evidence(spatial_coverage_fraction=0.50)
+    def test_regional_spatial(self, make_evidence):
+        e = make_evidence(spatial_coverage_fraction=0.50)
         assert e.spatial_coverage_state == 1
 
-    def test_extensive_spatial(self):
-        e = self._make_evidence(spatial_coverage_fraction=0.80)
+    def test_extensive_spatial(self, make_evidence):
+        e = make_evidence(spatial_coverage_fraction=0.80)
         assert e.spatial_coverage_state == 2
 
-    def test_soil_memory_fresh(self):
-        e = self._make_evidence(sat_consecutive_days=6)
+    def test_soil_memory_fresh(self, make_evidence):
+        e = make_evidence(sat_consecutive_days=6)
         assert e.soil_memory_state == 0
 
-    def test_soil_memory_prolonged(self):
-        e = self._make_evidence(sat_consecutive_days=7)
+    def test_soil_memory_prolonged(self, make_evidence):
+        e = make_evidence(sat_consecutive_days=7)
         assert e.soil_memory_state == 1
+
+    def test_evidence_thresholds_default(self, make_evidence):
+        """EvidenceThresholds uses correct defaults."""
+        e = make_evidence()
+        assert isinstance(e.thresholds, EvidenceThresholds)
+        assert e.thresholds.hazard_medium_threshold == 0.15
+        assert e.thresholds.hazard_high_threshold == 0.40
 
 
 @pytest.fixture(scope="module")
@@ -104,29 +98,15 @@ def built_model():
 
 
 class TestCRMAModelInference:
-    def _make_evidence(self, **kwargs) -> CRMAEvidence:
-        defaults = dict(
-            exceedance_prob_24h_5y=0.0,
-            exceedance_prob_72h_5y=0.0,
-            exceedance_prob_7d_5y=0.0,
-            gpm_obs_24h=0.0,
-            api_mm=15.0,
-            spatial_coverage_fraction=0.1,
-            consecutive_signal_days=0,
-            sat_consecutive_days=0,
-        )
-        defaults.update(kwargs)
-        return CRMAEvidence(**defaults)
-
-    def test_low_risk_scenario(self, built_model):
+    def test_low_risk_scenario(self, built_model, make_evidence):
         """No signal at all → should return Green or Yellow."""
-        evidence = self._make_evidence()
+        evidence = make_evidence()
         result = built_model.infer(evidence)
         assert result["risk_state"] in (0, 1), f"Expected low risk, got {result['risk_label']}"
 
-    def test_high_risk_scenario(self, built_model):
+    def test_high_risk_scenario(self, built_model, make_evidence):
         """Severe signal across all nodes → should return Orange or Red."""
-        evidence = self._make_evidence(
+        evidence = make_evidence(
             exceedance_prob_24h_5y=0.80,
             exceedance_prob_72h_5y=0.75,
             gpm_obs_24h=50.0,
@@ -138,16 +118,16 @@ class TestCRMAModelInference:
         result = built_model.infer(evidence)
         assert result["risk_state"] in (2, 3), f"Expected high risk, got {result['risk_label']}"
 
-    def test_probabilities_sum_to_one(self, built_model):
-        evidence = self._make_evidence(exceedance_prob_24h_5y=0.3, gpm_obs_24h=15.0)
+    def test_probabilities_sum_to_one(self, built_model, make_evidence):
+        evidence = make_evidence(exceedance_prob_24h_5y=0.3, gpm_obs_24h=15.0)
         result = built_model.infer(evidence)
         total = result["p_green"] + result["p_yellow"] + result["p_orange"] + result["p_red"]
         assert abs(total - 1.0) < 1e-6, f"Probabilities don't sum to 1: {total}"
 
-    def test_risk_monotonic_with_hazard(self, built_model):
+    def test_risk_monotonic_with_hazard(self, built_model, make_evidence):
         """Higher forecast hazard → higher expected risk state."""
-        low = self._make_evidence(exceedance_prob_24h_5y=0.05)
-        high = self._make_evidence(exceedance_prob_24h_5y=0.80)
+        low = make_evidence(exceedance_prob_24h_5y=0.05)
+        high = make_evidence(exceedance_prob_24h_5y=0.80)
 
         result_low = built_model.infer(low)
         result_high = built_model.infer(high)
@@ -157,10 +137,10 @@ class TestCRMAModelInference:
 
         assert expected_high > expected_low
 
-    def test_api_increases_risk(self, built_model):
+    def test_api_increases_risk(self, built_model, make_evidence):
         """Saturated soil (API=120) should increase risk vs dry soil (API=10)."""
-        dry = self._make_evidence(exceedance_prob_24h_5y=0.25, api_mm=10.0)
-        sat = self._make_evidence(exceedance_prob_24h_5y=0.25, api_mm=120.0)
+        dry = make_evidence(exceedance_prob_24h_5y=0.25, api_mm=10.0)
+        sat = make_evidence(exceedance_prob_24h_5y=0.25, api_mm=120.0)
 
         result_dry = built_model.infer(dry)
         result_sat = built_model.infer(sat)
@@ -170,8 +150,8 @@ class TestCRMAModelInference:
 
         assert risk_sat >= risk_dry, "Saturated soil should not reduce flood risk"
 
-    def test_result_keys(self, built_model):
-        evidence = self._make_evidence()
+    def test_result_keys(self, built_model, make_evidence):
+        evidence = make_evidence()
         result = built_model.infer(evidence)
         expected_keys = {
             "risk_state", "risk_label",
@@ -179,12 +159,12 @@ class TestCRMAModelInference:
         }
         assert expected_keys.issubset(result.keys())
 
-    def test_risk_label_matches_state(self, built_model):
-        evidence = self._make_evidence()
+    def test_risk_label_matches_state(self, built_model, make_evidence):
+        evidence = make_evidence()
         result = built_model.infer(evidence)
         assert RISK_LEVELS[result["risk_state"]] == result["risk_label"]
 
-    def test_saturated_api_increases_risk_vs_dry(self, built_model):
+    def test_saturated_api_increases_risk_vs_dry(self, built_model, make_evidence):
         """API_State=Saturated must not produce lower risk than API_State=Dry."""
         from gik_icechain.risk.dynamic_bn import init_state
         from gik_icechain.risk.dynamic_bn import step as bn_step
@@ -198,8 +178,8 @@ class TestCRMAModelInference:
             consecutive_signal_days=1,
             sat_consecutive_days=0,
         )
-        ev_dry = self._make_evidence(api_mm=5.0, **shared_kwargs)
-        ev_sat = self._make_evidence(api_mm=120.0, **shared_kwargs)
+        ev_dry = make_evidence(api_mm=5.0, **shared_kwargs)
+        ev_sat = make_evidence(api_mm=120.0, **shared_kwargs)
 
         state_dry = init_state(5.0)
         state_sat = init_state(120.0)
@@ -211,7 +191,7 @@ class TestCRMAModelInference:
         risk_sat = result_sat["p_orange"] + result_sat["p_red"]
         assert risk_sat >= risk_dry, "Saturated soil must not reduce flood risk"
 
-    def test_soil_memory_amplifies_risk(self, built_model):
+    def test_soil_memory_amplifies_risk(self, built_model, make_evidence):
         """Key DBN scientific test: 15-day saturated soil + 50mm MUST produce
         higher P(Red) than dry soil + 50mm (same forecast hazard)."""
 
@@ -224,11 +204,11 @@ class TestCRMAModelInference:
             consecutive_signal_days=1,
         )
         # Case A: soil saturated for 15 days
-        ev_prolonged = self._make_evidence(
+        ev_prolonged = make_evidence(
             api_mm=120.0, sat_consecutive_days=15, **shared
         )
         # Case B: dry soil, no prior saturation
-        ev_dry = self._make_evidence(
+        ev_dry = make_evidence(
             api_mm=10.0, sat_consecutive_days=0, **shared
         )
 
@@ -243,13 +223,13 @@ class TestCRMAModelInference:
             f"Got P(Red|prolonged)={p_red_prolonged:.3f} vs P(Red|dry)={p_red_dry:.3f}"
         )
 
-    def test_dynamic_bn_sat_days_accumulate(self, built_model):
+    def test_dynamic_bn_sat_days_accumulate(self, built_model, make_evidence):
         """sat_consecutive_days in DynamicBNState must increment each saturated day."""
         from gik_icechain.risk.dynamic_bn import init_state
         from gik_icechain.risk.dynamic_bn import step as bn_step
 
         state = init_state(initial_api_mm=120.0)  # start saturated
-        ev = self._make_evidence(
+        ev = make_evidence(
             exceedance_prob_24h_5y=0.20, gpm_obs_24h=10.0, api_mm=120.0
         )
 
@@ -265,3 +245,9 @@ class TestCRMAModelInference:
         horn = _CLUSTER_WEIGHTS[EastAfricaCluster.HORN_ARID]
         assert horn["api"] > eq["api"]
         assert horn["forecast"] >= eq["forecast"]
+
+    def test_get_pgmpy_model(self, built_model):
+        """get_pgmpy_model() returns the underlying pgmpy model."""
+        model = built_model.get_pgmpy_model()
+        assert model is not None
+        assert hasattr(model, "check_model")

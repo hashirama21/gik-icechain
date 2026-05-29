@@ -29,8 +29,8 @@ try:
     from kerchunk.codecs import GRIBCodec
 
     numcodecs.register_codec(GRIBCodec, "grib")
-except (ImportError, ValueError):
-    pass
+except (ImportError, ValueError) as exc:
+    log.warning("grib_codec_numcodecs_unavailable", error=str(exc))
 
 # Bridge numcodecs GRIBCodec into Zarr v3 so "numcodecs.grib" resolves at read/write time.
 try:
@@ -41,8 +41,8 @@ try:
         pass
 
     register_codec("numcodecs.grib", GribNumcodecs)
-except (ImportError, ValueError):
-    pass
+except (ImportError, ValueError) as exc:
+    log.warning("grib_codec_zarr_v3_unavailable", error=str(exc))
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"

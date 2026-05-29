@@ -14,19 +14,9 @@ import numpy as np
 import structlog
 import xarray as xr
 
+from gik_icechain.shared.xarray_utils import find_step_dim
+
 log = structlog.get_logger(__name__)
-
-_STEP_DIM_CANDIDATES = ("step", "time", "forecast_period")
-
-
-def _find_step_dim(da: xr.DataArray) -> str:
-    for candidate in _STEP_DIM_CANDIDATES:
-        if candidate in da.dims:
-            return candidate
-    raise ValueError(
-        f"No step/time dimension found in DataArray (dims={list(da.dims)}). "
-        f"Expected one of {_STEP_DIM_CANDIDATES}."
-    )
 
 
 def _align_threshold_to_forecast(
@@ -106,7 +96,7 @@ def compute_exceedance_probabilities(
     threshold = thresholds_ds[f"rp_{return_period}y"]
     tp = acc_ds[var_name]
 
-    step_dim = _find_step_dim(tp)
+    step_dim = find_step_dim(tp)
     tp_worst = tp.max(dim=step_dim)
 
     threshold = _align_threshold_to_forecast(threshold, tp_worst)
@@ -154,7 +144,7 @@ def compute_ensemble_confidence(
         )
 
     tp = acc_ds[var_name]
-    step_dim = _find_step_dim(tp)
+    step_dim = find_step_dim(tp)
     tp_worst = tp.max(dim=step_dim)
 
     q25 = tp_worst.quantile(0.25, dim=member_dim)
@@ -164,9 +154,10 @@ def compute_ensemble_confidence(
     # Normalise by max(median, 1 mm) to avoid division-by-zero in dry cells
     iqr_norm = (q75 - q25) / np.maximum(median, 1.0)
 
-    confidence = xr.zeros_like(median, dtype=np.int8)
-    confidence = confidence.where(iqr_norm > 1.0, other=1)   # Medium where ratio ≤ 1
-    confidence = confidence.where(iqr_norm > 0.3, other=2)   # High where ratio ≤ 0.3
+    confidence = xr.where(
+        iqr_norm <= 0.3, 2,
+        xr.where(iqr_norm <= 1.0, 1, 0),
+    ).astype(np.int8)
 
     confidence.attrs = {
         "long_name": "Ensemble confidence level",

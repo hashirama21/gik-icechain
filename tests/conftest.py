@@ -44,3 +44,25 @@ def sample_exceedance_da():
     lon = np.arange(35, 42, 1.0)
     data = np.random.uniform(0, 1, (len(lat), len(lon)))
     return xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
+
+
+@pytest.fixture
+def make_evidence():
+    """Factory fixture for creating CRMAEvidence with sensible defaults (DRY)."""
+    from gik_icechain.risk.crma_model import CRMAEvidence
+
+    def _factory(**kwargs):
+        defaults = dict(
+            exceedance_prob_24h_5y=0.0,
+            exceedance_prob_72h_5y=0.0,
+            exceedance_prob_7d_5y=0.0,
+            gpm_obs_24h=0.0,
+            api_mm=15.0,
+            spatial_coverage_fraction=0.1,
+            consecutive_signal_days=0,
+            sat_consecutive_days=0,
+        )
+        defaults.update(kwargs)
+        return CRMAEvidence(**defaults)
+
+    return _factory

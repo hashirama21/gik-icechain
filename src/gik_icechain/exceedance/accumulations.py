@@ -13,6 +13,8 @@ from __future__ import annotations
 import structlog
 import xarray as xr
 
+from gik_icechain.shared.xarray_utils import find_step_dim
+
 log = structlog.get_logger(__name__)
 
 WINDOWS_H: list[int] = [3, 6, 12, 24, 48, 72, 168]
@@ -96,7 +98,7 @@ def accumulation_for_window(
     if n_back <= 0:
         raise ValueError(f"window_h={window_h} must be >= step_hours={step_hours}")
 
-    step_dim = _find_time_dim(da)
+    step_dim = find_step_dim(da)
     n = da.sizes[step_dim]
 
     if n_back >= n:
@@ -112,11 +114,3 @@ def accumulation_for_window(
     result.attrs.update(da.attrs)
     result.attrs["window_h"] = window_h
     return result
-
-
-def _find_time_dim(da: xr.DataArray) -> str:
-    """Return the name of the step/time dimension in *da*."""
-    for candidate in ("step", "time", "forecast_period"):
-        if candidate in da.dims:
-            return candidate
-    raise KeyError(f"Cannot identify a step/time dimension in {list(da.dims)}")

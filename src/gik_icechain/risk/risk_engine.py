@@ -8,11 +8,20 @@ writes one GeoJSON FeatureCollection per day.
 All numeric thresholds and initial values are read from GIKConfig
 (configs/default.yaml component3.crma_model / component3.api) — no
 hardcoded constants.
+
+NaN values from aggregation are detected and produce risk_state=-1 /
+risk_label="No_Data" rather than silently mapping to 0.0.
+
+Checkpointing: ``bn_states`` are serialised to ``_checkpoint.json`` every
+*checkpoint_interval* days so that a crashed run can resume from the last
+checkpoint.
 """
 
 from __future__ import annotations
 
+import json
 import math
+from dataclasses import asdict
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -30,6 +39,9 @@ from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
 
+_CHECKPOINT_FILE = "_checkpoint.json"
+_DEFAULT_CHECKPOINT_INTERVAL = 7  # days
+
 
 def run_risk_batch(
     exceedance_store_uri: str,
@@ -43,6 +55,7 @@ def run_risk_batch(
     initial_api_mm: float = 20.0,
     signal_threshold: float = 0.15,
     rp_signal: int = 5,
+    checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
 ) -> list[Path]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -58,6 +71,7 @@ def run_risk_batch(
         initial_api_mm:        Starting API for the first day (mm).
         signal_threshold:      Exceedance probability → rainfall-signal flag.
         rp_signal:             Return period (years) used for signal detection.
+        checkpoint_interval:   Save ``bn_states`` checkpoint every N days.
 
     Returns:
         Sorted list of written GeoJSON file paths.
@@ -72,8 +86,13 @@ def run_risk_batch(
         p: init_state(initial_api_mm) for p in pcodes
     }
 
+    # Resume from checkpoint if available
+    checkpoint_path = output_dir / _CHECKPOINT_FILE
+    bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start)
+
     written: list[Path] = []
-    current = start
+    current = resume_date
+    day_count = 0
     while current <= end:
         path = _process_day(
             current,
@@ -90,6 +109,14 @@ def run_risk_batch(
         if path is not None:
             written.append(path)
         current += timedelta(days=1)
+        day_count += 1
+
+        if checkpoint_interval > 0 and day_count % checkpoint_interval == 0:
+            _save_checkpoint(checkpoint_path, bn_states, current)
+
+    # Final checkpoint
+    if checkpoint_interval > 0:
+        _save_checkpoint(checkpoint_path, bn_states, current)
 
     log.info("risk_batch_complete", n_days=len(written), start=start, end=end)
     return written
@@ -139,16 +166,49 @@ def _process_day(
     features = []
     for _, unit in admin.iterrows():
         pcode = str(unit["admin1_pcode"])
-        p_24h = _safe(p_24h_s.get(pcode, 0.0))
-        gpm_24h = _safe(gpm_s.get(pcode, 0.0))
+        p_24h = p_24h_s.get(pcode, float("nan"))
+        p_72h = p_72h_s.get(pcode, float("nan"))
+        p_7d = p_7d_s.get(pcode, float("nan"))
+        gpm_24h = gpm_s.get(pcode, float("nan"))
+        cov_val = cov_s.get(pcode, float("nan"))
+
+        # Detect NaN in aggregated values → No_Data instead of silent zero
+        key_values = [p_24h, p_72h, p_7d]
+        if any(not math.isfinite(v) for v in key_values):
+            log.warning("nan_in_aggregated_values", pcode=pcode, date=day)
+            no_data_result = {
+                "risk_state": -1,
+                "risk_label": "No_Data",
+                "p_green": 0.0,
+                "p_yellow": 0.0,
+                "p_orange": 0.0,
+                "p_red": 0.0,
+                "evidence": {},
+            }
+            no_data_evidence = CRMAEvidence(
+                exceedance_prob_24h_5y=0.0,
+                exceedance_prob_72h_5y=0.0,
+                exceedance_prob_7d_5y=0.0,
+                gpm_obs_24h=0.0,
+                api_mm=bn_states[pcode].api_mm,
+                spatial_coverage_fraction=0.0,
+                consecutive_signal_days=0,
+                sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
+            )
+            features.append(build_feature(unit, no_data_result, no_data_evidence, day))
+            continue
+
+        # Safe conversion for non-critical values: NaN → 0.0 for gpm/coverage only
+        gpm_24h = gpm_24h if math.isfinite(gpm_24h) else 0.0
+        cov_val = cov_val if math.isfinite(cov_val) else 0.0
 
         evidence = CRMAEvidence(
-            exceedance_prob_24h_5y=p_24h,
-            exceedance_prob_72h_5y=_safe(p_72h_s.get(pcode, 0.0)),
-            exceedance_prob_7d_5y=_safe(p_7d_s.get(pcode, 0.0)),
-            gpm_obs_24h=gpm_24h,
+            exceedance_prob_24h_5y=float(p_24h),
+            exceedance_prob_72h_5y=float(p_72h),
+            exceedance_prob_7d_5y=float(p_7d),
+            gpm_obs_24h=float(gpm_24h),
             api_mm=bn_states[pcode].api_mm,
-            spatial_coverage_fraction=_safe(cov_s.get(pcode, 0.0)),
+            spatial_coverage_fraction=float(cov_val),
             consecutive_signal_days=bn_states[pcode].consecutive_days,
             sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
             gpm_quality=int(conf_s.get(pcode, 2.0)),
@@ -159,7 +219,7 @@ def _process_day(
             evidence,
             crma_model,
             api_decay=api_decay,
-            gpm_obs_mm=gpm_24h,
+            gpm_obs_mm=float(gpm_24h),
             signal_threshold=signal_threshold,
         )
         features.append(build_feature(unit, result, evidence, day))
@@ -169,5 +229,62 @@ def _process_day(
     return out_path
 
 
-def _safe(val: float) -> float:
-    return 0.0 if not math.isfinite(val) else float(val)
+def _save_checkpoint(
+    path: Path,
+    bn_states: dict[str, DynamicBNState],
+    next_date: date,
+) -> None:
+    """Serialise ``bn_states`` to JSON for crash recovery."""
+    payload = {
+        "next_date": next_date.isoformat(),
+        "bn_states": {
+            pcode: asdict(state) for pcode, state in bn_states.items()
+        },
+    }
+    path.write_text(json.dumps(payload))
+    log.debug("checkpoint_saved", path=str(path), next_date=next_date.isoformat())
+
+
+def _load_checkpoint(
+    path: Path,
+    default_states: dict[str, DynamicBNState],
+    default_start: date,
+) -> tuple[dict[str, DynamicBNState], date]:
+    """Load checkpoint if present and return (bn_states, resume_date).
+
+    If no checkpoint exists or it's older than default_start, returns the
+    original defaults.
+    """
+    if not path.exists():
+        return default_states, default_start
+
+    try:
+        data = json.loads(path.read_text())
+        resume_date = date.fromisoformat(data["next_date"])
+        if resume_date <= default_start:
+            return default_states, default_start
+
+        states: dict[str, DynamicBNState] = {}
+        for pcode, s in data["bn_states"].items():
+            states[pcode] = DynamicBNState(
+                api_mm=float(s["api_mm"]),
+                consecutive_days=int(s["consecutive_days"]),
+                sat_consecutive_days=int(s["sat_consecutive_days"]),
+                last_risk_state=int(s["last_risk_state"]),
+            )
+
+        # Ensure all pcodes exist (new units added since checkpoint)
+        for pcode in default_states:
+            if pcode not in states:
+                states[pcode] = default_states[pcode]
+
+        log.info(
+            "checkpoint_loaded",
+            path=str(path),
+            resume_date=resume_date.isoformat(),
+            n_units=len(states),
+        )
+        return states, resume_date
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        log.warning("checkpoint_load_failed", error=str(exc))
+        return default_states, default_start

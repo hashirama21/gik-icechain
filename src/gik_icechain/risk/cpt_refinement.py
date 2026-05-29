@@ -235,7 +235,7 @@ def build_training_dataset(
                 "Data_Confidence": evidence.data_confidence_state,
                 "API_State": evidence.api_state,
                 "Soil_Memory": evidence.soil_memory_state,
-                "Risk_State": min(evidence.forecast_hazard_state, 1),
+                "Risk_State": min(evidence.forecast_hazard_state, 2),
                 "source": "negative_sample",
                 "event_id": None,
                 "date": row["date"],
@@ -274,10 +274,7 @@ def refine_cpts_with_emdat(
     """
     if not PGMPY_AVAILABLE:
         raise ImportError("pgmpy is required: pip install pgmpy")
-    if crma._model is None:
-        raise RuntimeError("Model not built. Call CRMAModel.build() first.")
-
-    model = crma._model  # intentional: cpt_refinement owns the CPD update
+    model = crma.get_pgmpy_model()  # public API; raises RuntimeError if not built
     estimator = MaximumLikelihoodEstimator(  # type: ignore[operator]
         model,
         training_df[_EVIDENCE_COLS].copy(),

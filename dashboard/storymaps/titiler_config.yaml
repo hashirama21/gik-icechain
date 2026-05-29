@@ -1,0 +1,49 @@
+# TiTiler (AWS Lambda) configuration for GIK-IceChain COG serving.
+#
+# This config is used by the VEDA-UI storymap to render Cloud-Optimised
+# GeoTIFF (COG) layers generated from daily risk / exceedance outputs.
+#
+# Deployment: deploy as an AWS Lambda function behind API Gateway,
+# or use titiler.application with uvicorn for local development.
+
+titiler:
+  # AWS Lambda function settings
+  lambda:
+    function_name: gik-icechain-titiler
+    runtime: python3.12
+    memory_size: 1024
+    timeout: 30
+    layers:
+      - arn:aws:lambda:eu-west-1:524387336408:layer:gdal-3.8-python-3.12:1
+
+  # COG source bucket
+  source:
+    bucket: gik-icechain-cogs
+    prefix: "cogs/"
+    region: eu-west-1
+
+  # Rendering defaults
+  rendering:
+    default_colormap: viridis
+    colormaps:
+      risk_levels:
+        0: "#4caf50"   # Green
+        1: "#ffeb3b"   # Yellow
+        2: "#ff9800"   # Orange
+        3: "#f44336"   # Red
+      exceedance:
+        colormap: ylorrd
+        rescale: [0, 1]
+
+  # CORS (required for VEDA-UI cross-origin requests)
+  cors:
+    allow_origins:
+      - "*"
+    allow_methods:
+      - GET
+      - OPTIONS
+
+  # Caching
+  cache:
+    enabled: true
+    ttl_seconds: 3600
