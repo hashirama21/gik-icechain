@@ -53,10 +53,10 @@ GIK-IceChain v2.0 solves this in three components:
 ```mermaid
 flowchart TD
     %% ==================== SOURCES ====================
-    subgraph Sources["SOURCES DE DONNÉES"]
+    subgraph Sources["DATA SOURCES"]
         S3[AWS S3<br/><b>s3://ecmwf-forecasts</b><br/>~1 PB GRIB2]
         HF[HuggingFace<br/><b>E4DRR/gik-ecmwf-par</b><br/>150 246 Parquet files]
-        
+
         S3 ---|"51 members × 85 steps<br/>~1000 days since May 2023"| GRIB[GRIB2 Raw Files]
         HF ---|"Metadata only<br/>18.5 GB"| Parquet[Parquet Files]
     end
@@ -64,11 +64,11 @@ flowchart TD
     %% ==================== C1 : VIRTUAL STORE ====================
     subgraph C1["C1 — IceChunk Virtual Store"]
         direction TB
-        VZ[VirtualiZarr] 
+        VZ[VirtualiZarr]
         IC[IceChunk<br/>Zarr v3]
-        Store["IceChunk Zarr v3 Virtual Store<br/>Public S3 Bucket<br/>Metadata Only<br/>zarr.open(store) — Single Call<br/>Full Time-Travel History"]
-        
-        GRIB & Parquet -->|"byte-range reads"| VZ
+        Store["IceChunk Zarr v3 Virtual Store<br/>Metadata Only — zarr.open&#40;store&#41;<br/>Full Time-Travel History"]
+
+        GRIB & Parquet -->|"byte-range refs"| VZ
         VZ --> IC
         IC --> Store
     end
@@ -76,14 +76,20 @@ flowchart TD
     %% ==================== C2 : EXCEEDANCE ====================
     subgraph C2["C2 — Exceedance Analysis"]
         direction TB
-        Dask[Dask + xarray]
+        Manifest["Manifest-Aware Loader<br/>VirtualChunkRefs from IceChunk"]
+        Coalesce["Byte-Range Coalescence<br/>~714 ranges → ~60 S3 requests"]
+        Fetch["Parallel S3 Fetch<br/>ThreadPoolExecutor"]
+        Decode["eccodes GRIB2 Decode<br/>+ bbox subsetting"]
         CMORPH[CMORPH + GPM IMERG<br/>Observations]
-        Thresholds[Thresholds Calculation<br/>7 windows]
-        GEV[GEV Adaptive<br/>6 Return Periods]
-        
-        Store --> Dask
-        CMORPH --> Dask
-        Dask --> Thresholds
+        Thresholds[Rolling Accumulations<br/>7 windows]
+        GEV[GEV Adaptive Thresholds<br/>6 Return Periods]
+
+        Store --> Manifest
+        Manifest --> Coalesce
+        Coalesce --> Fetch
+        Fetch -->|"raw bytes"| Decode
+        Decode -->|"xr.Dataset<br/>in-memory"| Thresholds
+        CMORPH --> Thresholds
         Thresholds --> GEV
     end
 
@@ -93,8 +99,8 @@ flowchart TD
         DBN[Dynamic Bayesian Network<br/>pgmpy]
         Soil[Soil Saturation Persistence<br/>API Node]
         EMDAT[EM-DAT CPT Refinement]
-        Risk["Admin-1 Traffic-Light Risk<br/>300 administrative units"]
-        
+        Risk["Admin-1 Traffic-Light Risk<br/>~300 administrative units"]
+
         GEV --> DBN
         DBN --> Soil
         Soil --> EMDAT
@@ -108,14 +114,14 @@ flowchart TD
         TiTiler[TiTiler<br/>AWS Lambda]
         Storymaps[VEDA Storymaps]
         Final["One cell per day<br/>→ Click → Full Storymap"]
-        
+
         Risk --> Calendar
         Calendar --> TiTiler
         TiTiler --> Storymaps
         Storymaps --> Final
     end
 
-    %% Flux principaux
+    %% Main flow
     Sources --> C1
     C1 --> C2
     C2 --> C3
@@ -154,16 +160,21 @@ date X?" retrospective queries — directly applicable to anticipatory action pr
 For each of ~1 000 forecast days, 51 ensemble members, 7 accumulation windows,
 and 6 return-period thresholds:
 
-- Loads the virtual store lazily via Dask
-- Computes rolling precipitation accumulations
-- Compares against **adaptive GEV thresholds** stratified by season and IOD/ENSO
-  phase (Innovation 2 — substantially reduces false alarm rates in dry regimes)
-- Outputs a multi-dimensional Zarr v3 store
+1. **Manifest-aware loader** reads VirtualChunkRefs directly from the IceChunk
+   store (no HuggingFace access, no global grid in memory)
+2. **Byte-range coalescence** merges adjacent S3 ranges (~714 individual chunks
+   down to ~60-80 coalesced requests per day)
+3. **Parallel S3 fetch** via ThreadPoolExecutor retrieves raw GRIB2 bytes
+4. **eccodes decode** with immediate bbox subsetting produces an in-memory
+   `xr.Dataset(member, step, latitude, longitude)`
+5. Computes rolling precipitation accumulations (7 windows: 3 h to 7 days)
+6. Compares against **adaptive GEV thresholds** stratified by season and IOD/ENSO
+   phase (Innovation 2 — substantially reduces false alarm rates in dry regimes)
+7. Outputs a multi-dimensional Zarr v3 store
 
-**Innovation 3 — AIFS vs IFS ENS Parallel Track**: runs the identical pipeline
-on AIFS ENS output (available via ICPAC's SEWAA-forecasts pipeline), producing
-the first systematic comparison of AI-NWP vs physics-based NWP flood signal over
-East Africa.
+The manifest-aware path is configurable via `component2.manifest_aware.enabled`
+in `configs/default.yaml`. When disabled, C2 falls back to the standard
+`xr.open_zarr()` + Dask path.
 
 ### Component 3 — Admin-1 Risk Assessment (CRMA-Live)
 
@@ -244,8 +255,12 @@ pip install -e ".[viz]"
 
 ### Configuration
 
-Pipeline settings (HuggingFace dataset ID, store URIs, thresholds path, Dask workers, etc.)
-live in `configs/default.yaml`. Copy and edit before running:
+Pipeline settings live in `configs/default.yaml`. Key sections:
+
+- **`sources`**: HuggingFace dataset ID, S3 bucket, admin boundaries, EM-DAT path
+- **`outputs`**: IceChunk store URI, exceedance store URI, risk output dir
+- **`component2.manifest_aware`**: enable/disable manifest-aware loader, fetch workers, min members
+- **`component2.byte_range_coalescing`**: coalescence gap/size thresholds
 
 ```bash
 cp configs/default.yaml configs/local.yaml
@@ -276,9 +291,10 @@ python -m gik_icechain convert --start 2024-10-01 --end 2024-10-01 --config conf
 |---|------|-------------|---------|
 | 1 | **IceChunk Time-Travel Audit** | Daily IceChunk commits → queryable historical store snapshots | Enables 'as-of date X' retrospective queries for anticipatory action |
 | 2 | **Adaptive GEV Thresholds** | Return-period thresholds stratified by season + IOD/ENSO phase | Reduces false alarm rate; improves detection in wet regimes |
-| 3 | **AIFS vs IFS ENS Parallel** | Same pipeline applied to AIFS ENS | First systematic AI-NWP flood signal evaluation in East Africa |
-| 4 | **CRMA-Live Dynamic BN** | API persistence node in Bayesian Network | Captures multi-day compound flood risk |
-| 5 | **EM-DAT CPT Refinement** | Learn CPTs from historical EM-DAT events | Data-driven improvement of risk model over time |
+| 3 | **Manifest-Aware Loader + Byte-Range Coalescence** | Reads VirtualChunkRefs from IceChunk, coalesces adjacent S3 byte ranges, parallel fetch + eccodes decode | ~10× fewer S3 requests; no HuggingFace access; in-memory bbox subsetting |
+| 4 | **AIFS vs IFS ENS Parallel** | Same pipeline applied to AIFS ENS (via ICPAC SEWAA-forecasts) | First systematic AI-NWP flood signal evaluation in East Africa |
+| 5 | **CRMA-Live Dynamic BN** | API persistence node in Bayesian Network | Captures multi-day compound flood risk |
+| 6 | **EM-DAT CPT Refinement** | Learn CPTs from historical EM-DAT events | Data-driven improvement of risk model over time |
 
 ---
 
@@ -309,6 +325,34 @@ The interactive calendar-map is deployed at:
   - EM-DAT flood event overlays
   - Admin-1 CRMA-Live risk layer
   - ENSO/IOD phase metadata
+
+---
+
+## Developer Tools
+
+All operational scripts are consolidated in a single Typer CLI:
+
+```bash
+python scripts/tools.py --help
+
+# Benchmark IceChunk vs dynamical.org
+python scripts/tools.py benchmark --gik-store s3://...
+
+# Validate IceChunk store integrity (gaps, variables)
+python scripts/tools.py validate-store --store-uri s3://...
+
+# Download reference data (admin boundaries, thresholds, ENSO/IOD)
+python scripts/tools.py download --component all
+
+# Back-fill archive gaps into the IceChunk store
+python scripts/tools.py gap-fill --start 2023-05-01 --end 2024-02-29
+
+# Export risk GeoJSON to EAHW format
+python scripts/tools.py export-eahw --risk-dir results/admin1_risk/ --output results/eahw/
+
+# Validate risk outputs against EM-DAT historical flood events
+python scripts/tools.py validate-emdat --risk-dir results/admin1_risk/
+```
 
 ---
 
