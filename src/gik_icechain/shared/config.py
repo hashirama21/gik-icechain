@@ -134,6 +134,12 @@ class ByteRangeCoalescingConfig(BaseModel):
     max_merged_bytes: int = 5242880  # 5 MB
 
 
+class ManifestAwareConfig(BaseModel):
+    enabled: bool = True
+    fetch_workers: int = Field(default=8, ge=1, le=64)
+    min_members: int = Field(default=10, ge=1)
+
+
 class ParallelConfig(BaseModel):
     max_workers: int | None = None   # None = auto (os.cpu_count())
     multiprocessing: bool = True
@@ -196,6 +202,11 @@ class Component2Config(BaseModel):
     # --- Dimension 5: Byte-range coalescing ---
     byte_range_coalescing: ByteRangeCoalescingConfig = Field(
         default_factory=ByteRangeCoalescingConfig,
+    )
+
+    # --- Manifest-aware loading (IceChunk VirtualChunkRef path) ---
+    manifest_aware: ManifestAwareConfig = Field(
+        default_factory=ManifestAwareConfig,
     )
 
     # --- Dimension 6: Parallelism ---

@@ -64,6 +64,11 @@ component2:
     lat_dim: "latitude"
     lon_dim: "longitude"
 
+  manifest_aware:
+    enabled: true
+    fetch_workers: 8
+    min_members: 10
+
   byte_range_coalescing:
     enabled: true
     max_gap_bytes: 65536

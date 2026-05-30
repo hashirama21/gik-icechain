@@ -7,7 +7,7 @@ Only ``area_weighted`` falls back to a per-region loop.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import geopandas as gpd
 import numpy as np
@@ -15,7 +15,7 @@ import pandas as pd
 import structlog
 import xarray as xr
 
-from gik_icechain.shared.xarray_utils import find_dim, find_lat_dim, find_lon_dim
+from gik_icechain.shared.xarray_utils import find_lat_dim, find_lon_dim
 
 try:
     import regionmask

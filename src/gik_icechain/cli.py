@@ -222,27 +222,56 @@ def _process_exceedance_day(args: dict) -> dict:
         store_obj.create_or_open()
         session = store_obj.readonly_session()
 
-        day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
-
-        # Dimension 1: Variable pre-selection
+        manifest_aware_enabled = args.get("manifest_aware_enabled", False)
         compute_vars = args.get("compute_variables", ["tp"])
-        available = [v for v in compute_vars if v in day_ds.data_vars]
-        if available:
-            day_ds = day_ds[available]
-
-        # Dimension 2: Step slicing — only load steps needed for max window
-        max_steps = args.get("max_steps")
-        if max_steps is not None and "step" in day_ds.dims:
-            n_steps = day_ds.sizes["step"]
-            if max_steps < n_steps:
-                day_ds = day_ds.isel(step=slice(0, max_steps))
-
-        # Dimension 4: Spatial subsetting
         bbox = args.get("bbox")
-        if bbox is not None:
-            day_ds = _subset_to_bbox(day_ds, bbox)
+        max_steps = args.get("max_steps")
 
-        day_ds = day_ds.chunk(args["chunk_dims"])
+        if manifest_aware_enabled:
+            from gik_icechain.exceedance.manifest_store import (
+                load_day_manifest_aware,
+            )
+
+            coalescing = args.get("coalescing_enabled", True)
+            day_ds = load_day_manifest_aware(
+                session,
+                date_str,
+                variables=compute_vars,
+                max_step_h=args.get("max_step_h", 168),
+                step_resolution_h=args.get("step_resolution_h", 6),
+                step_buffer=args.get("step_buffer", 1),
+                bbox=bbox,
+                max_gap_bytes=(
+                    args.get("max_gap_bytes", 65536) if coalescing else 0
+                ),
+                max_merged_bytes=(
+                    args.get("max_merged_bytes", 5242880)
+                    if coalescing
+                    else 0
+                ),
+                fetch_workers=args.get("fetch_workers", 8),
+                min_members=args.get("min_members", 10),
+            )
+            # Data is already concrete (in-memory), no chunking needed
+        else:
+            day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+
+            # Dimension 1: Variable pre-selection
+            available = [v for v in compute_vars if v in day_ds.data_vars]
+            if available:
+                day_ds = day_ds[available]
+
+            # Dimension 2: Step slicing — only load steps needed for max window
+            if max_steps is not None and "step" in day_ds.dims:
+                n_steps = day_ds.sizes["step"]
+                if max_steps < n_steps:
+                    day_ds = day_ds.isel(step=slice(0, max_steps))
+
+            # Dimension 4: Spatial subsetting
+            if bbox is not None:
+                day_ds = _subset_to_bbox(day_ds, bbox)
+
+            day_ds = day_ds.chunk(args["chunk_dims"])
     except Exception as exc:
         return {"date_str": date_str, "success": False, "error": str(exc)[:200]}
 
@@ -348,6 +377,10 @@ def _run_exceedance(
         bbox=bbox,
     )
 
+    # Manifest-aware config
+    ma = c2.manifest_aware
+    brc = c2.byte_range_coalescing
+
     tmp_dir = tempfile.mkdtemp(prefix="gik_exc_")
     worker_args = [
         {
@@ -366,6 +399,16 @@ def _run_exceedance(
             "bbox": bbox,
             "compute_variables": c2.compute_variables,
             "tmp_dir": tmp_dir,
+            # Manifest-aware params
+            "manifest_aware_enabled": ma.enabled,
+            "coalescing_enabled": brc.enabled,
+            "max_gap_bytes": brc.max_gap_bytes,
+            "max_merged_bytes": brc.max_merged_bytes,
+            "fetch_workers": ma.fetch_workers,
+            "min_members": ma.min_members,
+            "max_step_h": c2.effective_max_forecast_h,
+            "step_resolution_h": c2.step_resolution_h,
+            "step_buffer": c2.step_buffer,
         }
         for d in committed_dates
     ]
