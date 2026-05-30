@@ -3,8 +3,7 @@
 
 sources:
   gik_hf_dataset: "E4DRR/gik-ecmwf-par"
-  cmorph_thresholds_path: "data/cmorph_thresholds/"
-  admin_boundaries_path:  "data/admin_boundaries/east_africa_admin1.gpkg"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
 
 outputs:
   icechunk_store_uri:  "s3://gik-icechain/benchmark-store"
@@ -15,7 +14,7 @@ component1:
   variables: ["tp"]
 
 component2:
-  windows_h:      [24, 72, 168]
+  windows_h: [24, 72, 168]
   return_periods: [5, 20]
   dask:
     scheduler: "distributed"

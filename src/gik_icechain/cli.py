@@ -5,13 +5,11 @@ Entry points:
     gik-icechain exceedance   -- C2: compute exceedance probabilities
     gik-icechain risk         -- C3: run CRMA risk batch
     gik-icechain run-all      -- run the full pipeline end-to-end
-    gik-icechain dashboard    -- start the dashboard data-prep server
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -161,7 +159,7 @@ def _threshold_bbox(
                         lon_max = float(da[lon_name].max()) + buffer
                         return (lat_min, lat_max, lon_min, lon_max)
     except Exception:
-        pass
+        log.warning("threshold_bbox_extraction_failed", exc_info=True)
     return None
 
 
@@ -195,31 +193,6 @@ def _resolve_climate_mode(
         return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
 
-def _register_grib_codecs() -> None:
-    """Register GRIBCodec in numcodecs and Zarr v3 registries.
-
-    Must be called once per process — required in multiprocessing workers
-    since codec registries are not inherited across fork.
-    """
-    try:
-        import numcodecs
-        from kerchunk.codecs import GRIBCodec
-
-        numcodecs.register_codec(GRIBCodec, "grib")
-    except (ImportError, ValueError):
-        pass
-    try:
-        from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
-        from zarr.registry import register_codec
-
-        class _GribBridge(_NumcodecsArrayBytesCodec, codec_name="grib"):
-            pass
-
-        register_codec("numcodecs.grib", _GribBridge)
-    except (ImportError, ValueError):
-        pass
-
-
 def _process_exceedance_day(args: dict) -> dict:
     """Compute exceedance for one forecast date. Module-level for multiprocessing pickling."""
     import pandas as pd
@@ -233,8 +206,9 @@ def _process_exceedance_day(args: dict) -> dict:
     )
     from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
     from gik_icechain.exceedance.writer import build_exceedance_dataset
+    from gik_icechain.shared.codec_registry import register_grib_codecs
 
-    _register_grib_codecs()
+    register_grib_codecs()
 
     date_str = args["date_str"]
     day = date.fromisoformat(date_str)
@@ -248,11 +222,56 @@ def _process_exceedance_day(args: dict) -> dict:
         store_obj.create_or_open()
         session = store_obj.readonly_session()
 
-        day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+        manifest_aware_enabled = args.get("manifest_aware_enabled", False)
+        compute_vars = args.get("compute_variables", ["tp"])
         bbox = args.get("bbox")
-        if bbox is not None:
-            day_ds = _subset_to_bbox(day_ds, bbox)
-        day_ds = day_ds.chunk(args["chunk_dims"])
+        max_steps = args.get("max_steps")
+
+        if manifest_aware_enabled:
+            from gik_icechain.exceedance.manifest_store import (
+                load_day_manifest_aware,
+            )
+
+            coalescing = args.get("coalescing_enabled", True)
+            day_ds = load_day_manifest_aware(
+                session,
+                date_str,
+                variables=compute_vars,
+                max_step_h=args.get("max_step_h", 168),
+                step_resolution_h=args.get("step_resolution_h", 6),
+                step_buffer=args.get("step_buffer", 1),
+                bbox=bbox,
+                max_gap_bytes=(
+                    args.get("max_gap_bytes", 65536) if coalescing else 0
+                ),
+                max_merged_bytes=(
+                    args.get("max_merged_bytes", 5242880)
+                    if coalescing
+                    else 0
+                ),
+                fetch_workers=args.get("fetch_workers", 8),
+                min_members=args.get("min_members", 10),
+            )
+            # Data is already concrete (in-memory), no chunking needed
+        else:
+            day_ds = xr.open_zarr(session.store, group=date_str, consolidated=False)
+
+            # Dimension 1: Variable pre-selection
+            available = [v for v in compute_vars if v in day_ds.data_vars]
+            if available:
+                day_ds = day_ds[available]
+
+            # Dimension 2: Step slicing — only load steps needed for max window
+            if max_steps is not None and "step" in day_ds.dims:
+                n_steps = day_ds.sizes["step"]
+                if max_steps < n_steps:
+                    day_ds = day_ds.isel(step=slice(0, max_steps))
+
+            # Dimension 4: Spatial subsetting
+            if bbox is not None:
+                day_ds = _subset_to_bbox(day_ds, bbox)
+
+            day_ds = day_ds.chunk(args["chunk_dims"])
     except Exception as exc:
         return {"date_str": date_str, "success": False, "error": str(exc)[:200]}
 
@@ -275,7 +294,11 @@ def _process_exceedance_day(args: dict) -> dict:
                     window_h=w, return_period=rp, member_dim=member_dim,
                 )
             except Exception:
-                pass
+                log.warning(
+                    "exceedance_window_rp_failed",
+                    window_h=w, return_period=rp, date=date_str, exc_info=True,
+                )
+                continue
 
     if not day_results:
         return {"date_str": date_str, "success": False, "error": "no window/rp produced results"}
@@ -292,7 +315,8 @@ def _process_exceedance_day(args: dict) -> dict:
         conf_da.to_dataset(name="ensemble_confidence").to_zarr(conf_out, mode="w")
         conf_path = conf_out
     except Exception:
-        pass
+        log.warning("ensemble_confidence_failed", date=date_str, exc_info=True)
+        conf_path = None
 
     return {"date_str": date_str, "success": True, "path": tmp_path, "conf_path": conf_path}
 
@@ -333,8 +357,29 @@ def _run_exceedance(
 
     from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
 
-    thresholds = AdaptiveGEVThresholds.load(Path(cfg.sources.cmorph_thresholds_path))
-    bbox = _threshold_bbox(thresholds)
+    c2 = cfg.component2
+    thresholds = AdaptiveGEVThresholds.load(Path(c2.thresholds.cmorph_path))
+
+    # Dimension 4: Prefer explicit spatial config; fall back to threshold bbox
+    bbox = c2.spatial.as_tuple if c2.spatial.bbox is not None else _threshold_bbox(thresholds)
+
+    # Dimension 3+7: Resolve effective windows/return_periods from profile or top-level
+    effective_windows = c2.effective_windows_h
+    effective_rps = c2.effective_return_periods
+    max_steps = c2.max_steps_needed
+
+    log.info(
+        "exceedance_config_resolved",
+        profile=c2.active_profile,
+        windows_h=effective_windows,
+        return_periods=effective_rps,
+        max_steps=max_steps,
+        bbox=bbox,
+    )
+
+    # Manifest-aware config
+    ma = c2.manifest_aware
+    brc = c2.byte_range_coalescing
 
     tmp_dir = tempfile.mkdtemp(prefix="gik_exc_")
     worker_args = [
@@ -343,20 +388,38 @@ def _run_exceedance(
             "store_uri": store_uri,
             "region": cfg.outputs.icechunk_store_region,
             "endpoint_url": cfg.outputs.endpoint_url or None,
-            "thresholds_path": str(Path(cfg.sources.cmorph_thresholds_path)),
-            "enso_iod_path": cfg.component2.thresholds.enso_iod_index_path,
-            "enso_thr": cfg.component2.thresholds.enso_nino34_threshold,
-            "iod_thr": cfg.component2.thresholds.iod_dmi_threshold,
-            "windows_h": cfg.component2.windows_h,
-            "return_periods": cfg.component2.return_periods,
-            "chunk_dims": dict(cfg.component2.dask.chunk_dims),
+            "thresholds_path": str(Path(c2.thresholds.cmorph_path)),
+            "enso_iod_path": c2.thresholds.enso_iod_index_path,
+            "enso_thr": c2.thresholds.enso_nino34_threshold,
+            "iod_thr": c2.thresholds.iod_dmi_threshold,
+            "windows_h": effective_windows,
+            "return_periods": effective_rps,
+            "max_steps": max_steps,
+            "chunk_dims": dict(c2.dask.chunk_dims),
             "bbox": bbox,
+            "compute_variables": c2.compute_variables,
             "tmp_dir": tmp_dir,
+            # Manifest-aware params
+            "manifest_aware_enabled": ma.enabled,
+            "coalescing_enabled": brc.enabled,
+            "max_gap_bytes": brc.max_gap_bytes,
+            "max_merged_bytes": brc.max_merged_bytes,
+            "fetch_workers": ma.fetch_workers,
+            "min_members": ma.min_members,
+            "max_step_h": c2.effective_max_forecast_h,
+            "step_resolution_h": c2.step_resolution_h,
+            "step_buffer": c2.step_buffer,
         }
         for d in committed_dates
     ]
 
-    n_workers = min(cfg.component2.dask.n_workers, len(committed_dates), os.cpu_count() or 4)
+    # Dimension 6: Parallel config
+    par = c2.parallel
+    if par.multiprocessing:
+        auto_workers = os.cpu_count() or 4
+        n_workers = min(par.max_workers or auto_workers, len(committed_dates), auto_workers)
+    else:
+        n_workers = 1
     log.info("exceedance_parallel_start", n_dates=len(committed_dates), n_workers=n_workers)
 
     succeeded: list[dict] = []
@@ -500,38 +563,41 @@ def exceedance(
     store: Annotated[str, typer.Option(help="URI of the IceChunk virtual store.")],
     output: Annotated[str, typer.Option(help="URI for the output exceedance Zarr store.")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
-    workers: Annotated[int, typer.Option(help="Dask distributed workers.")] = 16,
+    workers: Annotated[int | None, typer.Option(help="Override parallel max_workers.")] = None,
     start: Annotated[str | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
     end: Annotated[str | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
     thresholds: Annotated[
         str | None, typer.Option("--thresholds", help="Override CMORPH thresholds URI/path.")
     ] = None,
-    region: Annotated[
-        str | None, typer.Option("--region", help="Spatial domain label (informational).")
+    profile: Annotated[
+        str | None, typer.Option("--profile", help="Window profile (flash_flood, medium_range, full).")
     ] = None,
-    mode: Annotated[
-        str, typer.Option("--mode", help="append or overwrite (append is always the default).")
-    ] = "append",
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
     cfg = _bootstrap(config)
     if thresholds:
-        cfg.sources.cmorph_thresholds_path = thresholds
+        cfg.component2.thresholds.cmorph_path = thresholds
+    if profile is not None:
+        cfg.component2.active_profile = profile
+    if workers is not None:
+        cfg.component2.parallel.max_workers = workers
 
     s = _parse_date(start) if start else None
     e = _parse_date(end) if end else None
 
-    if workers > 1:
+    dask_cfg = cfg.component2.dask
+    dask_workers = workers or dask_cfg.n_workers
+    if dask_workers > 1:
         try:
             from dask.distributed import Client
 
             Client(
-                n_workers=workers,
-                threads_per_worker=cfg.component2.dask.threads_per_worker,
+                n_workers=dask_workers,
+                threads_per_worker=dask_cfg.threads_per_worker,
                 silence_logs=True,
             )
         except ImportError:
-            log.warning("dask_not_available", workers=workers, msg="running single-threaded")
+            log.warning("dask_not_available", workers=dask_workers, msg="running single-threaded")
 
     try:
         n = _run_exceedance(cfg, store, output, s, e)
@@ -598,30 +664,6 @@ def run_all(
         _exit_on_error("run-all", exc)
 
     typer.echo(f"Pipeline complete. Results in {output}")
-
-
-@app.command()
-def dashboard(
-    port: Annotated[int, typer.Option(help="HTTP port for the dashboard server.")] = 8080,
-    config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
-) -> None:
-    """Start the GIK-IceChain dashboard data-prep server."""
-    cfg = _bootstrap(config)
-    typer.echo(f"Starting dashboard on port {port} …")
-    typer.echo(f"TiTiler endpoint: {cfg.dashboard.titiler.endpoint}")
-    typer.echo(f"VEDA UI base URL:  {cfg.dashboard.veda_ui.base_url}")
-
-    try:
-        import uvicorn
-        from dashboard.app import create_app
-
-        uvicorn.run(create_app(cfg), host="0.0.0.0", port=port)
-    except ImportError:
-        typer.echo(
-            "Dashboard dependencies not installed. Run: pip install gik-icechain[dashboard]",
-            err=True,
-        )
-        sys.exit(1)
 
 
 if __name__ == "__main__":

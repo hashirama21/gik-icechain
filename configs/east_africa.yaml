@@ -8,9 +8,8 @@ outputs:
   risk_output_dir:     "s3://gik-icechain/admin1-risk/"
 
 sources:
-  cmorph_thresholds_path: "s3://gik-icechain/cmorph_thresholds/"
-  gpm_imerg_path:         "s3://gik-icechain/gpm_imerg/"
-  admin_boundaries_path:  "s3://gik-icechain/admin_boundaries/east_africa_admin1.gpkg"
+  gpm_imerg_path:        "s3://gik-icechain/gpm_imerg/"
+  admin_boundaries_path: "s3://gik-icechain/admin_boundaries/east_africa_admin1.gpkg"
 
 component1:
   run_hours: [0]
@@ -19,6 +18,8 @@ component1:
 component2:
   windows_h:      [3, 6, 12, 24, 48, 72, 168]
   return_periods: [2, 5, 10, 20, 40, 100]
+  thresholds:
+    cmorph_path: "s3://gik-icechain/cmorph_thresholds/"
   dask:
     scheduler: "distributed"
     n_workers: 16

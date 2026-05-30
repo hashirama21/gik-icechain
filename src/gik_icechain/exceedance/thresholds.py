@@ -474,13 +474,14 @@ class AdaptiveGEVThresholds:
                     if np.all(np.diff(thresholds) > 0) and np.all(thresholds > 0):
                         return thresholds
             except Exception:
-                pass
+                log.debug("gev_mle_fit_failed_trying_gumbel", exc_info=True)
 
             # Fallback: Gumbel (ξ = 0) — more robust on short records
             try:
                 c, loc, scale = genextreme.fit(valid, f0=0)
                 return genextreme.ppf(exceedance_probs, c, loc=loc, scale=scale)
             except Exception:
+                log.warning("gev_gumbel_fallback_failed_returning_nan", exc_info=True)
                 return np.full(len(return_periods), np.nan)
 
         return xr.apply_ufunc(

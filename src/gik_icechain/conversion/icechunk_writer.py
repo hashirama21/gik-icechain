@@ -29,24 +29,9 @@ except ImportError:
     ICECHUNK_AVAILABLE = False
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
-try:
-    import numcodecs
-    from kerchunk.codecs import GRIBCodec
+from gik_icechain.shared.codec_registry import register_grib_codecs
 
-    numcodecs.register_codec(GRIBCodec, "grib")
-except (ImportError, ValueError):
-    pass
-
-try:
-    from zarr.codecs.numcodecs._codecs import _NumcodecsArrayBytesCodec
-    from zarr.registry import register_codec
-
-    class GribNumcodecs(_NumcodecsArrayBytesCodec, codec_name="grib"):
-        pass
-
-    register_codec("numcodecs.grib", GribNumcodecs)
-except (ImportError, ValueError):
-    pass
+register_grib_codecs()
 
 VIRTUALIZARR_AVAILABLE = importlib.util.find_spec("virtualizarr") is not None
 if not VIRTUALIZARR_AVAILABLE:
