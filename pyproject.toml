@@ -54,6 +54,7 @@ dependencies = [
   "pyarrow>=16.0",
 
   # GRIB2 decoding
+  "kerchunk>=0.2",
   "cfgrib>=0.9.14",
   "eccodes>=2.38.0",
 

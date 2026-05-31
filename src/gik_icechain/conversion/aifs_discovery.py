@@ -173,15 +173,6 @@ def aifs_to_virtual_dataset(
         FileNotFoundError: If no GRIB2 files produce valid references.
         ValueError: If fewer than 10 ensemble members are found.
     """
-    from kerchunk.combine import MultiZarrToZarr
-    from virtualizarr import open_virtual_dataset
-    from virtualizarr.manifests import ManifestStore
-    from virtualizarr.parsers.kerchunk.translator import (
-        manifestgroup_from_kerchunk_refs,
-    )
-    from virtualizarr.types.kerchunk import KerchunkStoreRefs
-
-    from gik_icechain.conversion.virtualizer import _build_ecmwf_registry
     from gik_icechain.shared.codec_registry import register_grib_codecs
 
     register_grib_codecs()
@@ -227,6 +218,17 @@ def aifs_to_virtual_dataset(
         n_refs=len(all_refs),
         n_errors=len(errors),
     )
+
+    # Heavy imports deferred until after scan validation ----------------------
+    from kerchunk.combine import MultiZarrToZarr
+    from virtualizarr import open_virtual_dataset
+    from virtualizarr.manifests import ManifestStore
+    from virtualizarr.parsers.kerchunk.translator import (
+        manifestgroup_from_kerchunk_refs,
+    )
+    from virtualizarr.types.kerchunk import KerchunkStoreRefs
+
+    from gik_icechain.conversion.virtualizer import _build_ecmwf_registry
 
     # Combine references into unified kerchunk dict ---------------------------
     mzz = MultiZarrToZarr(

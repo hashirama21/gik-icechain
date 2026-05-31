@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import date
-from unittest.mock import patch
+from types import ModuleType
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +17,19 @@ from gik_icechain.conversion.aifs_discovery import (
     discover_aifs_files,
     scan_aifs_grib,
 )
+
+
+def _ensure_kerchunk_mock():
+    """Ensure kerchunk.grib2 is importable (real or mock) so @patch works."""
+    if "kerchunk" not in sys.modules:
+        kerchunk = ModuleType("kerchunk")
+        kerchunk.grib2 = ModuleType("kerchunk.grib2")
+        kerchunk.grib2.scan_grib = MagicMock()
+        sys.modules["kerchunk"] = kerchunk
+        sys.modules["kerchunk.grib2"] = kerchunk.grib2
+
+
+_ensure_kerchunk_mock()
 
 
 class TestDiscoverAifsFiles:
