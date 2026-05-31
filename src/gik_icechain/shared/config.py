@@ -89,6 +89,25 @@ class ThresholdsConfig(BaseModel):
 class AIFSTrackConfig(BaseModel):
     enabled: bool = True
     aifs_store_uri: str = ""
+    exceedance_store_uri: str = ""
+    variables: list[str] = Field(default_factory=lambda: ["tp"])
+    run_hours: list[int] = Field(default_factory=lambda: [0])
+    max_step_h: int = 360
+    step_resolution_h: int = 6
+    n_members: int = 51
+    comparison_enabled: bool = True
+    comparison_output_dir: str = "results/aifs_comparison/"
+
+    @field_validator("run_hours")
+    @classmethod
+    def _check_run_hours(cls, v: list[int]) -> list[int]:
+        valid = {0, 12}
+        invalid = [h for h in v if h not in valid]
+        if invalid:
+            raise ValueError(
+                f"AIFS ENS only runs at 0z and 12z, got invalid run_hours: {invalid}"
+            )
+        return v
 
 
 class SpatialConfig(BaseModel):
@@ -216,7 +235,6 @@ class Component2Config(BaseModel):
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
 
     # --- Other ---
-    aifs_track: AIFSTrackConfig = Field(default_factory=AIFSTrackConfig)
     dask: DaskConfig = Field(default_factory=DaskConfig)
     output_chunks: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -464,6 +482,7 @@ class GIKConfig(BaseModel):
     component1: Component1Config = Field(default_factory=Component1Config)
     component2: Component2Config = Field(default_factory=Component2Config)
     component3: Component3Config = Field(default_factory=Component3Config)
+    aifs_track: AIFSTrackConfig = Field(default_factory=AIFSTrackConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

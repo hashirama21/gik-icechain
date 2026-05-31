@@ -1,10 +1,12 @@
 """GIK-IceChain command-line interface.
 
 Entry points:
-    gik-icechain convert      -- C1: ingest ECMWF GRIB2 → IceChunk virtual store
-    gik-icechain exceedance   -- C2: compute exceedance probabilities
-    gik-icechain risk         -- C3: run CRMA risk batch
-    gik-icechain run-all      -- run the full pipeline end-to-end
+    gik-icechain convert       -- C1: ingest ECMWF IFS GRIB2 → IceChunk virtual store
+    gik-icechain convert-aifs  -- C1: ingest ECMWF AIFS ENS GRIB2 → IceChunk virtual store
+    gik-icechain exceedance    -- C2: compute exceedance probabilities
+    gik-icechain compare       -- compare AIFS vs IFS exceedance (Innovation 4)
+    gik-icechain risk          -- C3: run CRMA risk batch
+    gik-icechain run-all       -- run the full pipeline end-to-end
 """
 
 from __future__ import annotations
@@ -94,6 +96,48 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:
                 continue
             vds = parquet_to_virtual_dataset(paths, variables=cfg.component1.variables)
             last_commit = store.commit_day(current, vds, run_hour)
+        current += timedelta(days=1)
+
+    return last_commit
+
+
+def _run_convert_aifs(cfg: GIKConfig, start: date, end: date) -> str:
+    """Run C1 AIFS ingest. Returns the last IceChunk commit hash."""
+    from gik_icechain.conversion.aifs_discovery import aifs_to_virtual_dataset
+    from gik_icechain.conversion.icechunk_writer import IceChainStore
+
+    aifs = cfg.aifs_track
+    store = IceChainStore(
+        aifs.aifs_store_uri,
+        region=cfg.outputs.icechunk_store_region,
+        endpoint_url=cfg.outputs.endpoint_url or None,
+        commit_message_template="AIFS ingest: {date}T{run_hour:02d}Z",
+        tag_format="aifs-{date}T{run_hour:02d}Z",
+    )
+    store.create_or_open()
+
+    last_commit = ""
+    current = start
+    while current <= end:
+        for run_hour in aifs.run_hours:
+            try:
+                vds = aifs_to_virtual_dataset(
+                    current,
+                    run_hour=run_hour,
+                    variables=aifs.variables,
+                    max_step_h=aifs.max_step_h,
+                    step_resolution_h=aifs.step_resolution_h,
+                    n_members=aifs.n_members,
+                    s3_region=cfg.sources.ecmwf_s3_region,
+                )
+                last_commit = store.commit_day(current, vds, run_hour)
+            except FileNotFoundError:
+                log.warning("aifs_no_data", date=current.isoformat(), run_hour=run_hour)
+            except Exception:
+                log.warning(
+                    "aifs_ingest_failed",
+                    date=current.isoformat(), run_hour=run_hour, exc_info=True,
+                )
         current += timedelta(days=1)
 
     return last_commit
@@ -558,6 +602,106 @@ def convert(
     typer.echo(f"Convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
 
 
+@app.command("convert-aifs")
+def convert_aifs(
+    start: Annotated[str, typer.Option("--start", help="First forecast date (YYYY-MM-DD).")],
+    end: Annotated[str, typer.Option("--end", help="Last forecast date (YYYY-MM-DD).")],
+    config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
+    output_store: Annotated[
+        str | None, typer.Option("--output-store", help="Override AIFS IceChunk store URI.")
+    ] = None,
+) -> None:
+    """Ingest ECMWF AIFS ENS GRIB2 files into an IceChunk virtual store (Innovation 4)."""
+    from gik_icechain.shared.validation import validate_date_range
+
+    s, e = _parse_date(start), _parse_date(end)
+    validate_date_range(s, e)
+
+    cfg = _bootstrap(config)
+    if not cfg.aifs_track.enabled:
+        typer.echo("AIFS track is disabled in config (aifs_track.enabled=false). Skipping.")
+        return
+
+    if output_store:
+        cfg.aifs_track.aifs_store_uri = output_store
+
+    try:
+        commit_hash = _run_convert_aifs(cfg, s, e)
+    except Exception as exc:
+        _exit_on_error("convert-aifs", exc)
+
+    typer.echo(
+        f"AIFS convert complete: {s} → {e}  "
+        f"commit={commit_hash[:12] if commit_hash else 'none'}"
+    )
+
+
+@app.command()
+def compare(
+    ifs_store: Annotated[
+        str, typer.Option("--ifs-store", help="IFS exceedance Zarr store URI."),
+    ],
+    aifs_store: Annotated[
+        str, typer.Option("--aifs-store", help="AIFS exceedance Zarr store URI."),
+    ],
+    config: Annotated[
+        Path, typer.Option(help="Path to YAML config file."),
+    ] = _DEFAULT_CONFIG,
+    output: Annotated[
+        str | None,
+        typer.Option("--output", help="Output directory for comparison results."),
+    ] = None,
+    ifs_ensemble_store: Annotated[
+        str | None,
+        typer.Option("--ifs-ensemble-store", help="IFS raw ensemble IceChunk URI."),
+    ] = None,
+    aifs_ensemble_store: Annotated[
+        str | None,
+        typer.Option("--aifs-ensemble-store", help="AIFS raw ensemble IceChunk URI."),
+    ] = None,
+) -> None:
+    """Compare AIFS vs IFS exceedance probabilities (Innovation 4)."""
+    from gik_icechain.exceedance.aifs_track import (
+        compare_ensemble_spreads,
+        compute_aifs_ifs_delta,
+        seasonal_comparison,
+    )
+
+    cfg = _bootstrap(config)
+    output_dir = output or cfg.aifs_track.comparison_output_dir
+
+    try:
+        typer.echo("[1/3] Computing AIFS-IFS delta ...")
+        compute_aifs_ifs_delta(ifs_store, aifs_store, output_dir)
+
+        typer.echo("[2/3] Seasonal comparison ...")
+        enso_path = cfg.component2.thresholds.enso_iod_index_path
+        results = seasonal_comparison(
+            ifs_store, aifs_store, enso_iod_path=enso_path,
+        )
+        for season_key, ds in results.items():
+            out_path = str(Path(output_dir) / f"seasonal_{season_key}.zarr")
+            ds.to_zarr(out_path, mode="w")
+
+        typer.echo("[3/3] Ensemble spread comparison ...")
+        ifs_ens = ifs_ensemble_store or cfg.outputs.icechunk_store_uri
+        aifs_ens = aifs_ensemble_store or cfg.aifs_track.aifs_store_uri
+        if ifs_ens and aifs_ens:
+            spread_ds = compare_ensemble_spreads(
+                ifs_ens, aifs_ens,
+                region=cfg.outputs.icechunk_store_region,
+                endpoint_url=cfg.outputs.endpoint_url or None,
+            )
+            spread_path = str(Path(output_dir) / "spread_comparison.zarr")
+            spread_ds.to_zarr(spread_path, mode="w")
+        else:
+            typer.echo("  Skipped (no ensemble store URIs configured).")
+    except Exception as exc:
+        _exit_on_error("compare", exc)
+
+    typer.echo(f"Comparison complete. Results in {output_dir}")
+
+
 @app.command()
 def exceedance(
     store: Annotated[str, typer.Option(help="URI of the IceChunk virtual store.")],
@@ -570,7 +714,8 @@ def exceedance(
         str | None, typer.Option("--thresholds", help="Override CMORPH thresholds URI/path.")
     ] = None,
     profile: Annotated[
-        str | None, typer.Option("--profile", help="Window profile (flash_flood, medium_range, full).")
+        str | None,
+        typer.Option("--profile", help="Window profile name."),
     ] = None,
 ) -> None:
     """Compute adaptive GEV exceedance probabilities for all accumulation windows (C2)."""
@@ -645,20 +790,61 @@ def run_all(
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     output: Annotated[Path, typer.Option(help="Root output directory.")] = Path("results/"),
 ) -> None:
-    """Run C1 → C2 → C3 end-to-end for the given date range."""
+    """Run C1 -> C2 -> C3 end-to-end for the given date range (with optional AIFS track)."""
     from gik_icechain.shared.validation import validate_date_range
 
     s, e = _parse_date(start), _parse_date(end)
     validate_date_range(s, e)
     cfg = _bootstrap(config)
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
+    aifs_enabled = cfg.aifs_track.enabled and bool(cfg.aifs_track.aifs_store_uri)
+    n_steps = 5 if aifs_enabled else 3
+    step = 0
 
     try:
-        typer.echo("[1/3] convert …")
+        step += 1
+        typer.echo(f"[{step}/{n_steps}] convert (IFS) ...")
         _run_convert(cfg, s, e)
-        typer.echo("[2/3] exceedance …")
+
+        if aifs_enabled:
+            step += 1
+            typer.echo(f"[{step}/{n_steps}] convert (AIFS) ...")
+            _run_convert_aifs(cfg, s, e)
+
+        step += 1
+        typer.echo(f"[{step}/{n_steps}] exceedance (IFS) ...")
         _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, s, e)
-        typer.echo("[3/3] risk …")
+
+        if aifs_enabled:
+            aifs_exc_uri = (
+                cfg.aifs_track.exceedance_store_uri
+                or str(output / "aifs-exceedance-zarr")
+            )
+            step += 1
+            typer.echo(f"[{step}/{n_steps}] exceedance (AIFS) + comparison ...")
+            _run_exceedance(
+                cfg, cfg.aifs_track.aifs_store_uri, aifs_exc_uri, s, e,
+            )
+            if cfg.aifs_track.comparison_enabled:
+                from gik_icechain.exceedance.aifs_track import (
+                    compute_aifs_ifs_delta,
+                    seasonal_comparison,
+                )
+
+                comparison_dir = cfg.aifs_track.comparison_output_dir
+                compute_aifs_ifs_delta(exc_uri, aifs_exc_uri, comparison_dir)
+                enso_path = cfg.component2.thresholds.enso_iod_index_path
+                results = seasonal_comparison(
+                    exc_uri, aifs_exc_uri, enso_iod_path=enso_path,
+                )
+                for season_key, ds in results.items():
+                    out_path = str(
+                        Path(comparison_dir) / f"seasonal_{season_key}.zarr"
+                    )
+                    ds.to_zarr(out_path, mode="w")
+
+        step += 1
+        typer.echo(f"[{step}/{n_steps}] risk ...")
         _run_risk(cfg, exc_uri, output / "admin1_risk", s, e)
     except Exception as exc:
         _exit_on_error("run-all", exc)

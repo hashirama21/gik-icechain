@@ -3,6 +3,11 @@ from gik_icechain.exceedance.accumulations import (
     accumulation_for_window,
     compute_rolling_accumulations,
 )
+from gik_icechain.exceedance.aifs_track import (
+    compare_ensemble_spreads,
+    compute_aifs_ifs_delta,
+    seasonal_comparison,
+)
 from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
 from gik_icechain.exceedance.thresholds import (
     ACCUMULATION_WINDOWS_H,
@@ -34,8 +39,11 @@ __all__ = [
     "build_exceedance_dataset",
     "classify_enso",
     "classify_iod",
+    "compare_ensemble_spreads",
+    "compute_aifs_ifs_delta",
     "compute_exceedance_probabilities",
     "compute_rolling_accumulations",
     "get_season",
+    "seasonal_comparison",
     "write_exceedance_store",
 ]
