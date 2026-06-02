@@ -343,7 +343,13 @@ class IceChainStore:
         knows which external S3 prefixes are trusted for byte-range references.
         The ECMWF bucket is public (anonymous S3 access).
         """
-        ecmwf_store = icechunk.s3_store(region="eu-central-1", anonymous=True)
+        # Explicitly set the AWS endpoint so that AWS_ENDPOINT_URL (used for
+        # the MinIO store) is not inherited by the ECMWF virtual-chunk store.
+        ecmwf_store = icechunk.s3_store(
+            region="eu-central-1",
+            endpoint_url="https://s3.eu-central-1.amazonaws.com",
+            anonymous=True,
+        )
         container = icechunk.VirtualChunkContainer(
             url_prefix="s3://ecmwf-forecasts/",
             store=ecmwf_store,
