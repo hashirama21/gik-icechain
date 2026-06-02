@@ -42,6 +42,14 @@ _DEFAULT_MESSAGE_TEMPLATE = "GIK ingest: {date}T{run_hour:02d}Z"
 _DEFAULT_TAG_FORMAT = "{date}T{run_hour:02d}Z"
 
 
+def _tag_before_or_on(tag: str, as_of: date) -> bool:
+    """Return True if tag's date prefix is a valid ISO date on or before as_of."""
+    try:
+        return date.fromisoformat(tag[:10]) <= as_of
+    except ValueError:
+        return False
+
+
 class IceChainStore:
     """Manages the GIK-IceChain virtual store lifecycle.
 
@@ -208,7 +216,7 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         all_tags = self._repo.list_tags()
-        valid_tags = [t for t in all_tags if date.fromisoformat(t[:10]) <= as_of_date]
+        valid_tags = [t for t in all_tags if _tag_before_or_on(t, as_of_date)]
 
         if not valid_tags:
             earliest = min(t[:10] for t in all_tags)

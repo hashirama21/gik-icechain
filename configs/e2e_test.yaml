@@ -1,0 +1,129 @@
+sources:
+  gik_hf_dataset: "E4DRR/gik-ecmwf-par"
+  gik_catalog_file: "catalog.parquet"
+  ecmwf_s3_bucket: "ecmwf-forecasts"
+  ecmwf_s3_region: "eu-central-1"
+  ecmwf_s3_no_sign: true
+  gpm_imerg_path: "data/gpm_imerg/"
+  emdat_path: "data/emdat/east_africa_floods.csv"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.geojson"
+
+outputs:
+  icechunk_store_uri: "s3://gik-icechain/e2e-test-store"
+  icechunk_store_region: "us-east-1"
+  endpoint_url: "http://20.116.218.195:9000"
+  exceedance_store_uri: "s3://gik-icechain/e2e-test-exceedance"
+  exceedance_icechunk_uri: ""
+  risk_icechunk_uri: ""
+  risk_output_dir: "results/e2e_test/admin1_risk/"
+  dashboard_data_dir: "dashboard/calendar_map/data/"
+
+component1:
+  run_hours: [0]
+  variables: ["tp"]
+  icechunk:
+    branch: "main"
+    commit_message_template: "GIK ingest: {date}T{run_hour:02d}Z"
+    tag_format: "{date}T{run_hour:02d}Z"
+  gap_fill:
+    enabled: false
+    cloud_run_job: ""
+    lithops_config: ""
+    workers: 1
+
+component2:
+  compute_variables: ["tp"]
+  risk_evidence_variables: []
+
+  step_resolution_h: 6
+  max_forecast_h: 24
+  step_buffer: 1
+
+  windows_h: [24]
+  return_periods: [5]
+
+  active_profile: null
+  window_profiles:
+    flash_flood:
+      windows_h: [24]
+      return_periods: [5]
+      max_forecast_h: 24
+
+  spatial:
+    bbox: [-12, 23, 22, 52]
+    lat_dim: "latitude"
+    lon_dim: "longitude"
+
+  manifest_aware:
+    enabled: false
+    fetch_workers: 4
+    min_members: 5
+
+  byte_range_coalescing:
+    enabled: false
+    max_gap_bytes: 65536
+    max_merged_bytes: 5242880
+
+  parallel:
+    max_workers: 1
+    multiprocessing: false
+    day_timeout_s: 600
+
+  thresholds:
+    adaptive: true
+    enso_iod_index_path: "data/enso_iod_index.csv"
+    enso_nino34_threshold: 0.5
+    iod_dmi_threshold: 0.4
+    cmorph_path: "data/cmorph_thresholds/"
+    cmorph_hf_dataset: "E4DRR/virtualizarr-stores"
+    min_samples_for_gev: 30
+    fallback_strategy: "neutral"
+    fallback_rate_warning_threshold: 0.20
+
+  aifs_track:
+    enabled: false
+    aifs_store_uri: ""
+
+  dask:
+    scheduler: "synchronous"
+    n_workers: 1
+    threads_per_worker: 1
+    memory_limit: "2GB"
+    dashboard_address: ":8787"
+    chunk_dims:
+      member: -1
+      step: -1
+      latitude: 50
+      longitude: 50
+
+  output_chunks:
+    date: 1
+    latitude: 100
+    longitude: 100
+    window: -1
+    return_period: -1
+
+component3:
+  crma:
+    cpt_path: null
+    use_refined_cpts: false
+  api:
+    enabled: true
+    decay_factor: 0.8
+    initial_api_mm: 20.0
+  crma_model:
+    gpm_obs_normal_mmday: 5.0
+    gpm_obs_above_mmday: 25.0
+    api_threshold_normal_mm: 30.0
+    api_threshold_saturated_mm: 80.0
+    spatial_threshold_regional: 0.25
+    spatial_threshold_extensive: 0.75
+    consecutive_signal_threshold: 3
+    soil_memory_days: 7
+    hazard_medium_threshold: 0.15
+    hazard_high_threshold: 0.40
+    signal_threshold_prob: 0.15
+    rp_signal: 5
+    compound_score_thresholds:
+      fresh: [1.5, 4.0, 7.0]
+      prolonged: [1.0, 3.0, 6.0]

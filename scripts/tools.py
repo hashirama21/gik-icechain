@@ -32,9 +32,6 @@ app = typer.Typer(
 )
 
 
-#  benchmark
-
-
 @app.command()
 def benchmark(
     gik_store: Annotated[
@@ -152,44 +149,69 @@ def validate_store(
     typer.echo("\nStore is valid.")
 
 
-#  download
-
 
 def _download_admin_boundaries(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    dest = output_dir / "east_africa_admin1.gpkg"
+    dest = output_dir / "east_africa_admin1.geojson"
     if dest.exists():
         typer.echo(f"  Already exists: {dest}")
         return
 
-    typer.echo("  Downloading admin-1 boundaries from HuggingFace ...")
+    typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
+    _EA_COUNTRIES = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI"]
+    import urllib.request as _urlreq
+
+    all_features: list[dict] = []
+    for iso in _EA_COUNTRIES:
+        api_url = f"https://www.geoboundaries.org/api/current/gbOpen/{iso}/ADM1/"
+        try:
+            with _urlreq.urlopen(api_url, timeout=15) as r:
+                meta = json.loads(r.read())
+            dl_url = meta.get("gjDownloadURL", "")
+            if not dl_url:
+                typer.echo(f"    {iso}: no download URL", err=True)
+                continue
+            with _urlreq.urlopen(dl_url, timeout=30) as r:
+                fc = json.loads(r.read())
+            for feat in fc.get("features", []):
+                feat["properties"]["admin1_pcode"] = (
+                    iso + "_" + str(feat["properties"].get("shapeName", ""))[:20]
+                )
+                all_features.append(feat)
+            typer.echo(f"    {iso}: {len(fc.get('features', []))} units")
+        except Exception as exc:
+            typer.echo(f"    {iso}: skipped ({exc})", err=True)
+
+    if not all_features:
+        raise RuntimeError("No admin-1 features downloaded from geoBoundaries")
+
+    dest.write_text(json.dumps({"type": "FeatureCollection", "features": all_features}))
+    typer.echo(f"  Saved {len(all_features)} admin-1 units: {dest}")
+
+
+def _download_cmorph_thresholds(output_dir: Path) -> None:
+    """Download CMORPH East Africa return-period thresholds from HuggingFace."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest = output_dir / "cmorph_ea_return_periods.nc"
+    if dest.exists():
+        typer.echo(f"  Already exists: {dest}")
+        return
+
+    typer.echo("  Downloading CMORPH return-period thresholds from HuggingFace ...")
     from huggingface_hub import hf_hub_download
 
     path = hf_hub_download(
-        repo_id="E4DRR/gik-ecmwf-par",
-        filename="admin_boundaries/east_africa_admin1.gpkg",
+        repo_id="E4DRR/virtualizarr-stores",
+        filename="cmorph_ea_return_periods.nc",
         repo_type="dataset",
         local_dir=str(output_dir),
     )
     typer.echo(f"  Saved: {path}")
 
 
-def _download_cmorph_thresholds(output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    typer.echo("  Downloading CMORPH GEV thresholds from HuggingFace ...")
-    from huggingface_hub import snapshot_download
-
-    snapshot_download(
-        repo_id="E4DRR/gik-ecmwf-par",
-        repo_type="dataset",
-        allow_patterns="cmorph_thresholds/*.nc",
-        local_dir=str(output_dir.parent),
-    )
-    typer.echo(f"  Saved to: {output_dir}")
-
-
 def _download_enso_iod(output_dir: Path) -> None:
-    import urllib.request
+    """Download ENSO/IOD indices: Niño 3.4 (NOAA CPC) + DMI (NOAA PSL)."""
+    import urllib.request as _urlreq
 
     output_dir.mkdir(parents=True, exist_ok=True)
     dest = output_dir / "enso_iod_index.csv"
@@ -197,13 +219,56 @@ def _download_enso_iod(output_dir: Path) -> None:
         typer.echo(f"  Already exists: {dest}")
         return
 
-    typer.echo("  Downloading ENSO/IOD index ...")
-    url = (
-        "https://huggingface.co/datasets/E4DRR/gik-ecmwf-par"
-        "/resolve/main/enso_iod_index.csv"
-    )
-    urllib.request.urlretrieve(url, dest)
-    typer.echo(f"  Saved: {dest}")
+    nino34_url = "https://www.cpc.ncep.noaa.gov/data/indices/sstoi.indices"
+    typer.echo(f"  Downloading Niño 3.4 anomaly from {nino34_url} ...")
+    with _urlreq.urlopen(nino34_url, timeout=30) as r:
+        nino34_raw = r.read().decode("utf-8")
+
+    nino34: dict[tuple[int, int], float] = {}
+    for line in nino34_raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 10 and parts[0].lstrip("-").isdigit():
+            try:
+                year, month = int(parts[0]), int(parts[1])
+                nino34[(year, month)] = float(parts[9])
+            except (ValueError, IndexError):
+                continue
+    typer.echo(f"    {len(nino34)} monthly Niño 3.4 records")
+
+    dmi_url = "https://psl.noaa.gov/gcos_wgsp/Timeseries/Data/dmi.had.long.data"
+    typer.echo(f"  Downloading DMI from {dmi_url} ...")
+    with _urlreq.urlopen(dmi_url, timeout=30) as r:
+        dmi_raw = r.read().decode("utf-8")
+
+    dmi: dict[tuple[int, int], float] = {}
+    _MISSING = {-99.99, -99.9, -999.0, -999.9}
+    for line in dmi_raw.splitlines():
+        parts = line.split()
+        if len(parts) == 13 and parts[0].lstrip("-").isdigit():
+            try:
+                year = int(parts[0])
+                for m in range(1, 13):
+                    val = float(parts[m])
+                    if val not in _MISSING and abs(val) < 90:
+                        dmi[(year, m)] = val
+            except (ValueError, IndexError):
+                continue
+    typer.echo(f"    {len(dmi)} monthly DMI records")
+
+    
+    common = sorted(set(nino34) & set(dmi))
+    if not common:
+        raise RuntimeError(
+            "No overlapping dates between Niño 3.4 and DMI datasets. "
+            "Check source URLs."
+        )
+
+    lines = ["date,nino34_anom,dmi"]
+    for year, month in common:
+        lines.append(f"{year}-{month:02d}-01,{nino34[(year, month)]:.2f},{dmi[(year, month)]:.3f}")
+
+    dest.write_text("\n".join(lines) + "\n")
+    typer.echo(f"  Saved {len(common)} merged monthly records: {dest}")
 
 
 @app.command()
@@ -221,17 +286,34 @@ def download(
     """Download reference data (admin boundaries, thresholds, ENSO/IOD)."""
     typer.echo(f"Downloading: {component}  ->  {output}")
 
-    if component in ("all", "admin"):
-        _download_admin_boundaries(output / "admin_boundaries")
-    if component in ("all", "thresholds"):
-        _download_cmorph_thresholds(output / "cmorph_thresholds")
-    if component in ("all", "enso_iod"):
-        _download_enso_iod(output)
+    errors: list[str] = []
 
+    if component in ("all", "admin"):
+        try:
+            _download_admin_boundaries(output / "admin_boundaries")
+        except Exception as exc:
+            typer.echo(f"  admin download failed: {exc}", err=True)
+            errors.append("admin")
+
+    if component in ("all", "thresholds"):
+        try:
+            _download_cmorph_thresholds(output / "cmorph_thresholds")
+        except Exception as exc:
+            typer.echo(f"  thresholds download failed: {exc}", err=True)
+            errors.append("thresholds")
+
+    if component in ("all", "enso_iod"):
+        try:
+            _download_enso_iod(output)
+        except Exception as exc:
+            typer.echo(f"  enso_iod download failed: {exc}", err=True)
+            errors.append("enso_iod")
+
+    if errors:
+        typer.echo(f"Done (with errors in: {', '.join(errors)}).", err=True)
+        raise typer.Exit(1)
     typer.echo("Done.")
 
-
-# ── gap-fill
 
 _GAP_START = date(2023, 5, 1)
 _GAP_END = date(2024, 2, 29)
@@ -336,10 +418,6 @@ def gap_fill(
         f"\nGap-fill complete. Processed {processed} / {len(missing)} dates."
     )
 
-
-#  export-eahw
-
-
 @app.command("export-eahw")
 def export_eahw(
     risk_dir: Annotated[
@@ -443,9 +521,6 @@ def validate_emdat(
         typer.echo(f"  {k:<20} {v:>8.4f}")
 
     typer.echo(f"\nPer-event table saved to {output}")
-
-
-#  entry point
 
 if __name__ == "__main__":
     app()

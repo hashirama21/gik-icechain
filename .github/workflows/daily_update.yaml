@@ -111,9 +111,7 @@ jobs:
             --thresholds s3://${{ secrets.GIK_BUCKET }}/cmorph_thresholds/ \
             --output ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
             --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
-            --end   ${{ needs.ingest-daily-gik.outputs.processed_date }} \
-            --region east_africa \
-            --mode append
+            --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
 
   #  C3: Update admin-1 risk for the new day
   update-risk:

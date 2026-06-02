@@ -251,6 +251,7 @@ def _process_exceedance_day(args: dict) -> dict:
                 ),
                 fetch_workers=args.get("fetch_workers", 8),
                 min_members=args.get("min_members", 10),
+                s3_region=args.get("s3_region", "eu-central-1"),
             )
             # Data is already concrete (in-memory), no chunking needed
         else:
@@ -258,8 +259,13 @@ def _process_exceedance_day(args: dict) -> dict:
 
             # Dimension 1: Variable pre-selection
             available = [v for v in compute_vars if v in day_ds.data_vars]
-            if available:
-                day_ds = day_ds[available]
+            if not available:
+                return {
+                    "date_str": date_str,
+                    "success": False,
+                    "error": f"none of {compute_vars} found in group {date_str}",
+                }
+            day_ds = day_ds[available]
 
             # Dimension 2: Step slicing — only load steps needed for max window
             if max_steps is not None and "step" in day_ds.dims:
@@ -409,6 +415,7 @@ def _run_exceedance(
             "max_step_h": c2.effective_max_forecast_h,
             "step_resolution_h": c2.step_resolution_h,
             "step_buffer": c2.step_buffer,
+            "s3_region": cfg.sources.ecmwf_s3_region,
         }
         for d in committed_dates
     ]
@@ -586,7 +593,7 @@ def exceedance(
     e = _parse_date(end) if end else None
 
     dask_cfg = cfg.component2.dask
-    dask_workers = workers or dask_cfg.n_workers
+    dask_workers = workers if workers is not None else dask_cfg.n_workers
     if dask_workers > 1:
         try:
             from dask.distributed import Client

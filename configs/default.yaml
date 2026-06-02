@@ -8,7 +8,7 @@ sources:
   ecmwf_s3_no_sign: true
   gpm_imerg_path: "data/gpm_imerg/"
   emdat_path: "data/emdat/east_africa_floods.csv"
-  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.geojson"
 
 outputs:
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"

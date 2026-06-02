@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -114,9 +114,9 @@ def run_risk_batch(
         if checkpoint_interval > 0 and day_count % checkpoint_interval == 0:
             _save_checkpoint(checkpoint_path, bn_states, current)
 
-    # Final checkpoint
-    if checkpoint_interval > 0:
-        _save_checkpoint(checkpoint_path, bn_states, current)
+    # Successful completion — remove checkpoint so re-runs start from scratch
+    if checkpoint_interval > 0 and checkpoint_path.exists():
+        checkpoint_path.unlink()
 
     log.info("risk_batch_complete", n_days=len(written), start=start, end=end)
     return written
@@ -176,6 +176,10 @@ def _process_day(
         key_values = [p_24h, p_72h, p_7d]
         if any(not math.isfinite(v) for v in key_values):
             log.warning("nan_in_aggregated_values", pcode=pcode, date=day)
+            # Decay API so state doesn't freeze across data gaps
+            bn_states[pcode] = replace(
+                bn_states[pcode], api_mm=bn_states[pcode].api_mm * api_decay
+            )
             no_data_result = {
                 "risk_state": -1,
                 "risk_label": "No_Data",

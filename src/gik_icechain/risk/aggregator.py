@@ -40,7 +40,20 @@ def _build_multi_region_mask(
     lat_name = find_lat_dim(da)
     lon_name = find_lon_dim(da)
     regions = regionmask.from_geopandas(admin_gdf)
-    mask = regions.mask(da, lon_name=lon_name, lat_name=lat_name)
+    try:
+        mask = regions.mask(da[lon_name], da[lat_name])
+    except ValueError:
+        # Overlapping polygons: use mask_3D and reduce to 2D (first region wins)
+        mask_3d = regions.mask_3D(da[lon_name], da[lat_name])
+        first_idx = np.argmax(mask_3d.values, axis=0)
+        has_any = mask_3d.values.any(axis=0)
+        reg_numbers = np.array([float(n) for n in regions.numbers])
+        mask_2d_np = np.where(has_any, reg_numbers[first_idx], np.nan).astype("float32")
+        mask = xr.DataArray(
+            mask_2d_np,
+            dims=[lat_name, lon_name],
+            coords={lat_name: da[lat_name], lon_name: da[lon_name]},
+        )
     mask.name = "region"
     num_to_pcode = dict(
         zip(regions.numbers, admin_gdf[pcode_col].astype(str))
