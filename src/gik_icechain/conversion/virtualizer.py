@@ -50,10 +50,6 @@ def _to_ref_value(v: object) -> str | list:
         return v
     return json.dumps(v)
 
-
-# Matches the old ECMWF path: {date}/{tz}/0p25/ → needs ifs/ inserted.
-# Captures any resolution-like directory (0p25, 0p4-beta, 1p0, etc.) that
-# follows the timezone directly, without the ifs/ or aifs/ model prefix.
 _OLD_ECMWF_PATH_RE = re.compile(
     r"^(s3://ecmwf-forecasts/\d{8}/\d{2}z/)(?!ifs/|aifs/)(\dp[^/]+/)"
 )
@@ -108,8 +104,9 @@ class GIKFlatParquetParser:
     hour values (e.g. [0, 3, 6, …, 360]) for use as dimension coordinates.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, variables: list[str] | None = None) -> None:
         self.step_hours: list[int] = []
+        self._variables: set[str] | None = set(variables) if variables else None
 
     def __call__(self, url: str, registry: object) -> object:
         import fsspec
@@ -175,6 +172,12 @@ class GIKFlatParquetParser:
                 except Exception:
                     log.debug("zarray_meta_parse_skipped", exc_info=True)
         log.debug("gik_grid_resolution", nlat=nlat, nlon=nlon, uri_hint=first_uri[:80])
+
+        # Pre-filter to requested variables before building refs so that
+        # variables with inconsistent step counts (e.g. 10fg vs tp) don't
+        # cause a conflicting-dimension error in xr.Dataset construction.
+        if self._variables:
+            chunk_df = chunk_df[chunk_df["var"].isin(self._variables)]
 
         self.step_hours = sorted(chunk_df["step_num"].unique().tolist())
 
@@ -246,7 +249,7 @@ def _open_one_virtual(url: str, variables: list[str] | None, registry: object) -
     import numpy as np
     from virtualizarr import open_virtual_dataset
 
-    parser = GIKFlatParquetParser()
+    parser = GIKFlatParquetParser(variables=variables)
     vds = open_virtual_dataset(url=url, registry=registry, parser=parser, loadable_variables=[])
 
     if variables:
