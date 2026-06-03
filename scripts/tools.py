@@ -17,6 +17,9 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
+import netrc
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -209,6 +212,88 @@ def _download_cmorph_thresholds(output_dir: Path) -> None:
     typer.echo(f"  Saved: {path}")
 
 
+def _download_gpm_imerg(
+    output_dir: Path,
+    start: date,
+    end: date,
+) -> None:
+    """Download GPM IMERG V07B Final Run daily HDF5 files from NASA GES DISC.
+
+    Credentials are read from ~/.netrc (machine urs.earthdata.nasa.gov) or
+    from env vars EARTHDATA_USER / EARTHDATA_PASSWORD.  A free NASA Earthdata
+    account is required: https://urs.earthdata.nasa.gov/home
+
+    Args:
+        output_dir: Directory to write the HDF5 files.
+        start:      First date (inclusive).
+        end:        Last date (inclusive).
+    """
+    import urllib.request as _urlreq
+
+    BASE = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
+
+    user = os.environ.get("EARTHDATA_USER")
+    password = os.environ.get("EARTHDATA_PASSWORD")
+
+    if not (user and password):
+        try:
+            nrc = netrc.netrc()
+            auth = nrc.authenticators("urs.earthdata.nasa.gov")
+            if auth:
+                user, _, password = auth
+        except (FileNotFoundError, netrc.NetrcParseError):
+            pass
+
+    if not (user and password):
+        typer.echo(
+            "NASA Earthdata credentials not found.\n"
+            "Set EARTHDATA_USER / EARTHDATA_PASSWORD env vars, or add to ~/.netrc:\n"
+            "  machine urs.earthdata.nasa.gov login <user> password <pass>\n"
+            "Register free at: https://urs.earthdata.nasa.gov/home",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    password_mgr = _urlreq.HTTPPasswordMgrWithDefaultRealm()
+    password_mgr.add_password(None, "https://urs.earthdata.nasa.gov", user, password)
+    auth_handler = _urlreq.HTTPBasicAuthHandler(password_mgr)
+    cookie_handler = _urlreq.HTTPCookieProcessor()
+    opener = _urlreq.build_opener(auth_handler, cookie_handler)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    current = start
+    n_downloaded = n_skipped = n_failed = 0
+
+    while current <= end:
+        doy = current.timetuple().tm_yday
+        date_str = current.strftime("%Y%m%d")
+        filename = f"3B-DAY.MS.MRG.3IMERG.{date_str}-S000000-E235959.1440.V07B.HDF5"
+        out_path = output_dir / filename
+
+        if out_path.exists():
+            n_skipped += 1
+            current += timedelta(days=1)
+            continue
+
+        url = f"{BASE}/{current.year}/{doy:03d}/{filename}"
+        try:
+            with opener.open(url, timeout=120) as resp:
+                out_path.write_bytes(resp.read())
+            size_kb = out_path.stat().st_size // 1024
+            typer.echo(f"  {date_str}: {size_kb} KB")
+            n_downloaded += 1
+        except Exception as exc:
+            typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
+            n_failed += 1
+
+        current += timedelta(days=1)
+
+    typer.echo(
+        f"  GPM: {n_downloaded} downloaded, {n_skipped} already present"
+        + (f", {n_failed} failed" if n_failed else "")
+    )
+
+
 def _download_enso_iod(output_dir: Path) -> None:
     """Download ENSO/IOD indices: Niño 3.4 (NOAA CPC) + DMI (NOAA PSL)."""
     import urllib.request as _urlreq
@@ -271,6 +356,35 @@ def _download_enso_iod(output_dir: Path) -> None:
     typer.echo(f"  Saved {len(common)} merged monthly records: {dest}")
 
 
+@app.command("download-gpm")
+def download_gpm(
+    start: Annotated[str, typer.Option("--start", help="First date (YYYY-MM-DD).")],
+    end: Annotated[str, typer.Option("--end", help="Last date (YYYY-MM-DD).")],
+    output: Annotated[
+        Path, typer.Option(help="Output directory for GPM HDF5 files.")
+    ] = REPO_ROOT / "data" / "gpm_imerg",
+) -> None:
+    """Download GPM IMERG V07B Final Run daily files from NASA GES DISC.
+
+    Requires NASA Earthdata credentials (free registration):
+      https://urs.earthdata.nasa.gov/home
+
+    Set credentials via env vars or ~/.netrc:
+      export EARTHDATA_USER=<user>
+      export EARTHDATA_PASSWORD=<pass>
+
+    Example — OND 2024 wet season:
+      python scripts/tools.py download-gpm --start 2024-10-01 --end 2024-12-31
+    """
+    s, e = date.fromisoformat(start), date.fromisoformat(end)
+    if s > e:
+        typer.echo("--start must be <= --end", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Downloading GPM IMERG: {s} -> {e}  =>  {output}")
+    _download_gpm_imerg(output, s, e)
+    typer.echo("Done.")
+
+
 @app.command()
 def download(
     component: Annotated[
@@ -283,7 +397,10 @@ def download(
         Path, typer.Option(help="Base output directory.")
     ] = REPO_ROOT / "data",
 ) -> None:
-    """Download reference data (admin boundaries, thresholds, ENSO/IOD)."""
+    """Download reference data (admin boundaries, thresholds, ENSO/IOD).
+
+    For GPM IMERG daily rainfall, use the dedicated ``download-gpm`` command.
+    """
     typer.echo(f"Downloading: {component}  ->  {output}")
 
     errors: list[str] = []
@@ -422,26 +539,35 @@ def gap_fill(
 def export_eahw(
     risk_dir: Annotated[
         Path,
-        typer.Option(help="Directory with per-day risk GeoJSON files."),
+        typer.Option(help="Directory containing risk_scores.json files and admin1_boundaries.geojson."),
     ],
     output: Annotated[
         Path, typer.Option(help="Output directory for EAHW GeoJSON files.")
     ],
 ) -> None:
-    """Export admin-1 risk GeoJSON to East Africa Hazard Watch format."""
+    """Export daily risk scores to East Africa Hazard Watch Portal format.
+
+    Combines the shared ``admin1_boundaries.geojson`` with each
+    ``{date}_risk_scores.json`` file to produce one EAHW GeoJSON per day.
+    """
     from gik_icechain.risk.geojson_writer import export_eahw_format
 
-    risk_files = sorted(risk_dir.glob("*_admin1_risk.geojson"))
-    if not risk_files:
-        typer.echo(f"No risk GeoJSON files found in: {risk_dir}", err=True)
+    boundaries_path = risk_dir / "admin1_boundaries.geojson"
+    if not boundaries_path.exists():
+        typer.echo(f"admin1_boundaries.geojson not found in: {risk_dir}", err=True)
+        raise typer.Exit(1)
+
+    scores_files = sorted(risk_dir.glob("*_risk_scores.json"))
+    if not scores_files:
+        typer.echo(f"No *_risk_scores.json files found in: {risk_dir}", err=True)
         raise typer.Exit(1)
 
     output.mkdir(parents=True, exist_ok=True)
     exported = 0
-    for f in risk_files:
+    for f in scores_files:
         date_str = f.stem[:10]
         out_path = output / f"eahw_{date_str}.geojson"
-        export_eahw_format(f, out_path)
+        export_eahw_format(f, boundaries_path, out_path)
         exported += 1
 
     typer.echo(f"Exported {exported} files to {output}")
@@ -451,25 +577,24 @@ def export_eahw(
 
 
 def _load_risk_results(risk_dir: Path):
-    """Load all per-day GeoJSON files into a flat DataFrame."""
+    """Load all per-day risk score files into a flat DataFrame."""
     import pandas as pd
 
     rows: list[dict] = []
-    for geojson_path in sorted(risk_dir.glob("*_admin1_risk.geojson")):
-        date_str = geojson_path.stem[:10]
-        data = json.loads(geojson_path.read_text())
-        for feat in data.get("features", []):
-            props = feat["properties"]
+    for scores_path in sorted(risk_dir.glob("*_risk_scores.json")):
+        data = json.loads(scores_path.read_text())
+        date_str = data.get("date", scores_path.stem[:10])
+        for pcode, score in data.get("units", {}).items():
             rows.append(
                 {
                     "date": date_str,
-                    "admin1_pcode": props.get("admin1_pcode", ""),
-                    "risk_state": int(props.get("risk_state", 0)),
-                    "p_red": float(props.get("p_red", 0.0)),
+                    "admin1_pcode": pcode,
+                    "risk_state": int(score.get("risk_state", 0)),
+                    "p_red": float(score.get("p_red", 0.0)),
                 }
             )
     if not rows:
-        raise ValueError(f"No GeoJSON risk files found in {risk_dir}")
+        raise ValueError(f"No *_risk_scores.json files found in {risk_dir}")
     return pd.DataFrame(rows)
 
 
