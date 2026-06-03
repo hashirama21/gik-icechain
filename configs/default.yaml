@@ -60,7 +60,7 @@ component2:
       max_forecast_h: 168
 
   spatial:
-    bbox: [-12, 23, 22, 52]
+    bbox: [-13, 24, 22, 53]
     lat_dim: "latitude"
     lon_dim: "longitude"
 

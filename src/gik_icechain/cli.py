@@ -129,7 +129,13 @@ def _subset_to_bbox(
         i_max = min(nlat - 1, int((90.0 - lat_min) / dlat))
         j_min = max(0, int(lon_min / dlon))
         j_max = min(nlon - 1, int(lon_max / dlon))
-        return ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        subset = ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        # Reassign real geographic coordinate values so downstream operations
+        # (regionmask, threshold alignment) work in degrees, not integer indices.
+        import numpy as np
+        real_lats = 90.0 - (i_min + np.arange(subset.sizes[lat_name])) * dlat
+        real_lons = (j_min + np.arange(subset.sizes[lon_name])) * dlon
+        return subset.assign_coords({lat_name: real_lats, lon_name: real_lons})
 
     # Proper geographic coordinates — use .sel()
     if float(lat_vals[0]) > float(lat_vals[-1]):
