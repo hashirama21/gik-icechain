@@ -13,7 +13,7 @@ sources:
 outputs:
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
   icechunk_store_region: "eu-west-1"
-  endpoint_url: ""
+  endpoint_url: "http://20.116.218.195:9000"
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""

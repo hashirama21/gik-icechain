@@ -305,10 +305,10 @@ def _process_exceedance_day(args: dict) -> dict:
                     acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
                     window_h=w, return_period=rp, member_dim=member_dim,
                 )
-            except Exception:
+            except Exception as exc:
                 log.warning(
                     "exceedance_window_rp_failed",
-                    window_h=w, return_period=rp, date=date_str, exc_info=True,
+                    window_h=w, return_period=rp, date=date_str, error=str(exc),
                 )
                 continue
 
@@ -473,6 +473,7 @@ def _run_exceedance(
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
     if cfg.outputs.exceedance_icechunk_uri:
@@ -524,6 +525,7 @@ def _run_risk(
         initial_api_mm=cfg.component3.api.initial_api_mm,
         signal_threshold=crma_cfg.signal_threshold_prob,
         rp_signal=crma_cfg.rp_signal,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
 
@@ -568,7 +570,7 @@ def convert(
             json.dumps({"commit_hash": commit_hash, "processed_date": e.isoformat()})
         )
 
-    typer.echo(f"Convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
+    typer.echo(f"Convert complete: {s} -> {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
 
 
 @app.command()

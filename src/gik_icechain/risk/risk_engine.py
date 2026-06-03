@@ -56,6 +56,7 @@ def run_risk_batch(
     signal_threshold: float = 0.15,
     rp_signal: int = 5,
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
+    endpoint_url: str | None = None,
 ) -> list[Path]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -79,7 +80,8 @@ def run_risk_batch(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     admin = gpd.read_file(admin_boundaries_path)
-    exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
+    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
 
     pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
     bn_states: dict[str, DynamicBNState] = {

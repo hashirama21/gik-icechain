@@ -41,6 +41,7 @@ def write_exceedance_store(
     chunks: dict | None = None,
     append: bool = True,
     confidence_dict: dict[date, xr.DataArray] | None = None,
+    endpoint_url: str | None = None,
 ) -> None:
     """Write or extend the exceedance Zarr store with new forecast dates.
 
@@ -62,12 +63,13 @@ def write_exceedance_store(
         return
 
     effective_chunks = chunks or _DEFAULT_CHUNKS
+    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
 
     ds = _build_dataset(exceedance_dict, confidence_dict)
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
     try:
-        existing = xr.open_zarr(output_uri, consolidated=False)
+        existing = xr.open_zarr(output_uri, consolidated=False, storage_options=storage_options)
         if append:
             existing_dates = set(str(d)[:10] for d in existing["date"].values)
             new_dates = {
@@ -83,13 +85,13 @@ def write_exceedance_store(
             new_ds = _build_dataset(
                 {d: exceedance_dict[d] for d in new_dates.values()}, new_conf
             ).chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
-            new_ds.to_zarr(output_uri, mode="a", append_dim="date")
+            new_ds.to_zarr(output_uri, mode="a", append_dim="date", storage_options=storage_options)
             log.info("exceedance_store_appended", n_dates=len(new_dates), uri=output_uri)
             return
     except (FileNotFoundError, KeyError):
         pass
 
-    ds.to_zarr(output_uri, mode="w", consolidated=True)
+    ds.to_zarr(output_uri, mode="w", consolidated=True, storage_options=storage_options)
     log.info("exceedance_store_written", n_dates=len(exceedance_dict), uri=output_uri)
 
 
