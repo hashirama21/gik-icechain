@@ -212,29 +212,14 @@ def _download_cmorph_thresholds(output_dir: Path) -> None:
     typer.echo(f"  Saved: {path}")
 
 
-def _download_gpm_imerg(
-    output_dir: Path,
-    start: date,
-    end: date,
-) -> None:
-    """Download GPM IMERG V07B Final Run daily HDF5 files from NASA GES DISC.
-
-    Credentials are read from ~/.netrc (machine urs.earthdata.nasa.gov) or
-    from env vars EARTHDATA_USER / EARTHDATA_PASSWORD.  A free NASA Earthdata
-    account is required: https://urs.earthdata.nasa.gov/home
-
-    Args:
-        output_dir: Directory to write the HDF5 files.
-        start:      First date (inclusive).
-        end:        Last date (inclusive).
-    """
+def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
+    """Download GPM IMERG V07B from NASA GES DISC (requires Earthdata account)."""
     import urllib.request as _urlreq
 
     BASE = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
 
     user = os.environ.get("EARTHDATA_USER")
     password = os.environ.get("EARTHDATA_PASSWORD")
-
     if not (user and password):
         try:
             nrc = netrc.netrc()
@@ -247,22 +232,23 @@ def _download_gpm_imerg(
     if not (user and password):
         typer.echo(
             "NASA Earthdata credentials not found.\n"
-            "Set EARTHDATA_USER / EARTHDATA_PASSWORD env vars, or add to ~/.netrc:\n"
+            "Set EARTHDATA_USER / EARTHDATA_PASSWORD or add to ~/.netrc:\n"
             "  machine urs.earthdata.nasa.gov login <user> password <pass>\n"
-            "Register free at: https://urs.earthdata.nasa.gov/home",
+            "Register free at: https://urs.earthdata.nasa.gov/home\n"
+            "Tip: use --source chirps for a no-auth alternative.",
             err=True,
         )
         raise typer.Exit(1)
 
     password_mgr = _urlreq.HTTPPasswordMgrWithDefaultRealm()
     password_mgr.add_password(None, "https://urs.earthdata.nasa.gov", user, password)
-    auth_handler = _urlreq.HTTPBasicAuthHandler(password_mgr)
-    cookie_handler = _urlreq.HTTPCookieProcessor()
-    opener = _urlreq.build_opener(auth_handler, cookie_handler)
+    opener = _urlreq.build_opener(
+        _urlreq.HTTPBasicAuthHandler(password_mgr),
+        _urlreq.HTTPCookieProcessor(),
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    current = start
-    n_downloaded = n_skipped = n_failed = 0
+    current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
 
     while current <= end:
         doy = current.timetuple().tm_yday
@@ -272,16 +258,99 @@ def _download_gpm_imerg(
 
         if out_path.exists():
             n_skipped += 1
+        else:
+            try:
+                url = f"{BASE}/{current.year}/{doy:03d}/{filename}"
+                with opener.open(url, timeout=120) as resp:
+                    out_path.write_bytes(resp.read())
+                typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
+                n_downloaded += 1
+            except Exception as exc:
+                typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
+                n_failed += 1
+
+        current += timedelta(days=1)
+
+    typer.echo(
+        f"  NASA GPM: {n_downloaded} downloaded, {n_skipped} skipped"
+        + (f", {n_failed} failed" if n_failed else "")
+    )
+
+
+def _download_chirps(output_dir: Path, start: date, end: date) -> None:
+    """Download CHIRPS v2.0 daily Africa rainfall — no authentication required.
+
+    CHIRPS (Climate Hazards Group InfraRed Precipitation with Station data)
+    offers 0.05 degree daily rainfall for Africa.  Files are converted to
+    GPM-compatible nc4 format so gpm_loader.py reads them transparently.
+
+    Source: https://www.chc.ucsb.edu/data/chirps
+    """
+    import gzip
+    import tempfile
+    import urllib.request as _urlreq
+
+    import numpy as np
+    import xarray as xr
+
+    BASE = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
+
+    while current <= end:
+        date_str = current.strftime("%Y%m%d")
+        out_path = output_dir / f"3B-DAY.MS.MRG.3IMERG.{date_str}.V07B.nc4"
+
+        if out_path.exists():
+            n_skipped += 1
             current += timedelta(days=1)
             continue
 
-        url = f"{BASE}/{current.year}/{doy:03d}/{filename}"
+        tif_name = f"chirps-v2.0.{current.year}.{current.month:02d}.{current.day:02d}.tif.gz"
+        url = f"{BASE}/{current.year}/{tif_name}"
+
         try:
-            with opener.open(url, timeout=120) as resp:
-                out_path.write_bytes(resp.read())
-            size_kb = out_path.stat().st_size // 1024
-            typer.echo(f"  {date_str}: {size_kb} KB")
+            with tempfile.NamedTemporaryFile(suffix=".tif.gz", delete=False) as tmp_gz:
+                tmp_gz_path = Path(tmp_gz.name)
+
+            with _urlreq.urlopen(url, timeout=60) as resp:
+                tmp_gz_path.write_bytes(resp.read())
+
+            with gzip.open(tmp_gz_path, "rb") as gz_in:
+                tif_bytes = gz_in.read()
+
+            tmp_tif = tmp_gz_path.with_suffix(".tif")
+            tmp_tif.write_bytes(tif_bytes)
+            tmp_gz_path.unlink()
+
+            ds_raw = xr.open_dataset(tmp_tif, engine="rasterio")
+            precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
+
+            lat_name = next((c for c in precip.dims if "lat" in c.lower()), None)
+            lon_name = next((c for c in precip.dims if "lon" in c.lower() or "x" in c.lower()), None)
+            rename = {}
+            if lat_name and lat_name != "lat":
+                rename[lat_name] = "lat"
+            if lon_name and lon_name != "lon":
+                rename[lon_name] = "lon"
+            if rename:
+                precip = precip.rename(rename)
+
+            nodata = ds_raw["band_data"].attrs.get("_FillValue", -9999.0)
+            precip = precip.where(precip != nodata, other=np.nan)
+            precip = precip.clip(min=0.0)
+
+            ds_out = xr.Dataset(
+                {"precipitationCal": precip.astype(np.float32)},
+                attrs={"source": "CHIRPS v2.0", "units": "mm/day"},
+            )
+            ds_out.to_netcdf(out_path)
+            tmp_tif.unlink()
+
+            typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
             n_downloaded += 1
+
         except Exception as exc:
             typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
             n_failed += 1
@@ -289,7 +358,7 @@ def _download_gpm_imerg(
         current += timedelta(days=1)
 
     typer.echo(
-        f"  GPM: {n_downloaded} downloaded, {n_skipped} already present"
+        f"  CHIRPS: {n_downloaded} downloaded, {n_skipped} skipped"
         + (f", {n_failed} failed" if n_failed else "")
     )
 
@@ -361,27 +430,46 @@ def download_gpm(
     start: Annotated[str, typer.Option("--start", help="First date (YYYY-MM-DD).")],
     end: Annotated[str, typer.Option("--end", help="Last date (YYYY-MM-DD).")],
     output: Annotated[
-        Path, typer.Option(help="Output directory for GPM HDF5 files.")
+        Path, typer.Option(help="Output directory for precipitation files.")
     ] = REPO_ROOT / "data" / "gpm_imerg",
+    source: Annotated[
+        str,
+        typer.Option(
+            help="Data source: 'nasa' (GPM IMERG, requires Earthdata account) "
+                 "or 'chirps' (CHIRPS v2.0, no auth required)."
+        ),
+    ] = "chirps",
 ) -> None:
-    """Download GPM IMERG V07B Final Run daily files from NASA GES DISC.
+    """Download daily precipitation data for C3 GPM input.
 
-    Requires NASA Earthdata credentials (free registration):
-      https://urs.earthdata.nasa.gov/home
+    Two sources are available:
 
-    Set credentials via env vars or ~/.netrc:
-      export EARTHDATA_USER=<user>
-      export EARTHDATA_PASSWORD=<pass>
+    chirps (default, no authentication):
+      CHIRPS v2.0 — 0.05 deg daily Africa rainfall, freely available.
+      Files saved as GPM-compatible nc4 so gpm_loader.py reads them.
+
+    nasa (requires free Earthdata account):
+      GPM IMERG V07B Final Run — 0.1 deg global, official NASA product.
+      Register at https://urs.earthdata.nasa.gov/home then set:
+        export EARTHDATA_USER=<user>
+        export EARTHDATA_PASSWORD=<pass>
 
     Example — OND 2024 wet season:
-      python scripts/tools.py download-gpm --start 2024-10-01 --end 2024-12-31
+      python scripts/tools.py download-gpm --start 2024-10-01 --end 2024-10-07
     """
     s, e = date.fromisoformat(start), date.fromisoformat(end)
     if s > e:
         typer.echo("--start must be <= --end", err=True)
         raise typer.Exit(1)
-    typer.echo(f"Downloading GPM IMERG: {s} -> {e}  =>  {output}")
-    _download_gpm_imerg(output, s, e)
+    if source not in ("nasa", "chirps"):
+        typer.echo(f"Unknown source '{source}'. Use 'nasa' or 'chirps'.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Downloading precipitation ({source}): {s} -> {e}  =>  {output}")
+    if source == "nasa":
+        _download_gpm_nasa(output, s, e)
+    else:
+        _download_chirps(output, s, e)
     typer.echo("Done.")
 
 
