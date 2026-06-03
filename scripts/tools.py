@@ -293,7 +293,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
     import numpy as np
     import xarray as xr
 
-    BASE = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs"
+    BASE = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs/p05"
 
     output_dir.mkdir(parents=True, exist_ok=True)
     current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
@@ -310,50 +310,53 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
         tif_name = f"chirps-v2.0.{current.year}.{current.month:02d}.{current.day:02d}.tif.gz"
         url = f"{BASE}/{current.year}/{tif_name}"
 
+        tmp_gz_path = Path(tempfile.mktemp(suffix=".tif.gz"))
+        # Remove ".gz" to get ".tif" — avoid double-extension on Windows
+        tmp_tif = tmp_gz_path.parent / tmp_gz_path.name[:-3]
         try:
-            with tempfile.NamedTemporaryFile(suffix=".tif.gz", delete=False) as tmp_gz:
-                tmp_gz_path = Path(tmp_gz.name)
-
             with _urlreq.urlopen(url, timeout=60) as resp:
                 tmp_gz_path.write_bytes(resp.read())
 
             with gzip.open(tmp_gz_path, "rb") as gz_in:
-                tif_bytes = gz_in.read()
+                tmp_tif.write_bytes(gz_in.read())
+            tmp_gz_path.unlink(missing_ok=True)
 
-            tmp_tif = tmp_gz_path.with_suffix(".tif")
-            tmp_tif.write_bytes(tif_bytes)
-            tmp_gz_path.unlink()
+            # Use context manager so rasterio releases the file handle on exit
+            with xr.open_dataset(tmp_tif, engine="rasterio") as ds_raw:
+                precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
 
-            ds_raw = xr.open_dataset(tmp_tif, engine="rasterio")
-            precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
+                # rasterio uses 'y'/'x'; CHIRPS uses 'lat'/'lon' — normalise both
+                lat_name = next(
+                    (c for c in precip.dims if "lat" in c.lower() or c == "y"), None
+                )
+                lon_name = next(
+                    (c for c in precip.dims if "lon" in c.lower() or c == "x"), None
+                )
+                rename = {}
+                if lat_name and lat_name != "lat":
+                    rename[lat_name] = "lat"
+                if lon_name and lon_name != "lon":
+                    rename[lon_name] = "lon"
+                if rename:
+                    precip = precip.rename(rename)
 
-            lat_name = next((c for c in precip.dims if "lat" in c.lower()), None)
-            lon_name = next((c for c in precip.dims if "lon" in c.lower() or "x" in c.lower()), None)
-            rename = {}
-            if lat_name and lat_name != "lat":
-                rename[lat_name] = "lat"
-            if lon_name and lon_name != "lon":
-                rename[lon_name] = "lon"
-            if rename:
-                precip = precip.rename(rename)
+                nodata = float(ds_raw["band_data"].attrs.get("_FillValue", -9999.0))
+                precip = precip.where(precip != nodata, other=np.nan).clip(min=0.0)
 
-            nodata = ds_raw["band_data"].attrs.get("_FillValue", -9999.0)
-            precip = precip.where(precip != nodata, other=np.nan)
-            precip = precip.clip(min=0.0)
+                xr.Dataset(
+                    {"precipitationCal": precip.astype(np.float32)},
+                    attrs={"source": "CHIRPS v2.0", "units": "mm/day"},
+                ).to_netcdf(out_path)
 
-            ds_out = xr.Dataset(
-                {"precipitationCal": precip.astype(np.float32)},
-                attrs={"source": "CHIRPS v2.0", "units": "mm/day"},
-            )
-            ds_out.to_netcdf(out_path)
-            tmp_tif.unlink()
-
+            tmp_tif.unlink(missing_ok=True)
             typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
             n_downloaded += 1
 
         except Exception as exc:
             typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
             n_failed += 1
+            tmp_gz_path.unlink(missing_ok=True)
+            tmp_tif.unlink(missing_ok=True)
 
         current += timedelta(days=1)
 
