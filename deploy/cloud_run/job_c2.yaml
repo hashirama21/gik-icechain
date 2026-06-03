@@ -13,13 +13,16 @@ spec:
           serviceAccountName: gik-icechain-sa@PROJECT_ID.iam.gserviceaccount.com
           containers:
             - image: ghcr.io/hashirama21/gik-icechain:latest
-              command: ["python", "-m", "gik_icechain.exceedance.pipeline"]
-              args: ["--config", "configs/east_africa.yaml"]
+              command: ["/bin/sh", "-c"]
+              args:
+                - "gik-icechain exceedance --store ${GIK_ICECHUNK_STORE_URI} --output ${GIK_EXCEEDANCE_STORE_URI} --start ${TARGET_DATE} --end ${TARGET_DATE} --config configs/default.yaml"
               resources:
                 limits:
                   cpu: "8"
                   memory: 32Gi
               env:
+                - name: TARGET_DATE
+                  value: ""
                 - name: GIK_ICECHUNK_STORE_URI
                   valueFrom:
                     secretKeyRef:
@@ -42,5 +45,7 @@ spec:
                       key: aws-secret-access-key
                 - name: HDF5_USE_FILE_LOCKING
                   value: "FALSE"
+                - name: PYTHONIOENCODING
+                  value: "utf-8"
           maxRetries: 2
           timeoutSeconds: 7200

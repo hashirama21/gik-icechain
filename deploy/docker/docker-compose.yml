@@ -1,33 +1,37 @@
-version: "3.9"
-
 services:
   pipeline-c1:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    command: ["python", "-m", "gik_icechain.conversion.gik_loader"]
+    command: ["convert", "--start", "${START_DATE}", "--end", "${END_DATE}", "--config", "configs/default.yaml"]
     env_file: .env
     volumes:
       - ../../configs:/app/configs:ro
+      - ../../data:/app/data:ro
 
   pipeline-c2:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    command: ["python", "-m", "gik_icechain.exceedance.pipeline"]
+    command: ["exceedance", "--store", "${GIK_ICECHUNK_STORE_URI}", "--output", "${GIK_EXCEEDANCE_STORE_URI}", "--config", "configs/default.yaml"]
     env_file: .env
     depends_on:
-      - pipeline-c1
+      pipeline-c1:
+        condition: service_completed_successfully
     volumes:
       - ../../configs:/app/configs:ro
+      - ../../data:/app/data:ro
 
   pipeline-c3:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
-    command: ["python", "-m", "gik_icechain.risk.pipeline"]
+    command: ["risk", "--exceedance-store", "${GIK_EXCEEDANCE_STORE_URI}", "--output", "/results/admin1_risk/", "--config", "configs/default.yaml"]
     env_file: .env
     depends_on:
-      - pipeline-c2
+      pipeline-c2:
+        condition: service_completed_successfully
     volumes:
       - ../../configs:/app/configs:ro
+      - ../../data:/app/data:ro
+      - ../../results:/results
