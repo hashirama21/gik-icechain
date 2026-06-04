@@ -15,7 +15,7 @@ _registered = False
 
 def register_grib_codecs() -> None:
     """Register GRIBCodec in numcodecs and Zarr v3 registries (idempotent)."""
-    global _registered  # noqa: PLW0603
+    global _registered
     if _registered:
         return
 

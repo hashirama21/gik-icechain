@@ -56,7 +56,7 @@ def _build_multi_region_mask(
         )
     mask.name = "region"
     num_to_pcode = dict(
-        zip(regions.numbers, admin_gdf[pcode_col].astype(str))
+        zip(regions.numbers, admin_gdf[pcode_col].astype(str), strict=False)
     )
     return mask, num_to_pcode
 

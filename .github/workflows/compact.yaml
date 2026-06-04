@@ -15,6 +15,7 @@ jobs:
     environment: production
     timeout-minutes: 60
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud

@@ -24,7 +24,7 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
-from gik_icechain.shared.codec_registry import register_grib_codecs
+from gik_icechain.shared.codec_registry import register_grib_codecs  # noqa: E402
 
 register_grib_codecs()
 

@@ -614,7 +614,8 @@ def convert(
             json.dumps({"commit_hash": commit_hash, "processed_date": e.isoformat()})
         )
 
-    typer.echo(f"Convert complete: {s} -> {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
+    short = commit_hash[:12] if commit_hash else "none"
+    typer.echo(f"Convert complete: {s} -> {e}  commit={short}")
 
 
 @app.command("convert-aifs")

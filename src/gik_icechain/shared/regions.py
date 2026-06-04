@@ -30,6 +30,22 @@ EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
     }
 )
 
+# Mapping ISO3 country code → CRMA climate cluster (plain strings, no circular import).
+# Source: ICPAC E4DRR regional classification (2024).
+COUNTRY_CLUSTER: dict[str, str] = {
+    "BDI": "equatorial_east",
+    "DJI": "horn_arid",
+    "ERI": "horn_arid",
+    "ETH": "great_rift",
+    "KEN": "equatorial_east",
+    "MDG": "equatorial_east",
+    "RWA": "equatorial_east",
+    "SOM": "horn_arid",
+    "SSD": "nile_basin",
+    "TZA": "equatorial_east",
+    "UGA": "equatorial_east",
+}
+
 
 def get_ea_slice() -> dict[str, slice]:
     """Return a lat/lon slice dict suitable for xarray ``.sel()``."""

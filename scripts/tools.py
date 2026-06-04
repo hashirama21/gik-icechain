@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import math
 import netrc
 import os
 from datetime import date, timedelta
@@ -161,11 +160,11 @@ def _download_admin_boundaries(output_dir: Path) -> None:
         return
 
     typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
-    _EA_COUNTRIES = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI"]
+    _ea_countries = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI"]
     import urllib.request as _urlreq
 
     all_features: list[dict] = []
-    for iso in _EA_COUNTRIES:
+    for iso in _ea_countries:
         api_url = f"https://www.geoboundaries.org/api/current/gbOpen/{iso}/ADM1/"
         try:
             with _urlreq.urlopen(api_url, timeout=15) as r:
@@ -216,7 +215,7 @@ def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
     """Download GPM IMERG V07B from NASA GES DISC (requires Earthdata account)."""
     import urllib.request as _urlreq
 
-    BASE = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
+    base = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
 
     user = os.environ.get("EARTHDATA_USER")
     password = os.environ.get("EARTHDATA_PASSWORD")
@@ -260,7 +259,7 @@ def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
             n_skipped += 1
         else:
             try:
-                url = f"{BASE}/{current.year}/{doy:03d}/{filename}"
+                url = f"{base}/{current.year}/{doy:03d}/{filename}"
                 with opener.open(url, timeout=120) as resp:
                     out_path.write_bytes(resp.read())
                 typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
@@ -293,7 +292,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
     import numpy as np
     import xarray as xr
 
-    BASE = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs/p05"
+    base = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs/p05"
 
     output_dir.mkdir(parents=True, exist_ok=True)
     current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
@@ -308,7 +307,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
             continue
 
         tif_name = f"chirps-v2.0.{current.year}.{current.month:02d}.{current.day:02d}.tif.gz"
-        url = f"{BASE}/{current.year}/{tif_name}"
+        url = f"{base}/{current.year}/{tif_name}"
 
         tmp_gz_path = Path(tempfile.mktemp(suffix=".tif.gz"))
         # Remove ".gz" to get ".tif" — avoid double-extension on Windows
@@ -398,7 +397,7 @@ def _download_enso_iod(output_dir: Path) -> None:
         dmi_raw = r.read().decode("utf-8")
 
     dmi: dict[tuple[int, int], float] = {}
-    _MISSING = {-99.99, -99.9, -999.0, -999.9}
+    _missing = {-99.99, -99.9, -999.0, -999.9}
     for line in dmi_raw.splitlines():
         parts = line.split()
         if len(parts) == 13 and parts[0].lstrip("-").isdigit():
@@ -406,13 +405,13 @@ def _download_enso_iod(output_dir: Path) -> None:
                 year = int(parts[0])
                 for m in range(1, 13):
                     val = float(parts[m])
-                    if val not in _MISSING and abs(val) < 90:
+                    if val not in _missing and abs(val) < 90:
                         dmi[(year, m)] = val
             except (ValueError, IndexError):
                 continue
     typer.echo(f"    {len(dmi)} monthly DMI records")
 
-    
+
     common = sorted(set(nino34) & set(dmi))
     if not common:
         raise RuntimeError(
@@ -630,7 +629,9 @@ def gap_fill(
 def export_eahw(
     risk_dir: Annotated[
         Path,
-        typer.Option(help="Directory containing risk_scores.json files and admin1_boundaries.geojson."),
+        typer.Option(
+            help="Directory containing risk_scores.json files and admin1_boundaries.geojson."
+        ),
     ],
     output: Annotated[
         Path, typer.Option(help="Output directory for EAHW GeoJSON files.")

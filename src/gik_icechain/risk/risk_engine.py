@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import asdict, replace
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import pandas as pd
@@ -31,11 +33,12 @@ import structlog
 import xarray as xr
 
 from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
-from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
+from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel, EastAfricaCluster
 from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
 from gik_icechain.risk.dynamic_bn import step as bn_step
 from gik_icechain.risk.geojson_writer import build_score, write_boundaries, write_risk_scores
 from gik_icechain.risk.gpm_loader import load_gpm_daily
+from gik_icechain.shared.regions import COUNTRY_CLUSTER
 
 log = structlog.get_logger(__name__)
 
@@ -43,11 +46,21 @@ _CHECKPOINT_FILE = "_checkpoint.json"
 _DEFAULT_CHECKPOINT_INTERVAL = 7  # days
 
 
+def _build_pcode_cluster_map(admin: gpd.GeoDataFrame) -> dict[str, EastAfricaCluster]:
+    """Map each admin-1 pcode to its CRMA climate cluster via the shapeGroup ISO3 column."""
+    result: dict[str, EastAfricaCluster] = {}
+    for _, row in admin.iterrows():
+        pcode = str(row["admin1_pcode"])
+        iso3 = str(row.get("shapeGroup", ""))
+        result[pcode] = EastAfricaCluster(COUNTRY_CLUSTER.get(iso3, "equatorial_east"))
+    return result
+
+
 def run_risk_batch(
     exceedance_store_uri: str,
     gpm_dir: Path,
     admin_boundaries_path: Path,
-    crma_model: CRMAModel,
+    crma_models: dict[EastAfricaCluster, CRMAModel],
     output_dir: Path,
     start: date,
     end: date,
@@ -64,7 +77,7 @@ def run_risk_batch(
         exceedance_store_uri:  URI of the Component-2 exceedance Zarr store.
         gpm_dir:               Directory containing GPM IMERG daily files.
         admin_boundaries_path: GeoPackage/Shapefile of East Africa admin-1 units.
-        crma_model:            Built CRMAModel instance.
+        crma_models:           One built CRMAModel per EastAfricaCluster.
         output_dir:            Directory for per-day GeoJSON output.
         start:                 First forecast date (inclusive).
         end:                   Last forecast date (inclusive).
@@ -85,9 +98,13 @@ def run_risk_batch(
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
 
-    pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
+    pcode_cluster = _build_pcode_cluster_map(admin)
+    # Pre-build once — avoids iterrows() on each of the N forecast days.
+    unit_by_pcode: dict[str, Any] = {
+        str(row["admin1_pcode"]): row for _, row in admin.iterrows()
+    }
     bn_states: dict[str, DynamicBNState] = {
-        p: init_state(initial_api_mm) for p in pcodes
+        p: init_state(initial_api_mm) for p in pcode_cluster
     }
 
     # Resume from checkpoint if available
@@ -103,7 +120,9 @@ def run_risk_batch(
             exc_ds,
             gpm_dir,
             admin,
-            crma_model,
+            crma_models,
+            pcode_cluster,
+            unit_by_pcode,
             output_dir,
             bn_states,
             api_decay,
@@ -131,7 +150,9 @@ def _process_day(
     exc_ds: xr.Dataset,
     gpm_dir: Path,
     admin: gpd.GeoDataFrame,
-    crma_model: CRMAModel,
+    crma_models: dict[EastAfricaCluster, CRMAModel],
+    pcode_cluster: dict[str, EastAfricaCluster],
+    unit_by_pcode: dict[str, Any],
     output_dir: Path,
     bn_states: dict[str, DynamicBNState],
     api_decay: float,
@@ -167,8 +188,8 @@ def _process_day(
         conf_s = pd.Series(dtype="int8")
 
     scores: dict[str, dict] = {}
-    for _, unit in admin.iterrows():
-        pcode   = str(unit["admin1_pcode"])
+    for pcode, cluster in pcode_cluster.items():
+        unit    = unit_by_pcode[pcode]
         p_24h   = p_24h_s.get(pcode, float("nan"))
         p_72h   = p_72h_s.get(pcode, float("nan"))
         p_7d    = p_7d_s.get(pcode, float("nan"))
@@ -209,7 +230,7 @@ def _process_day(
             gpm_quality=int(conf_s.get(pcode, 2.0)),
         )
         result, bn_states[pcode] = bn_step(
-            bn_states[pcode], evidence, crma_model,
+            bn_states[pcode], evidence, crma_models[cluster],
             api_decay=api_decay, gpm_obs_mm=float(gpm_24h),
             signal_threshold=signal_threshold,
         )
@@ -232,7 +253,9 @@ def _save_checkpoint(
             pcode: asdict(state) for pcode, state in bn_states.items()
         },
     }
-    path.write_text(json.dumps(payload))
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload))
+    os.replace(tmp, path)  # atomic on POSIX and Windows NTFS
     log.debug("checkpoint_saved", path=str(path), next_date=next_date.isoformat())
 
 
