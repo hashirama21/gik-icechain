@@ -16,6 +16,7 @@ data/
 .idea/
 *.ipynb_checkpoints/
 .env
+test_aifs_vps.sh
 a.txt
 notebooks/05_aifs_vs_ifs_comparison.ipynb
 notebooks/06_validation_emdat.ipynb

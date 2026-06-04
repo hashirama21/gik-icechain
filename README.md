@@ -7,7 +7,7 @@
 **Zero-Cost Cloud-Native Pipeline for Retrospective Flood Risk  
 Decision Support in East Africa using the ECMWF IFS Ensemble**
 
-> **ECMWF Code for Earth 2026 — Africa Stream (ArcX)**  
+> **ECMWF Code for Earth 2026  -  Africa Stream (ArcX)**  
 > Challenge 41: Missed Opportunities in Flood Disaster Risk Management  
 > Mentors: Nishadh Kalladath · Masilin Gudoshava · Ahmed Amdihun · Anthony Mwanthi · Katherine Egan · Jessica Keune · Hillary Koros
 
@@ -23,7 +23,7 @@ Decision Support in East Africa using the ECMWF IFS Ensemble**
 
 ECMWF's open IFS ensemble archive on AWS S3 (`s3://ecmwf-forecasts`) holds over
 **1 petabyte** of GRIB2 weather forecast data: 51 ensemble members, 85 forecast steps
-(0–360 h), and more than 1 000 forecast days since May 2023 — all freely available.
+(0–360 h), and more than 1 000 forecast days since May 2023  -  all freely available.
 Yet this data is almost completely inaccessible to the xarray/Dask ecosystem that
 East African disaster risk managers rely on.
 
@@ -31,9 +31,9 @@ GIK-IceChain v2.0 solves this in three components:
 
 | Component | What it does | Key output |
 |-----------|-------------|-----------|
-| **C1 — Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 000+ days, zero data duplication |
-| **C2 — Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 000 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
-| **C3 — Risk (CRMA)** | Admin-1 daily flood risk using ICPAC's CRMA Bayesian Network | Daily GeoJSON risk layer, integrated in calendar-map storymaps |
+| **C1  -  Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 000+ days, zero data duplication |
+| **C2  -  Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 000 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
+| **C3  -  Risk (CRMA)** | Admin-1 daily flood risk using ICPAC's CRMA Bayesian Network | Daily GeoJSON risk layer, integrated in calendar-map storymaps |
 
 ### Key numbers
 
@@ -62,11 +62,11 @@ flowchart TD
     end
 
     %% ==================== C1 : VIRTUAL STORE ====================
-    subgraph C1["C1 — IceChunk Virtual Store"]
+    subgraph C1["C1  -  IceChunk Virtual Store"]
         direction TB
         VZ[VirtualiZarr]
         IC[IceChunk<br/>Zarr v3]
-        Store["IceChunk Zarr v3 Virtual Store<br/>Metadata Only — zarr.open&#40;store&#41;<br/>Full Time-Travel History"]
+        Store["IceChunk Zarr v3 Virtual Store<br/>Metadata Only  -  zarr.open&#40;store&#41;<br/>Full Time-Travel History"]
 
         GRIB & Parquet -->|"byte-range refs"| VZ
         VZ --> IC
@@ -74,7 +74,7 @@ flowchart TD
     end
 
     %% ==================== C2 : EXCEEDANCE ====================
-    subgraph C2["C2 — Exceedance Analysis"]
+    subgraph C2["C2  -  Exceedance Analysis"]
         direction TB
         Manifest["Manifest-Aware Loader<br/>VirtualChunkRefs from IceChunk"]
         Coalesce["Byte-Range Coalescence<br/>~714 ranges → ~60 S3 requests"]
@@ -94,7 +94,7 @@ flowchart TD
     end
 
     %% ==================== C3 : CRMA-LIVE ====================
-    subgraph C3["C3 — CRMA-Live Risk Engine"]
+    subgraph C3["C3  -  CRMA-Live Risk Engine"]
         direction TB
         DBN[Dynamic Bayesian Network<br/>pgmpy]
         Soil[Soil Saturation Persistence<br/>API Node]
@@ -142,20 +142,20 @@ flowchart TD
 
 ## Components
 
-### Component 1 — GIK to IceChunk Conversion
+### Component 1  -  GIK to IceChunk Conversion
 
 Converts the 150 246 GIK Parquet reference files (already available on
 [HuggingFace E4DRR/gik-ecmwf-par](https://huggingface.co/datasets/E4DRR/gik-ecmwf-par))
-into a fully interoperable **IceChunk Zarr v3 virtual store** — with zero data
+into a fully interoperable **IceChunk Zarr v3 virtual store**  -  with zero data
 duplication. The original GRIB2 objects on S3 are never copied; only byte-range
 references are stored.
 
-**Innovation 1 — IceChunk Time-Travel Audit Trail**: every daily GIK batch
+**Innovation 1  -  IceChunk Time-Travel Audit Trail**: every daily GIK batch
 is committed as a new IceChunk snapshot. Users can check out the store as it
 existed on any past date, enabling reproducible "what would we have known on
-date X?" retrospective queries — directly applicable to anticipatory action protocols.
+date X?" retrospective queries  -  directly applicable to anticipatory action protocols.
 
-### Component 2 — Retrospective Exceedance Analysis
+### Component 2  -  Retrospective Exceedance Analysis
 
 For each of ~1 000 forecast days, 51 ensemble members, 7 accumulation windows,
 and 6 return-period thresholds:
@@ -169,23 +169,23 @@ and 6 return-period thresholds:
    `xr.Dataset(member, step, latitude, longitude)`
 5. Computes rolling precipitation accumulations (7 windows: 3 h to 7 days)
 6. Compares against **adaptive GEV thresholds** stratified by season and IOD/ENSO
-   phase (Innovation 2 — substantially reduces false alarm rates in dry regimes)
+   phase (Innovation 2  -  substantially reduces false alarm rates in dry regimes)
 7. Outputs a multi-dimensional Zarr v3 store
 
 The manifest-aware path is configurable via `component2.manifest_aware.enabled`
 in `configs/default.yaml`. When disabled, C2 falls back to the standard
 `xr.open_zarr()` + Dask path.
 
-### Component 3 — Admin-1 Risk Assessment (CRMA-Live)
+### Component 3  -  Admin-1 Risk Assessment (CRMA-Live)
 
 Integrates ICPAC's [CRMA prototype](https://meetingorganizer.copernicus.org/EGU24/EGU24-6843.html)
 (Bayesian Network, pgmpy) with two innovations:
 
-**Innovation 4 — Dynamic BN with API persistence**: adds an Antecedent
+**Innovation 4  -  Dynamic BN with API persistence**: adds an Antecedent
 Precipitation Index (API) node that carries soil moisture state across days,
 capturing multi-day compound flood risk.
 
-**Innovation 5 — EM-DAT CPT refinement**: uses historical EM-DAT flood events
+**Innovation 5  -  EM-DAT CPT refinement**: uses historical EM-DAT flood events
 to refine the Bayesian Network Conditional Probability Tables via maximum
 likelihood estimation.
 
@@ -203,7 +203,7 @@ git clone https://github.com/hashirama21/gik-icechain.git
 cd gik-icechain
 pip install -e ".[dev]"
 
-# Run only Component 1 (conversion) — store URI set in configs/default.yaml
+# Run only Component 1 (conversion)  -  store URI set in configs/default.yaml
 python -m gik_icechain convert --start 2024-10-01 --end 2024-10-31
 
 # Run only Component 2 (exceedance)
@@ -383,7 +383,7 @@ ruff check src/ tests/
   year    = {2026},
   url     = {https://github.com/hashirama21/gik-icechain},
   license = {Apache-2.0},
-  note    = {ECMWF Code for Earth 2026 — Challenge 41, Africa Stream (ArcX)}
+  note    = {ECMWF Code for Earth 2026  -  Challenge 41, Africa Stream (ArcX)}
 }
 ```
 
@@ -391,7 +391,7 @@ ruff check src/ tests/
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE)
+Apache License 2.0  -  see [LICENSE](LICENSE)
 
 This project was developed as part of the
 [ECMWF Code for Earth 2026](https://codeforearth.ecmwf.int/) programme,
