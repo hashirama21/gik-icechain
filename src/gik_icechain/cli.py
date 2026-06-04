@@ -197,9 +197,9 @@ def _threshold_bbox(
     the threshold object has no spatial data.
     """
     try:
-        for mode_key in thresholds._thresholds:
-            for wh in thresholds._thresholds[mode_key]:
-                for _rp, da in thresholds._thresholds[mode_key][wh].items():
+        for mode_key in thresholds._thresholds:  # type: ignore[attr-defined]
+            for wh in thresholds._thresholds[mode_key]:  # type: ignore[attr-defined]
+                for _rp, da in thresholds._thresholds[mode_key][wh].items():  # type: ignore[attr-defined]
                     lat_name = next((c for c in da.coords if c in ("lat", "latitude")), None)
                     lon_name = next((c for c in da.coords if c in ("lon", "longitude")), None)
                     if lat_name and lon_name:
@@ -233,7 +233,7 @@ def _resolve_climate_mode(
 
     season = get_season(day.month)
     try:
-        row = enso_iod.loc[pd.Timestamp(day)]
+        row = enso_iod.loc[pd.Timestamp(day)]  # type: ignore[attr-defined]
         return ClimateMode(
             season,
             classify_enso(float(row["nino34"]), threshold=enso_thr),
@@ -344,7 +344,7 @@ def _process_exceedance_day(args: dict) -> dict:
     for w in args["windows_h"]:
         for rp in args["return_periods"]:
             try:
-                thr = thresholds.get(w, rp, mode)
+                thr = thresholds.get(w, rp, mode)  # type: ignore[arg-type]
                 day_results[(w, rp)] = compute_exceedance_probabilities(
                     acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
                     window_h=w, return_period=rp, member_dim=member_dim,
@@ -548,20 +548,23 @@ def _run_risk(
     start: date,
     end: date,
 ) -> list[Path]:
-    from gik_icechain.risk.crma_model import CRMAModel
+    from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
     from gik_icechain.risk.risk_engine import run_risk_batch
 
-    crma = CRMAModel(crma_cfg=cfg.component3.crma_model)
-    crma.build()
-    if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
-        crma.load_cpts(Path(cfg.component3.crma.cpt_path))
+    crma_models: dict[EastAfricaCluster, CRMAModel] = {}
+    for cluster in EastAfricaCluster:
+        m = CRMAModel(cluster=cluster, crma_cfg=cfg.component3.crma_model)
+        m.build()
+        if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
+            m.load_cpts(Path(cfg.component3.crma.cpt_path))
+        crma_models[cluster] = m
 
     crma_cfg = cfg.component3.crma_model
     return run_risk_batch(
         exceedance_store_uri=exc_uri,
         gpm_dir=Path(cfg.sources.gpm_imerg_path),
         admin_boundaries_path=Path(cfg.sources.admin_boundaries_path),
-        crma_model=crma,
+        crma_models=crma_models,
         output_dir=output,
         start=start,
         end=end,

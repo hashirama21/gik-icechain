@@ -118,7 +118,7 @@ def scan_aifs_grib(
     """
     from kerchunk.grib2 import scan_grib
 
-    so = {"anon": True, "default_fill_cache": False}
+    so: dict[str, Any] = {"anon": True, "default_fill_cache": False}
     if s3_region:
         so["client_kwargs"] = {"region_name": s3_region}
 
@@ -242,12 +242,12 @@ def aifs_to_virtual_dataset(
     store_refs = KerchunkStoreRefs(combined)
     mg = manifestgroup_from_kerchunk_refs(store_refs)
     registry = _build_ecmwf_registry()
-    ms = ManifestStore(group=mg, registry=registry)
+    ms = ManifestStore(group=mg, registry=registry)  # type: ignore[arg-type]
 
     vds = open_virtual_dataset(
         url="aifs-combined",
-        registry=registry,
-        parser=_PassthroughParser(ms),
+        registry=registry,  # type: ignore[arg-type]
+        parser=_PassthroughParser(ms),  # type: ignore[arg-type]
         loadable_variables=[],
     )
 

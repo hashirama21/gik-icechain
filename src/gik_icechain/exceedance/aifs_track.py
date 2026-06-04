@@ -133,7 +133,7 @@ def compare_ensemble_spreads(
         available = list(ifs_ds.data_vars)
         if not available:
             raise ValueError(f"IFS store has no data variables: {ifs_store_uri}")
-        precip_var = available[0]
+        precip_var = str(available[0])
         log.warning(
             "spread_precip_fallback",
             expected="tp", using=precip_var, store="ifs",

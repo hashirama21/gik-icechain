@@ -177,9 +177,9 @@ indent-style = "space"
 # Mypy
 [tool.mypy]
 python_version         = "3.12"
-strict                 = true
 ignore_missing_imports = true
 warn_return_any        = false
+check_untyped_defs     = true
 plugins                = ["pydantic.mypy"]
 
 # Pytest

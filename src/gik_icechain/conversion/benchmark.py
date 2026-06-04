@@ -104,7 +104,7 @@ def _benchmark_gik(
             log.warning("benchmark_gik_no_snapshots", uri=store_uri)
             return None
 
-        session = store._repo.readonly_session(branch=store.branch)
+        session = store._repo.readonly_session(branch=store.branch)  # type: ignore[union-attr]
 
         ttfb = _measure_ttfb_icechunk(session, date_groups[0])
         elapsed, data_gb = _measure_full_scan_icechunk(

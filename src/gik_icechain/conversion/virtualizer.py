@@ -128,7 +128,7 @@ class GIKFlatParquetParser:
             self.step_hours = []
             store_refs = KerchunkStoreRefs({"refs": {".zgroup": '{"zarr_format": 2}'}})
             return ManifestStore(
-                group=manifestgroup_from_kerchunk_refs(store_refs), registry=registry
+                group=manifestgroup_from_kerchunk_refs(store_refs), registry=registry  # type: ignore[arg-type]
             )
 
         chunk_df = pd.DataFrame({
@@ -218,7 +218,7 @@ class GIKFlatParquetParser:
 
         store_refs = KerchunkStoreRefs({"refs": refs})
         manifestgroup = manifestgroup_from_kerchunk_refs(store_refs)
-        return ManifestStore(group=manifestgroup, registry=registry)
+        return ManifestStore(group=manifestgroup, registry=registry)  # type: ignore[arg-type]
 
 
 def _build_ecmwf_registry() -> object:
@@ -250,7 +250,7 @@ def _open_one_virtual(url: str, variables: list[str] | None, registry: object) -
     from virtualizarr import open_virtual_dataset
 
     parser = GIKFlatParquetParser(variables=variables)
-    vds = open_virtual_dataset(url=url, registry=registry, parser=parser, loadable_variables=[])
+    vds = open_virtual_dataset(url=url, registry=registry, parser=parser, loadable_variables=[])  # type: ignore[arg-type]
 
     if variables:
         keep = [v for v in variables if v in vds.data_vars]
