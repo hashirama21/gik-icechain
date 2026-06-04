@@ -173,7 +173,13 @@ def _subset_to_bbox(
         i_max = min(nlat - 1, int((90.0 - lat_min) / dlat))
         j_min = max(0, int(lon_min / dlon))
         j_max = min(nlon - 1, int(lon_max / dlon))
-        return ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        subset = ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        # Reassign real geographic coordinate values so downstream operations
+        # (regionmask, threshold alignment) work in degrees, not integer indices.
+        import numpy as np
+        real_lats = 90.0 - (i_min + np.arange(subset.sizes[lat_name])) * dlat
+        real_lons = (j_min + np.arange(subset.sizes[lon_name])) * dlon
+        return subset.assign_coords({lat_name: real_lats, lon_name: real_lons})
 
     # Proper geographic coordinates — use .sel()
     if float(lat_vals[0]) > float(lat_vals[-1]):
@@ -295,6 +301,7 @@ def _process_exceedance_day(args: dict) -> dict:
                 ),
                 fetch_workers=args.get("fetch_workers", 8),
                 min_members=args.get("min_members", 10),
+                s3_region=args.get("s3_region", "eu-central-1"),
             )
             # Data is already concrete (in-memory), no chunking needed
         else:
@@ -302,8 +309,13 @@ def _process_exceedance_day(args: dict) -> dict:
 
             # Dimension 1: Variable pre-selection
             available = [v for v in compute_vars if v in day_ds.data_vars]
-            if available:
-                day_ds = day_ds[available]
+            if not available:
+                return {
+                    "date_str": date_str,
+                    "success": False,
+                    "error": f"none of {compute_vars} found in group {date_str}",
+                }
+            day_ds = day_ds[available]
 
             # Dimension 2: Step slicing — only load steps needed for max window
             if max_steps is not None and "step" in day_ds.dims:
@@ -337,10 +349,10 @@ def _process_exceedance_day(args: dict) -> dict:
                     acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
                     window_h=w, return_period=rp, member_dim=member_dim,
                 )
-            except Exception:
+            except Exception as exc:
                 log.warning(
                     "exceedance_window_rp_failed",
-                    window_h=w, return_period=rp, date=date_str, exc_info=True,
+                    window_h=w, return_period=rp, date=date_str, error=str(exc),
                 )
                 continue
 
@@ -453,6 +465,7 @@ def _run_exceedance(
             "max_step_h": c2.effective_max_forecast_h,
             "step_resolution_h": c2.step_resolution_h,
             "step_buffer": c2.step_buffer,
+            "s3_region": cfg.sources.ecmwf_s3_region,
         }
         for d in committed_dates
     ]
@@ -504,6 +517,7 @@ def _run_exceedance(
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
     if cfg.outputs.exceedance_icechunk_uri:
@@ -555,6 +569,7 @@ def _run_risk(
         initial_api_mm=cfg.component3.api.initial_api_mm,
         signal_threshold=crma_cfg.signal_threshold_prob,
         rp_signal=crma_cfg.rp_signal,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
 
@@ -599,7 +614,7 @@ def convert(
             json.dumps({"commit_hash": commit_hash, "processed_date": e.isoformat()})
         )
 
-    typer.echo(f"Convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
+    typer.echo(f"Convert complete: {s} -> {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
 
 
 @app.command("convert-aifs")
@@ -731,7 +746,7 @@ def exceedance(
     e = _parse_date(end) if end else None
 
     dask_cfg = cfg.component2.dask
-    dask_workers = workers or dask_cfg.n_workers
+    dask_workers = workers if workers is not None else dask_cfg.n_workers
     if dask_workers > 1:
         try:
             from dask.distributed import Client

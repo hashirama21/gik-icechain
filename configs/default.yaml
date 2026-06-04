@@ -8,12 +8,12 @@ sources:
   ecmwf_s3_no_sign: true
   gpm_imerg_path: "data/gpm_imerg/"
   emdat_path: "data/emdat/east_africa_floods.csv"
-  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.geojson"
 
 outputs:
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
   icechunk_store_region: "eu-west-1"
-  endpoint_url: ""
+  endpoint_url: "http://20.116.218.195:9000"
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""
@@ -60,12 +60,12 @@ component2:
       max_forecast_h: 168
 
   spatial:
-    bbox: [-12, 23, 22, 52]
+    bbox: [-13, 24, 22, 53]
     lat_dim: "latitude"
     lon_dim: "longitude"
 
   manifest_aware:
-    enabled: true
+    enabled: false
     fetch_workers: 8
     min_members: 10
 

@@ -22,9 +22,10 @@ from gik_icechain.risk.dynamic_bn import (
     step,
 )
 from gik_icechain.risk.geojson_writer import (
-    build_feature,
+    build_score,
     export_eahw_format,
-    write_risk_geojson,
+    write_boundaries,
+    write_risk_scores,
 )
 from gik_icechain.risk.gpm_loader import (
     compute_api_series,
@@ -41,7 +42,7 @@ __all__ = [
     "DynamicBNState",
     "EMDATFloodRecord",
     "aggregate_to_admin1",
-    "build_feature",
+    "build_score",
     "build_training_dataset",
     "compute_api_series",
     "coverage_fraction",
@@ -54,5 +55,6 @@ __all__ = [
     "run_risk_batch",
     "run_temporal_sequence",
     "step",
-    "write_risk_geojson",
+    "write_boundaries",
+    "write_risk_scores",
 ]

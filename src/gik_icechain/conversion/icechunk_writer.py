@@ -42,6 +42,14 @@ _DEFAULT_MESSAGE_TEMPLATE = "GIK ingest: {date}T{run_hour:02d}Z"
 _DEFAULT_TAG_FORMAT = "{date}T{run_hour:02d}Z"
 
 
+def _tag_before_or_on(tag: str, as_of: date) -> bool:
+    """Return True if tag's date prefix is a valid ISO date on or before as_of."""
+    try:
+        return date.fromisoformat(tag[:10]) <= as_of
+    except ValueError:
+        return False
+
+
 class IceChainStore:
     """Manages the GIK-IceChain virtual store lifecycle.
 
@@ -208,7 +216,7 @@ class IceChainStore:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
 
         all_tags = self._repo.list_tags()
-        valid_tags = [t for t in all_tags if date.fromisoformat(t[:10]) <= as_of_date]
+        valid_tags = [t for t in all_tags if _tag_before_or_on(t, as_of_date)]
 
         if not valid_tags:
             earliest = min(t[:10] for t in all_tags)
@@ -335,7 +343,13 @@ class IceChainStore:
         knows which external S3 prefixes are trusted for byte-range references.
         The ECMWF bucket is public (anonymous S3 access).
         """
-        ecmwf_store = icechunk.s3_store(region="eu-central-1", anonymous=True)
+        # Explicitly set the AWS endpoint so that AWS_ENDPOINT_URL (used for
+        # the MinIO store) is not inherited by the ECMWF virtual-chunk store.
+        ecmwf_store = icechunk.s3_store(
+            region="eu-central-1",
+            endpoint_url="https://s3.eu-central-1.amazonaws.com",
+            anonymous=True,
+        )
         container = icechunk.VirtualChunkContainer(
             url_prefix="s3://ecmwf-forecasts/",
             store=ecmwf_store,

@@ -19,11 +19,14 @@ def register_grib_codecs() -> None:
     if _registered:
         return
 
+    ok = False
+
     try:
         import numcodecs
         from kerchunk.codecs import GRIBCodec
 
         numcodecs.register_codec(GRIBCodec, "grib")
+        ok = True
     except (ImportError, ValueError) as exc:
         log.warning("grib_codec_numcodecs_unavailable", error=str(exc))
 
@@ -35,7 +38,9 @@ def register_grib_codecs() -> None:
             pass
 
         register_codec("numcodecs.grib", _GribBridge)
+        ok = True
     except (ImportError, ValueError) as exc:
         log.warning("grib_codec_zarr_v3_unavailable", error=str(exc))
 
-    _registered = True
+    if ok:
+        _registered = True

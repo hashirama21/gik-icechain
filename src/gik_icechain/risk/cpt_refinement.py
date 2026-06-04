@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 import structlog
 
-from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
+from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel, EvidenceThresholds
 from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
 
 log = structlog.get_logger(__name__)
@@ -119,6 +119,7 @@ def build_training_dataset(
     gpm_df: pd.DataFrame,
     api_df: pd.DataFrame,
     negative_sample_ratio: float = 3.0,
+    thresholds: EvidenceThresholds | None = None,
 ) -> pd.DataFrame:
     """Build a labeled training dataset for CPT refinement.
 
@@ -170,6 +171,7 @@ def build_training_dataset(
                 sat_consecutive_days=int(
                     _col_or_default(api_row, "sat_consecutive_days", 0.0)
                 ),
+                thresholds=thresholds or EvidenceThresholds(),
             )
 
             rows.append(
@@ -224,6 +226,7 @@ def build_training_dataset(
             sat_consecutive_days=int(
                 _col_or_default(api_row, "sat_consecutive_days", 0.0)
             ),
+            thresholds=thresholds or EvidenceThresholds(),
         )
 
         rows.append(
@@ -235,7 +238,7 @@ def build_training_dataset(
                 "Data_Confidence": evidence.data_confidence_state,
                 "API_State": evidence.api_state,
                 "Soil_Memory": evidence.soil_memory_state,
-                "Risk_State": min(evidence.forecast_hazard_state, 2),
+                "Risk_State": min(evidence.forecast_hazard_state, 1),
                 "source": "negative_sample",
                 "event_id": None,
                 "date": row["date"],

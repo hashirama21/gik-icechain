@@ -17,6 +17,9 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
+import netrc
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -30,9 +33,6 @@ app = typer.Typer(
     help="GIK-IceChain developer and operations tools.",
     no_args_is_help=True,
 )
-
-
-#  benchmark
 
 
 @app.command()
@@ -152,44 +152,223 @@ def validate_store(
     typer.echo("\nStore is valid.")
 
 
-#  download
-
 
 def _download_admin_boundaries(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    dest = output_dir / "east_africa_admin1.gpkg"
+    dest = output_dir / "east_africa_admin1.geojson"
     if dest.exists():
         typer.echo(f"  Already exists: {dest}")
         return
 
-    typer.echo("  Downloading admin-1 boundaries from HuggingFace ...")
+    typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
+    _EA_COUNTRIES = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI"]
+    import urllib.request as _urlreq
+
+    all_features: list[dict] = []
+    for iso in _EA_COUNTRIES:
+        api_url = f"https://www.geoboundaries.org/api/current/gbOpen/{iso}/ADM1/"
+        try:
+            with _urlreq.urlopen(api_url, timeout=15) as r:
+                meta = json.loads(r.read())
+            dl_url = meta.get("gjDownloadURL", "")
+            if not dl_url:
+                typer.echo(f"    {iso}: no download URL", err=True)
+                continue
+            with _urlreq.urlopen(dl_url, timeout=30) as r:
+                fc = json.loads(r.read())
+            for feat in fc.get("features", []):
+                feat["properties"]["admin1_pcode"] = (
+                    iso + "_" + str(feat["properties"].get("shapeName", ""))[:20]
+                )
+                all_features.append(feat)
+            typer.echo(f"    {iso}: {len(fc.get('features', []))} units")
+        except Exception as exc:
+            typer.echo(f"    {iso}: skipped ({exc})", err=True)
+
+    if not all_features:
+        raise RuntimeError("No admin-1 features downloaded from geoBoundaries")
+
+    dest.write_text(json.dumps({"type": "FeatureCollection", "features": all_features}))
+    typer.echo(f"  Saved {len(all_features)} admin-1 units: {dest}")
+
+
+def _download_cmorph_thresholds(output_dir: Path) -> None:
+    """Download CMORPH East Africa return-period thresholds from HuggingFace."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dest = output_dir / "cmorph_ea_return_periods.nc"
+    if dest.exists():
+        typer.echo(f"  Already exists: {dest}")
+        return
+
+    typer.echo("  Downloading CMORPH return-period thresholds from HuggingFace ...")
     from huggingface_hub import hf_hub_download
 
     path = hf_hub_download(
-        repo_id="E4DRR/gik-ecmwf-par",
-        filename="admin_boundaries/east_africa_admin1.gpkg",
+        repo_id="E4DRR/virtualizarr-stores",
+        filename="cmorph_ea_return_periods.nc",
         repo_type="dataset",
         local_dir=str(output_dir),
     )
     typer.echo(f"  Saved: {path}")
 
 
-def _download_cmorph_thresholds(output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    typer.echo("  Downloading CMORPH GEV thresholds from HuggingFace ...")
-    from huggingface_hub import snapshot_download
+def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
+    """Download GPM IMERG V07B from NASA GES DISC (requires Earthdata account)."""
+    import urllib.request as _urlreq
 
-    snapshot_download(
-        repo_id="E4DRR/gik-ecmwf-par",
-        repo_type="dataset",
-        allow_patterns="cmorph_thresholds/*.nc",
-        local_dir=str(output_dir.parent),
+    BASE = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
+
+    user = os.environ.get("EARTHDATA_USER")
+    password = os.environ.get("EARTHDATA_PASSWORD")
+    if not (user and password):
+        try:
+            nrc = netrc.netrc()
+            auth = nrc.authenticators("urs.earthdata.nasa.gov")
+            if auth:
+                user, _, password = auth
+        except (FileNotFoundError, netrc.NetrcParseError):
+            pass
+
+    if not (user and password):
+        typer.echo(
+            "NASA Earthdata credentials not found.\n"
+            "Set EARTHDATA_USER / EARTHDATA_PASSWORD or add to ~/.netrc:\n"
+            "  machine urs.earthdata.nasa.gov login <user> password <pass>\n"
+            "Register free at: https://urs.earthdata.nasa.gov/home\n"
+            "Tip: use --source chirps for a no-auth alternative.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    password_mgr = _urlreq.HTTPPasswordMgrWithDefaultRealm()
+    password_mgr.add_password(None, "https://urs.earthdata.nasa.gov", user, password)
+    opener = _urlreq.build_opener(
+        _urlreq.HTTPBasicAuthHandler(password_mgr),
+        _urlreq.HTTPCookieProcessor(),
     )
-    typer.echo(f"  Saved to: {output_dir}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
+
+    while current <= end:
+        doy = current.timetuple().tm_yday
+        date_str = current.strftime("%Y%m%d")
+        filename = f"3B-DAY.MS.MRG.3IMERG.{date_str}-S000000-E235959.1440.V07B.HDF5"
+        out_path = output_dir / filename
+
+        if out_path.exists():
+            n_skipped += 1
+        else:
+            try:
+                url = f"{BASE}/{current.year}/{doy:03d}/{filename}"
+                with opener.open(url, timeout=120) as resp:
+                    out_path.write_bytes(resp.read())
+                typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
+                n_downloaded += 1
+            except Exception as exc:
+                typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
+                n_failed += 1
+
+        current += timedelta(days=1)
+
+    typer.echo(
+        f"  NASA GPM: {n_downloaded} downloaded, {n_skipped} skipped"
+        + (f", {n_failed} failed" if n_failed else "")
+    )
+
+
+def _download_chirps(output_dir: Path, start: date, end: date) -> None:
+    """Download CHIRPS v2.0 daily Africa rainfall — no authentication required.
+
+    CHIRPS (Climate Hazards Group InfraRed Precipitation with Station data)
+    offers 0.05 degree daily rainfall for Africa.  Files are converted to
+    GPM-compatible nc4 format so gpm_loader.py reads them transparently.
+
+    Source: https://www.chc.ucsb.edu/data/chirps
+    """
+    import gzip
+    import tempfile
+    import urllib.request as _urlreq
+
+    import numpy as np
+    import xarray as xr
+
+    BASE = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/africa_daily/tifs/p05"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
+
+    while current <= end:
+        date_str = current.strftime("%Y%m%d")
+        out_path = output_dir / f"3B-DAY.MS.MRG.3IMERG.{date_str}.V07B.nc4"
+
+        if out_path.exists():
+            n_skipped += 1
+            current += timedelta(days=1)
+            continue
+
+        tif_name = f"chirps-v2.0.{current.year}.{current.month:02d}.{current.day:02d}.tif.gz"
+        url = f"{BASE}/{current.year}/{tif_name}"
+
+        tmp_gz_path = Path(tempfile.mktemp(suffix=".tif.gz"))
+        # Remove ".gz" to get ".tif" — avoid double-extension on Windows
+        tmp_tif = tmp_gz_path.parent / tmp_gz_path.name[:-3]
+        try:
+            with _urlreq.urlopen(url, timeout=60) as resp:
+                tmp_gz_path.write_bytes(resp.read())
+
+            with gzip.open(tmp_gz_path, "rb") as gz_in:
+                tmp_tif.write_bytes(gz_in.read())
+            tmp_gz_path.unlink(missing_ok=True)
+
+            # Use context manager so rasterio releases the file handle on exit
+            with xr.open_dataset(tmp_tif, engine="rasterio") as ds_raw:
+                precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
+
+                # rasterio uses 'y'/'x'; CHIRPS uses 'lat'/'lon' — normalise both
+                lat_name = next(
+                    (c for c in precip.dims if "lat" in c.lower() or c == "y"), None
+                )
+                lon_name = next(
+                    (c for c in precip.dims if "lon" in c.lower() or c == "x"), None
+                )
+                rename = {}
+                if lat_name and lat_name != "lat":
+                    rename[lat_name] = "lat"
+                if lon_name and lon_name != "lon":
+                    rename[lon_name] = "lon"
+                if rename:
+                    precip = precip.rename(rename)
+
+                nodata = float(ds_raw["band_data"].attrs.get("_FillValue", -9999.0))
+                precip = precip.where(precip != nodata, other=np.nan).clip(min=0.0)
+
+                xr.Dataset(
+                    {"precipitationCal": precip.astype(np.float32)},
+                    attrs={"source": "CHIRPS v2.0", "units": "mm/day"},
+                ).to_netcdf(out_path)
+
+            tmp_tif.unlink(missing_ok=True)
+            typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
+            n_downloaded += 1
+
+        except Exception as exc:
+            typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
+            n_failed += 1
+            tmp_gz_path.unlink(missing_ok=True)
+            tmp_tif.unlink(missing_ok=True)
+
+        current += timedelta(days=1)
+
+    typer.echo(
+        f"  CHIRPS: {n_downloaded} downloaded, {n_skipped} skipped"
+        + (f", {n_failed} failed" if n_failed else "")
+    )
 
 
 def _download_enso_iod(output_dir: Path) -> None:
-    import urllib.request
+    """Download ENSO/IOD indices: Niño 3.4 (NOAA CPC) + DMI (NOAA PSL)."""
+    import urllib.request as _urlreq
 
     output_dir.mkdir(parents=True, exist_ok=True)
     dest = output_dir / "enso_iod_index.csv"
@@ -197,13 +376,104 @@ def _download_enso_iod(output_dir: Path) -> None:
         typer.echo(f"  Already exists: {dest}")
         return
 
-    typer.echo("  Downloading ENSO/IOD index ...")
-    url = (
-        "https://huggingface.co/datasets/E4DRR/gik-ecmwf-par"
-        "/resolve/main/enso_iod_index.csv"
-    )
-    urllib.request.urlretrieve(url, dest)
-    typer.echo(f"  Saved: {dest}")
+    nino34_url = "https://www.cpc.ncep.noaa.gov/data/indices/sstoi.indices"
+    typer.echo(f"  Downloading Niño 3.4 anomaly from {nino34_url} ...")
+    with _urlreq.urlopen(nino34_url, timeout=30) as r:
+        nino34_raw = r.read().decode("utf-8")
+
+    nino34: dict[tuple[int, int], float] = {}
+    for line in nino34_raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 10 and parts[0].lstrip("-").isdigit():
+            try:
+                year, month = int(parts[0]), int(parts[1])
+                nino34[(year, month)] = float(parts[9])
+            except (ValueError, IndexError):
+                continue
+    typer.echo(f"    {len(nino34)} monthly Niño 3.4 records")
+
+    dmi_url = "https://psl.noaa.gov/gcos_wgsp/Timeseries/Data/dmi.had.long.data"
+    typer.echo(f"  Downloading DMI from {dmi_url} ...")
+    with _urlreq.urlopen(dmi_url, timeout=30) as r:
+        dmi_raw = r.read().decode("utf-8")
+
+    dmi: dict[tuple[int, int], float] = {}
+    _MISSING = {-99.99, -99.9, -999.0, -999.9}
+    for line in dmi_raw.splitlines():
+        parts = line.split()
+        if len(parts) == 13 and parts[0].lstrip("-").isdigit():
+            try:
+                year = int(parts[0])
+                for m in range(1, 13):
+                    val = float(parts[m])
+                    if val not in _MISSING and abs(val) < 90:
+                        dmi[(year, m)] = val
+            except (ValueError, IndexError):
+                continue
+    typer.echo(f"    {len(dmi)} monthly DMI records")
+
+    
+    common = sorted(set(nino34) & set(dmi))
+    if not common:
+        raise RuntimeError(
+            "No overlapping dates between Niño 3.4 and DMI datasets. "
+            "Check source URLs."
+        )
+
+    lines = ["date,nino34_anom,dmi"]
+    for year, month in common:
+        lines.append(f"{year}-{month:02d}-01,{nino34[(year, month)]:.2f},{dmi[(year, month)]:.3f}")
+
+    dest.write_text("\n".join(lines) + "\n")
+    typer.echo(f"  Saved {len(common)} merged monthly records: {dest}")
+
+
+@app.command("download-gpm")
+def download_gpm(
+    start: Annotated[str, typer.Option("--start", help="First date (YYYY-MM-DD).")],
+    end: Annotated[str, typer.Option("--end", help="Last date (YYYY-MM-DD).")],
+    output: Annotated[
+        Path, typer.Option(help="Output directory for precipitation files.")
+    ] = REPO_ROOT / "data" / "gpm_imerg",
+    source: Annotated[
+        str,
+        typer.Option(
+            help="Data source: 'nasa' (GPM IMERG, requires Earthdata account) "
+                 "or 'chirps' (CHIRPS v2.0, no auth required)."
+        ),
+    ] = "chirps",
+) -> None:
+    """Download daily precipitation data for C3 GPM input.
+
+    Two sources are available:
+
+    chirps (default, no authentication):
+      CHIRPS v2.0 — 0.05 deg daily Africa rainfall, freely available.
+      Files saved as GPM-compatible nc4 so gpm_loader.py reads them.
+
+    nasa (requires free Earthdata account):
+      GPM IMERG V07B Final Run — 0.1 deg global, official NASA product.
+      Register at https://urs.earthdata.nasa.gov/home then set:
+        export EARTHDATA_USER=<user>
+        export EARTHDATA_PASSWORD=<pass>
+
+    Example — OND 2024 wet season:
+      python scripts/tools.py download-gpm --start 2024-10-01 --end 2024-10-07
+    """
+    s, e = date.fromisoformat(start), date.fromisoformat(end)
+    if s > e:
+        typer.echo("--start must be <= --end", err=True)
+        raise typer.Exit(1)
+    if source not in ("nasa", "chirps"):
+        typer.echo(f"Unknown source '{source}'. Use 'nasa' or 'chirps'.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Downloading precipitation ({source}): {s} -> {e}  =>  {output}")
+    if source == "nasa":
+        _download_gpm_nasa(output, s, e)
+    else:
+        _download_chirps(output, s, e)
+    typer.echo("Done.")
 
 
 @app.command()
@@ -218,20 +488,40 @@ def download(
         Path, typer.Option(help="Base output directory.")
     ] = REPO_ROOT / "data",
 ) -> None:
-    """Download reference data (admin boundaries, thresholds, ENSO/IOD)."""
+    """Download reference data (admin boundaries, thresholds, ENSO/IOD).
+
+    For GPM IMERG daily rainfall, use the dedicated ``download-gpm`` command.
+    """
     typer.echo(f"Downloading: {component}  ->  {output}")
 
-    if component in ("all", "admin"):
-        _download_admin_boundaries(output / "admin_boundaries")
-    if component in ("all", "thresholds"):
-        _download_cmorph_thresholds(output / "cmorph_thresholds")
-    if component in ("all", "enso_iod"):
-        _download_enso_iod(output)
+    errors: list[str] = []
 
+    if component in ("all", "admin"):
+        try:
+            _download_admin_boundaries(output / "admin_boundaries")
+        except Exception as exc:
+            typer.echo(f"  admin download failed: {exc}", err=True)
+            errors.append("admin")
+
+    if component in ("all", "thresholds"):
+        try:
+            _download_cmorph_thresholds(output / "cmorph_thresholds")
+        except Exception as exc:
+            typer.echo(f"  thresholds download failed: {exc}", err=True)
+            errors.append("thresholds")
+
+    if component in ("all", "enso_iod"):
+        try:
+            _download_enso_iod(output)
+        except Exception as exc:
+            typer.echo(f"  enso_iod download failed: {exc}", err=True)
+            errors.append("enso_iod")
+
+    if errors:
+        typer.echo(f"Done (with errors in: {', '.join(errors)}).", err=True)
+        raise typer.Exit(1)
     typer.echo("Done.")
 
-
-# ── gap-fill
 
 _GAP_START = date(2023, 5, 1)
 _GAP_END = date(2024, 2, 29)
@@ -336,34 +626,39 @@ def gap_fill(
         f"\nGap-fill complete. Processed {processed} / {len(missing)} dates."
     )
 
-
-#  export-eahw
-
-
 @app.command("export-eahw")
 def export_eahw(
     risk_dir: Annotated[
         Path,
-        typer.Option(help="Directory with per-day risk GeoJSON files."),
+        typer.Option(help="Directory containing risk_scores.json files and admin1_boundaries.geojson."),
     ],
     output: Annotated[
         Path, typer.Option(help="Output directory for EAHW GeoJSON files.")
     ],
 ) -> None:
-    """Export admin-1 risk GeoJSON to East Africa Hazard Watch format."""
+    """Export daily risk scores to East Africa Hazard Watch Portal format.
+
+    Combines the shared ``admin1_boundaries.geojson`` with each
+    ``{date}_risk_scores.json`` file to produce one EAHW GeoJSON per day.
+    """
     from gik_icechain.risk.geojson_writer import export_eahw_format
 
-    risk_files = sorted(risk_dir.glob("*_admin1_risk.geojson"))
-    if not risk_files:
-        typer.echo(f"No risk GeoJSON files found in: {risk_dir}", err=True)
+    boundaries_path = risk_dir / "admin1_boundaries.geojson"
+    if not boundaries_path.exists():
+        typer.echo(f"admin1_boundaries.geojson not found in: {risk_dir}", err=True)
+        raise typer.Exit(1)
+
+    scores_files = sorted(risk_dir.glob("*_risk_scores.json"))
+    if not scores_files:
+        typer.echo(f"No *_risk_scores.json files found in: {risk_dir}", err=True)
         raise typer.Exit(1)
 
     output.mkdir(parents=True, exist_ok=True)
     exported = 0
-    for f in risk_files:
+    for f in scores_files:
         date_str = f.stem[:10]
         out_path = output / f"eahw_{date_str}.geojson"
-        export_eahw_format(f, out_path)
+        export_eahw_format(f, boundaries_path, out_path)
         exported += 1
 
     typer.echo(f"Exported {exported} files to {output}")
@@ -373,25 +668,24 @@ def export_eahw(
 
 
 def _load_risk_results(risk_dir: Path):
-    """Load all per-day GeoJSON files into a flat DataFrame."""
+    """Load all per-day risk score files into a flat DataFrame."""
     import pandas as pd
 
     rows: list[dict] = []
-    for geojson_path in sorted(risk_dir.glob("*_admin1_risk.geojson")):
-        date_str = geojson_path.stem[:10]
-        data = json.loads(geojson_path.read_text())
-        for feat in data.get("features", []):
-            props = feat["properties"]
+    for scores_path in sorted(risk_dir.glob("*_risk_scores.json")):
+        data = json.loads(scores_path.read_text())
+        date_str = data.get("date", scores_path.stem[:10])
+        for pcode, score in data.get("units", {}).items():
             rows.append(
                 {
                     "date": date_str,
-                    "admin1_pcode": props.get("admin1_pcode", ""),
-                    "risk_state": int(props.get("risk_state", 0)),
-                    "p_red": float(props.get("p_red", 0.0)),
+                    "admin1_pcode": pcode,
+                    "risk_state": int(score.get("risk_state", 0)),
+                    "p_red": float(score.get("p_red", 0.0)),
                 }
             )
     if not rows:
-        raise ValueError(f"No GeoJSON risk files found in {risk_dir}")
+        raise ValueError(f"No *_risk_scores.json files found in {risk_dir}")
     return pd.DataFrame(rows)
 
 
@@ -443,9 +737,6 @@ def validate_emdat(
         typer.echo(f"  {k:<20} {v:>8.4f}")
 
     typer.echo(f"\nPer-event table saved to {output}")
-
-
-#  entry point
 
 if __name__ == "__main__":
     app()

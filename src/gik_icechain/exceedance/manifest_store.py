@@ -139,15 +139,26 @@ def _extract_virtual_chunk_refs(
     """
     refs: list[ByteRange] = []
 
-    # IceChunk 2.x exposes all virtual chunk locations in one call.
-    # Each entry maps a chunk key (zarr path) to its (url, offset, length).
+    # IceChunk ≥2.x changed all_virtual_chunk_locations() to return a flat
+    # list of unique URIs rather than a {chunk_key: location} dict.  When
+    # the new format is detected, we fall back to the standard zarr path.
     try:
         all_locations = session.all_virtual_chunk_locations()
     except AttributeError:
         log.warning(
             "icechunk_api_missing",
             msg="session.all_virtual_chunk_locations() not available; "
-            "upgrade icechunk or use the standard zarr path",
+            "use the standard zarr path",
+        )
+        return refs
+
+    # New IceChunk 2.x API returns a list of URIs, not a {key: location} dict.
+    if not isinstance(all_locations, dict):
+        log.warning(
+            "icechunk_api_changed",
+            msg="all_virtual_chunk_locations() returned a list of URIs (IceChunk ≥2.x); "
+            "manifest-aware loading requires a {chunk_key: location} dict. "
+            "Falling back to the standard zarr path.",
         )
         return refs
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -34,7 +34,7 @@ from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
 from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel
 from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
 from gik_icechain.risk.dynamic_bn import step as bn_step
-from gik_icechain.risk.geojson_writer import build_feature, write_risk_geojson
+from gik_icechain.risk.geojson_writer import build_score, write_boundaries, write_risk_scores
 from gik_icechain.risk.gpm_loader import load_gpm_daily
 
 log = structlog.get_logger(__name__)
@@ -56,6 +56,7 @@ def run_risk_batch(
     signal_threshold: float = 0.15,
     rp_signal: int = 5,
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
+    endpoint_url: str | None = None,
 ) -> list[Path]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -79,7 +80,10 @@ def run_risk_batch(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     admin = gpd.read_file(admin_boundaries_path)
-    exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False)
+    write_boundaries(admin, output_dir)
+
+    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
 
     pcodes = [str(row["admin1_pcode"]) for _, row in admin.iterrows()]
     bn_states: dict[str, DynamicBNState] = {
@@ -114,9 +118,9 @@ def run_risk_batch(
         if checkpoint_interval > 0 and day_count % checkpoint_interval == 0:
             _save_checkpoint(checkpoint_path, bn_states, current)
 
-    # Final checkpoint
-    if checkpoint_interval > 0:
-        _save_checkpoint(checkpoint_path, bn_states, current)
+    # Successful completion — remove checkpoint so re-runs start from scratch
+    if checkpoint_interval > 0 and checkpoint_path.exists():
+        checkpoint_path.unlink()
 
     log.info("risk_batch_complete", n_days=len(written), start=start, end=end)
     return written
@@ -135,7 +139,7 @@ def _process_day(
     rp_signal: int,
 ) -> Path | None:
     try:
-        exc_day = exc_ds.sel(date=pd.Timestamp(day))
+        exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
     except KeyError:
         log.warning("exceedance_date_missing", date=day)
         return None
@@ -143,62 +147,53 @@ def _process_day(
     try:
         exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
         exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
-        exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
+        exc_7d  = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
     except KeyError as exc:
         log.warning("exceedance_window_missing", date=day, rp=rp_signal, error=str(exc))
         return None
+
     gpm_da = load_gpm_daily(gpm_dir, day)
 
     p_24h_s = aggregate_to_admin1(exc_24h, admin)
     p_72h_s = aggregate_to_admin1(exc_72h, admin)
-    p_7d_s = aggregate_to_admin1(exc_7d, admin)
-    cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
-    gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+    p_7d_s  = aggregate_to_admin1(exc_7d, admin)
+    cov_s   = coverage_fraction(exc_24h, admin, signal_threshold)
+    gpm_s   = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
-    # Ensemble confidence (Data_Confidence BN node): IQR/median spread per admin-1.
-    # Defaults to High (2) when the variable is absent (stores written before this fix).
     if "ensemble_confidence" in exc_day:
         conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
         conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0).astype("int8")
     else:
         conf_s = pd.Series(dtype="int8")
 
-    features = []
+    scores: dict[str, dict] = {}
     for _, unit in admin.iterrows():
-        pcode = str(unit["admin1_pcode"])
-        p_24h = p_24h_s.get(pcode, float("nan"))
-        p_72h = p_72h_s.get(pcode, float("nan"))
-        p_7d = p_7d_s.get(pcode, float("nan"))
+        pcode   = str(unit["admin1_pcode"])
+        p_24h   = p_24h_s.get(pcode, float("nan"))
+        p_72h   = p_72h_s.get(pcode, float("nan"))
+        p_7d    = p_7d_s.get(pcode, float("nan"))
         gpm_24h = gpm_s.get(pcode, float("nan"))
         cov_val = cov_s.get(pcode, float("nan"))
 
-        # Detect NaN in aggregated values → No_Data instead of silent zero
-        key_values = [p_24h, p_72h, p_7d]
-        if any(not math.isfinite(v) for v in key_values):
+        if any(not math.isfinite(v) for v in [p_24h, p_72h, p_7d]):
             log.warning("nan_in_aggregated_values", pcode=pcode, date=day)
+            bn_states[pcode] = replace(
+                bn_states[pcode], api_mm=bn_states[pcode].api_mm * api_decay
+            )
             no_data_result = {
-                "risk_state": -1,
-                "risk_label": "No_Data",
-                "p_green": 0.0,
-                "p_yellow": 0.0,
-                "p_orange": 0.0,
-                "p_red": 0.0,
-                "evidence": {},
+                "risk_state": -1, "risk_label": "No_Data",
+                "p_green": 0.0, "p_yellow": 0.0, "p_orange": 0.0, "p_red": 0.0,
             }
             no_data_evidence = CRMAEvidence(
-                exceedance_prob_24h_5y=0.0,
-                exceedance_prob_72h_5y=0.0,
-                exceedance_prob_7d_5y=0.0,
-                gpm_obs_24h=0.0,
-                api_mm=bn_states[pcode].api_mm,
-                spatial_coverage_fraction=0.0,
+                exceedance_prob_24h_5y=0.0, exceedance_prob_72h_5y=0.0,
+                exceedance_prob_7d_5y=0.0, gpm_obs_24h=0.0,
+                api_mm=bn_states[pcode].api_mm, spatial_coverage_fraction=0.0,
                 consecutive_signal_days=0,
                 sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
             )
-            features.append(build_feature(unit, no_data_result, no_data_evidence, day))
+            _, scores[pcode] = build_score(unit, no_data_result, no_data_evidence)
             continue
 
-        # Safe conversion for non-critical values: NaN → 0.0 for gpm/coverage only
         gpm_24h = gpm_24h if math.isfinite(gpm_24h) else 0.0
         cov_val = cov_val if math.isfinite(cov_val) else 0.0
 
@@ -213,19 +208,15 @@ def _process_day(
             sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
             gpm_quality=int(conf_s.get(pcode, 2.0)),
         )
-
         result, bn_states[pcode] = bn_step(
-            bn_states[pcode],
-            evidence,
-            crma_model,
-            api_decay=api_decay,
-            gpm_obs_mm=float(gpm_24h),
+            bn_states[pcode], evidence, crma_model,
+            api_decay=api_decay, gpm_obs_mm=float(gpm_24h),
             signal_threshold=signal_threshold,
         )
-        features.append(build_feature(unit, result, evidence, day))
+        _, scores[pcode] = build_score(unit, result, evidence)
 
-    out_path = write_risk_geojson(day, features, output_dir)
-    log.info("risk_day_written", date=day, n_units=len(features))
+    out_path = write_risk_scores(day, scores, output_dir)
+    log.info("risk_day_written", date=day, n_units=len(scores))
     return out_path
 
 
