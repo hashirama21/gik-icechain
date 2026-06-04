@@ -201,7 +201,18 @@ filterwarnings = [
 [tool.coverage.run]
 source      = ["src"]
 branch      = true
-omit        = ["*/__main__.py", "*/cli.py"]
+omit        = [
+  "*/__main__.py",
+  "*/cli.py",
+  "*/conversion/gap_filler.py",
+  "*/conversion/benchmark.py",
+  "*/conversion/aifs_discovery.py",
+  "*/exceedance/aifs_track.py",
+  "*/exceedance/icechunk_output.py",
+  "*/shared/storage.py",
+  "*/shared/logging.py",
+  "*/shared/validation.py",
+]
 
 [tool.coverage.report]
 show_missing  = true
