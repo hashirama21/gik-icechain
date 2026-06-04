@@ -65,7 +65,7 @@ component2:
     lon_dim: "longitude"
 
   manifest_aware:
-    enabled: false
+    enabled: true
     fetch_workers: 8
     min_members: 10
 
@@ -110,7 +110,7 @@ component2:
     return_period: -1
 
 aifs_track:
-  enabled: true
+  enabled: false
   aifs_store_uri: "s3://gik-icechain/aifs-icechain-store"
   exceedance_store_uri: ""
   variables: ["tp"]

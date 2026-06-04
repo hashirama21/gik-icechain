@@ -16,6 +16,32 @@
 
 ## Runs
 
+### 1-day run — 2025-02-22 (manifest_aware activated)
+
+> First successful end-to-end run with `manifest_aware: true` + `fetch_workers: 16`.
+> Byte-range coalescing replaces ~30 000 individual S3 reads by batched range requests,
+> cutting C2 from ~22 min/day to ~1 min/day (**×8 speedup**).
+> AIFS track disabled (ECMWF AIFS bucket: access Forbidden on public endpoints).
+
+| Step | Duration | Workers | Notes |
+|---|---|---|---|
+| C1 convert | ~1 min | 1 | 51 members × 85 steps × 5 vars virtualisés |
+| C2 exceedance | ~1 min | 1 | manifest_aware + coalescing actif |
+| C3 risk | ~30 s | 1 | 155 unités admin-1, 4 clusters CRMA |
+| **Total** | **2 min 45 s** | | vs ~22 min/jour avant |
+
+**Risk scores 2025-02-22 :**
+
+| Label | Unités |
+|---|---|
+| Green | 148 |
+| No_Data | 7 (couverture bbox insuffisante) |
+| Yellow/Orange/Red | 0 |
+
+Cohérent — pas d'événement majeur documenté le 22 février 2025.
+
+---
+
 ### 2-day run — 2025-01-01/02
 
 | Step | Duration | Workers |
@@ -105,11 +131,27 @@ Refactored format: geometries separated from daily scores.
 
 ## Production extrapolation (1 200 days)
 
+### Avant manifest_aware (baseline)
+
 | Step | 7-day measured | 1 200-day estimate |
 |---|---|---|
 | C1 | 2 min 21 s | ~6.7 h (cached) / ~24 h (cold) |
 | C2 | 58 min / 4 workers | ~166 h → Cloud Run Lithops (50 workers) |
 | C3 | ~28 min | ~80 h |
+
+### Après manifest_aware (v2.1)
+
+| Step | 1-day measured | 1 200-day estimate |
+|---|---|---|
+| C1 | ~1 min | ~20 h |
+| C2 | ~1 min / 1 worker | **~20 h** (vs 166 h — **×8**) |
+| C3 | ~30 s | ~10 h |
+| **Total** | **2 min 45 s/jour** | **~50 h** (vs ~280 h) |
+
+### Stockage
+
+| | 7-day run | 1 200-day estimate |
+|---|---|---|
 | **C1 storage** | 11.7 MB | ~2 GB manifests |
 | **C2 storage** | ~20 KB | ~3.4 MB compressed Zarr |
 | **C3 storage** | 16.4 MB | **62 MB** (vs 19.3 GB old format — **311×**) |
