@@ -379,8 +379,8 @@ ruff check src/ tests/
 @software{gik_icechain_2026,
   title   = {{GIK-IceChain v2.0}: Zero-Cost Cloud-Native Pipeline for
              Retrospective Flood Risk Decision Support in East Africa},
-  author  = {Dongmo, Vincess and Kemekoum, Dylan and
-             Feudjio, Donald and Venyl, Chris},
+  author  = {Dongmo Vincess and Kemekoum Dylan and
+             Feudjio Donald and Venyl Chris},
   year    = {2026},
   url     = {https://github.com/hashirama21/gik-icechain},
   license = {Apache-2.0},

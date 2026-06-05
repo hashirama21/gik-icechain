@@ -1,13 +1,18 @@
-name: E2E Pipeline Run (local store)
+name: E2E Pipeline Run (MinIO store)
 
-# Runs the full C1 -> C2 -> C3 pipeline on a GitHub-hosted runner using a
-# LOCAL filesystem IceChunk store (no MinIO). The runner reads the public
-# ECMWF IFS ENS archive on s3://ecmwf-forecasts anonymously — cloud-to-cloud
-# bandwidth makes the 1.2 GB/day byte-range fetch fast and reliable, unlike a
-# high-latency local WAN link.
+# Runs the full C1 -> C2 -> C3 pipeline on a GitHub-hosted runner against the
+# dev MinIO store. The runner reaches MinIO over its public Azure IP and reads
+# the public ECMWF IFS ENS archive on s3://ecmwf-forecasts anonymously —
+# cloud-to-cloud bandwidth makes the 1.2 GB/day byte-range fetch fast and
+# reliable, unlike a high-latency local WAN link.
 #
 # Manual trigger only. Pick a forecast date that is BOTH in the GIK catalog
 # AND within the ~15-month ECMWF S3 public retention window.
+#
+# Required repo secrets (dev defaults shown):
+#   MINIO_ACCESS_KEY     = minioadmin
+#   MINIO_SECRET_KEY     = minioadmin
+#   MINIO_ENDPOINT_URL   = http://20.116.218.195:9000
 
 on:
   workflow_dispatch:
@@ -22,7 +27,7 @@ env:
 
 jobs:
   e2e:
-    name: "run-all (C1 -> C2 -> C3, local store)"
+    name: "run-all (C1 -> C2 -> C3, MinIO)"
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -43,19 +48,22 @@ jobs:
       - name: Run full pipeline
         env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
         run: |
           python -m gik_icechain run-all \
             --start "${{ inputs.target_date }}" \
             --end   "${{ inputs.target_date }}" \
-            --config configs/ci_e2e.yaml \
-            --output results/ci_e2e/
+            --config configs/e2e_test.yaml \
+            --output results/e2e_test/
 
       - name: Risk score summary
         if: always()
         run: |
           python - <<'EOF'
           import glob, json
-          files = sorted(glob.glob("results/ci_e2e/admin1_risk/*_risk_scores.json"))
+          files = sorted(glob.glob("results/e2e_test/admin1_risk/*_risk_scores.json"))
           if not files:
               print("No risk score files produced.")
               raise SystemExit(0)
@@ -75,6 +83,6 @@ jobs:
         with:
           name: e2e-results-${{ inputs.target_date }}
           path: |
-            results/ci_e2e/
+            results/e2e_test/
           retention-days: 14
           if-no-files-found: warn

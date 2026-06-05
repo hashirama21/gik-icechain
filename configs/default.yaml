@@ -13,7 +13,7 @@ sources:
 outputs:
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
   icechunk_store_region: "eu-west-1"
-  endpoint_url: "http://20.116.218.195:9000"
+  endpoint_url: ""
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""
@@ -74,8 +74,6 @@ component2:
 
   manifest_aware:
     enabled: true
-    # 4 over WAN avoids ECMWF S3 throttling (503 SlowDown); raise to 16+ when
-    # co-located in eu-central-1 for maximum throughput.
     fetch_workers: 4
     min_members: 10
 
