@@ -95,17 +95,13 @@ def run_risk_batch(
     admin = gpd.read_file(admin_boundaries_path)
     write_boundaries(admin, output_dir)
 
-    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
 
     pcode_cluster = _build_pcode_cluster_map(admin)
     # Pre-build once — avoids iterrows() on each of the N forecast days.
-    unit_by_pcode: dict[str, Any] = {
-        str(row["admin1_pcode"]): row for _, row in admin.iterrows()
-    }
-    bn_states: dict[str, DynamicBNState] = {
-        p: init_state(initial_api_mm) for p in pcode_cluster
-    }
+    unit_by_pcode: dict[str, Any] = {str(row["admin1_pcode"]): row for _, row in admin.iterrows()}
+    bn_states: dict[str, DynamicBNState] = {p: init_state(initial_api_mm) for p in pcode_cluster}
 
     # Resume from checkpoint if available
     checkpoint_path = output_dir / _CHECKPOINT_FILE
@@ -168,7 +164,7 @@ def _process_day(
     try:
         exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
         exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
-        exc_7d  = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
+        exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
     except KeyError as exc:
         log.warning("exceedance_window_missing", date=day, rp=rp_signal, error=str(exc))
         return None
@@ -177,9 +173,9 @@ def _process_day(
 
     p_24h_s = aggregate_to_admin1(exc_24h, admin)
     p_72h_s = aggregate_to_admin1(exc_72h, admin)
-    p_7d_s  = aggregate_to_admin1(exc_7d, admin)
-    cov_s   = coverage_fraction(exc_24h, admin, signal_threshold)
-    gpm_s   = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+    p_7d_s = aggregate_to_admin1(exc_7d, admin)
+    cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
+    gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     if "ensemble_confidence" in exc_day:
         conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
@@ -189,26 +185,31 @@ def _process_day(
 
     scores: dict[str, dict] = {}
     for pcode, cluster in pcode_cluster.items():
-        unit    = unit_by_pcode[pcode]
-        p_24h   = p_24h_s.get(pcode, float("nan"))
-        p_72h   = p_72h_s.get(pcode, float("nan"))
-        p_7d    = p_7d_s.get(pcode, float("nan"))
+        unit = unit_by_pcode[pcode]
+        p_24h = p_24h_s.get(pcode, float("nan"))
+        p_72h = p_72h_s.get(pcode, float("nan"))
+        p_7d = p_7d_s.get(pcode, float("nan"))
         gpm_24h = gpm_s.get(pcode, float("nan"))
         cov_val = cov_s.get(pcode, float("nan"))
 
         if any(not math.isfinite(v) for v in [p_24h, p_72h, p_7d]):
             log.warning("nan_in_aggregated_values", pcode=pcode, date=day)
-            bn_states[pcode] = replace(
-                bn_states[pcode], api_mm=bn_states[pcode].api_mm * api_decay
-            )
+            bn_states[pcode] = replace(bn_states[pcode], api_mm=bn_states[pcode].api_mm * api_decay)
             no_data_result = {
-                "risk_state": -1, "risk_label": "No_Data",
-                "p_green": 0.0, "p_yellow": 0.0, "p_orange": 0.0, "p_red": 0.0,
+                "risk_state": -1,
+                "risk_label": "No_Data",
+                "p_green": 0.0,
+                "p_yellow": 0.0,
+                "p_orange": 0.0,
+                "p_red": 0.0,
             }
             no_data_evidence = CRMAEvidence(
-                exceedance_prob_24h_5y=0.0, exceedance_prob_72h_5y=0.0,
-                exceedance_prob_7d_5y=0.0, gpm_obs_24h=0.0,
-                api_mm=bn_states[pcode].api_mm, spatial_coverage_fraction=0.0,
+                exceedance_prob_24h_5y=0.0,
+                exceedance_prob_72h_5y=0.0,
+                exceedance_prob_7d_5y=0.0,
+                gpm_obs_24h=0.0,
+                api_mm=bn_states[pcode].api_mm,
+                spatial_coverage_fraction=0.0,
                 consecutive_signal_days=0,
                 sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
             )
@@ -230,8 +231,11 @@ def _process_day(
             gpm_quality=int(conf_s.get(pcode, 2.0)),
         )
         result, bn_states[pcode] = bn_step(
-            bn_states[pcode], evidence, crma_models[cluster],
-            api_decay=api_decay, gpm_obs_mm=float(gpm_24h),
+            bn_states[pcode],
+            evidence,
+            crma_models[cluster],
+            api_decay=api_decay,
+            gpm_obs_mm=float(gpm_24h),
             signal_threshold=signal_threshold,
         )
         _, scores[pcode] = build_score(unit, result, evidence)
@@ -249,9 +253,7 @@ def _save_checkpoint(
     """Serialise ``bn_states`` to JSON for crash recovery."""
     payload = {
         "next_date": next_date.isoformat(),
-        "bn_states": {
-            pcode: asdict(state) for pcode, state in bn_states.items()
-        },
+        "bn_states": {pcode: asdict(state) for pcode, state in bn_states.items()},
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
