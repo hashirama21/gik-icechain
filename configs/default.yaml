@@ -74,7 +74,9 @@ component2:
 
   manifest_aware:
     enabled: true
-    fetch_workers: 8
+    # 4 over WAN avoids ECMWF S3 throttling (503 SlowDown); raise to 16+ when
+    # co-located in eu-central-1 for maximum throughput.
+    fetch_workers: 4
     min_members: 10
 
   byte_range_coalescing:

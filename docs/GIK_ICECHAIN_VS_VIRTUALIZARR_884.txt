@@ -232,6 +232,39 @@ Fix: _build_pcode_cluster_map() maps each admin-1 pcode to its correct
 EastAfricaCluster via ISO3 country code (from shapeGroup column).
 One CRMAModel per cluster is built and dispatched per unit in _process_day().
 
+ISSUE E: NON-UNIFORM STEP HOURS IN MANIFEST-AWARE LOADER (FIXED: commit 6a5bfae)
+-------------------------------------------------------------------------------
+GIK IFS ENS forecast steps are NON-UNIFORM: 3-hourly out to 144 h (step
+indices 0-48), then 6-hourly to 360 h (indices 48-84) — 85 steps total.
+
+The manifest-aware loader built a UNIFORM step coordinate
+(np.arange(max_steps) * step_resolution_h, with step_resolution_h=6). This
+caused two defects:
+  1. The 3 h accumulation window was unusable (6 h spacing) and was being
+     skipped entirely, dropping it from the exceedance store (window dim
+     7 -> 6, which then collided with the existing 7-window store on append).
+  2. CORRECTNESS BUG: every step in the 3-hourly region was mislabelled —
+     index 8 became "48 h" instead of the true "24 h", so all exceedance
+     values in the first 144 h were assigned to the wrong forecast hours.
+
+Fix (two parts):
+  a. manifest_store._read_step_hours() reads the ACTUAL step coordinate from
+     the IceChunk store; _assemble_dataset() uses the real (non-uniform)
+     hours instead of arange * resolution.
+  b. accumulation_for_window() now looks up the lagged value by actual
+     forecast hour (tp[h] - tp[h-w]) via reindex, not by a fixed index
+     offset. This is correct for non-uniform spacing:
+       - h - w <= 0           -> raw (whole history so far)
+       - h - w is a stored step -> tp[h] - tp[h-w]
+       - h - w positive but absent (3 h window in the 6-hourly region) -> NaN
+
+Result: ALL 7 accumulation windows (3, 6, 12, 24, 48, 72, 168 h) are
+preserved AND correct. The 3 h window is valid out to 144 h (where 3-hourly
+data exists) and NaN beyond. A config flag
+(component2.skip_subresolution_windows) controls whether a window finer than
+the detected step spacing is skipped with a warning or raises. 175 unit
+tests pass.
+
 
 ===========================================================================
 SUMMARY TABLE
@@ -246,6 +279,7 @@ ECMWF S3 data retention (<15 months) | ARCHITECTURAL CONSTRAINT — needs MARS
 AWS_ENDPOINT_URL collision           | FIXED (commits d051604/b2b00ab/fa42f60)
 IceChunk 2.x API migration           | FIXED (commit f19d56f, 2026-06-05)
 CRMA single-cluster dispatch bug     | FIXED (commit d8e2c19, 2026-06-04)
+Non-uniform step hours (3h/6h mix)   | FIXED (commit 6a5bfae) — real hours + hour-based accum
 
 
 ===========================================================================
