@@ -239,7 +239,7 @@ def _assemble_dataset(
     variables: list[str],
     member_indices: list[int],
     max_steps: int,
-    step_resolution_h: int,
+    step_hours: np.ndarray,
     bbox: tuple[float, float, float, float] | None,
 ) -> xr.Dataset:
     """Assemble decoded grids into a concrete xr.Dataset.
@@ -249,7 +249,7 @@ def _assemble_dataset(
         variables: Variable names.
         member_indices: Sorted list of unique member indices.
         max_steps: Number of forecast steps.
-        step_resolution_h: Hours between steps.
+        step_hours: Actual forecast-hour value of each step (may be non-uniform).
         bbox: Geographic bounding box (lat_min, lat_max, lon_min, lon_max) or None.
 
     Returns:
@@ -287,7 +287,10 @@ def _assemble_dataset(
 
     # Build coordinates from decoded grid shape (not from bbox indices)
     # to guarantee coordinate arrays match actual data dimensions.
-    steps = np.arange(max_steps, dtype=np.int32) * step_resolution_h
+    # Use the real (possibly non-uniform) step hours, trimmed/padded to max_steps.
+    steps = np.asarray(step_hours, dtype=np.int32)
+    if steps.shape[0] != max_steps:
+        steps = steps[:max_steps]
     if bbox is not None:
         lat_min, lat_max, lon_min, lon_max = bbox
         lats = np.linspace(lat_max, lat_min, nlat, dtype=np.float32)
@@ -404,7 +407,10 @@ def load_day_manifest_aware(
             f"minimum required: {min_members}"
         )
 
-    # Step 6: Assemble dataset
+    # Step 6: Read the real (possibly non-uniform) step hours from the store.
+    step_hours = _read_step_hours(session, date_str, max_steps, step_resolution_h)
+
+    # Step 7: Assemble dataset
     log.info(
         "manifest_aware_load_complete",
         date=date_str,
@@ -418,6 +424,34 @@ def load_day_manifest_aware(
         variables,
         unique_members,
         max_steps,
-        step_resolution_h,
+        step_hours,
         bbox,
     )
+
+
+def _read_step_hours(
+    session: Any,
+    date_str: str,
+    max_steps: int,
+    step_resolution_h: int,
+) -> np.ndarray:
+    """Read the actual forecast-hour values of the ``step`` coordinate.
+
+    GIK IFS ENS steps are non-uniform (3-hourly to 144 h, then 6-hourly).
+    Falls back to a uniform ``arange * step_resolution_h`` grid if the
+    coordinate cannot be read.
+    """
+    try:
+        import zarr
+
+        zg = zarr.open_group(session.store, mode="r")
+        full = np.asarray(zg[f"{date_str}/step"][:])
+        return full[:max_steps].astype(np.int32)
+    except Exception as exc:
+        log.warning(
+            "step_coord_read_failed_uniform_fallback",
+            date=date_str,
+            step_resolution_h=step_resolution_h,
+            error=str(exc)[:120],
+        )
+        return np.arange(max_steps, dtype=np.int32) * step_resolution_h

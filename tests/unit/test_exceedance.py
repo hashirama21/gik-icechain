@@ -52,10 +52,27 @@ class TestAccumulationForWindow:
         # n_back=28 > nsteps=3 → returns raw copy
         xr.testing.assert_equal(result, ds["tp"])
 
-    def test_invalid_window_raises(self):
+    def test_subresolution_window_yields_nan(self):
+        """A window finer than the step spacing has no valid lagged hour ->
+        NaN where h - window is positive but not a stored step (e.g. a 3 h
+        window on 6-hourly data). It no longer raises."""
         ds = _make_forecast()
-        with pytest.raises(ValueError):
-            accumulation_for_window(ds["tp"], window_h=3, step_hours=6)
+        result = accumulation_for_window(ds["tp"], window_h=3, step_hours=6)
+        assert result.shape == ds["tp"].shape
+        # step=6 -> lookback hour 3 is not stored -> NaN
+        assert bool(np.all(np.isnan(result.sel(step=6).values)))
+
+    def test_nonuniform_steps_3h_window(self):
+        """3 h window is valid in the 3-hourly region, NaN in the 6-hourly region."""
+        hours = np.array([0, 3, 6, 9, 12, 18, 24], dtype=np.int32)
+        tp = np.array([0.0, 2.0, 4.0, 6.0, 8.0, 13.0, 18.0], dtype=np.float32)
+        da = xr.DataArray(tp, dims="step", coords={"step": hours})
+        acc = accumulation_for_window(da, window_h=3)
+        # 3-hourly region: constant 2 mm increments
+        assert acc.sel(step=6).item() == pytest.approx(2.0)
+        assert acc.sel(step=12).item() == pytest.approx(2.0)
+        # 6-hourly region: lookback hour 15/21 not stored -> NaN
+        assert np.isnan(acc.sel(step=18).item())
 
 
 class TestComputeRollingAccumulations:

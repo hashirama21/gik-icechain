@@ -173,7 +173,7 @@ class TestAssembleDataset:
             variables=["tp"],
             member_indices=[0, 1, 2],
             max_steps=4,
-            step_resolution_h=6,
+            step_hours=np.array([0, 6, 12, 18], dtype=np.int32),
             bbox=None,
         )
 
@@ -205,7 +205,7 @@ class TestAssembleDataset:
             variables=["tp"],
             member_indices=[0, 1],
             max_steps=2,
-            step_resolution_h=6,
+            step_hours=np.array([0, 6], dtype=np.int32),
             bbox=None,
         )
 
@@ -216,7 +216,7 @@ class TestAssembleDataset:
     def test_empty_decoded_raises(self):
         """Empty decoded dict should raise ValueError."""
         with pytest.raises(ValueError, match="No decoded grids"):
-            _assemble_dataset({}, ["tp"], [0], 1, 6, None)
+            _assemble_dataset({}, ["tp"], [0], 1, np.array([0], dtype=np.int32), None)
 
     def test_multiple_variables(self):
         """Assembly with two variables."""
@@ -231,7 +231,7 @@ class TestAssembleDataset:
             variables=["tp", "2t"],
             member_indices=[0],
             max_steps=1,
-            step_resolution_h=6,
+            step_hours=np.array([0], dtype=np.int32),
             bbox=None,
         )
 
