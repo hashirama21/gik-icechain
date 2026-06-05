@@ -36,9 +36,7 @@ app = typer.Typer(
 
 @app.command()
 def benchmark(
-    gik_store: Annotated[
-        str, typer.Option("--gik-store", help="URI of the GIK IceChunk store.")
-    ],
+    gik_store: Annotated[str, typer.Option("--gik-store", help="URI of the GIK IceChunk store.")],
     dynamical_store: Annotated[
         str | None,
         typer.Option(
@@ -46,18 +44,12 @@ def benchmark(
             help="URI of conventional Zarr store to compare.",
         ),
     ] = None,
-    domain: Annotated[
-        str, typer.Option(help="Domain label for output CSV.")
-    ] = "east_africa",
-    n_days: Annotated[
-        int, typer.Option(help="Forecast day-groups to benchmark.")
-    ] = 30,
-    workers: Annotated[
-        int, typer.Option(help="Dask workers for full-scan measurement.")
-    ] = 4,
-    output_dir: Annotated[
-        Path, typer.Option(help="Directory for benchmark CSV output.")
-    ] = Path("results/benchmarks/"),
+    domain: Annotated[str, typer.Option(help="Domain label for output CSV.")] = "east_africa",
+    n_days: Annotated[int, typer.Option(help="Forecast day-groups to benchmark.")] = 30,
+    workers: Annotated[int, typer.Option(help="Dask workers for full-scan measurement.")] = 4,
+    output_dir: Annotated[Path, typer.Option(help="Directory for benchmark CSV output.")] = Path(
+        "results/benchmarks/"
+    ),
 ) -> None:
     """Benchmark storage efficiency and access speed of GIK+IceChunk."""
     from gik_icechain.conversion.benchmark import run_benchmark
@@ -72,15 +64,11 @@ def benchmark(
     )
 
     if not results:
-        typer.echo(
-            "No benchmark results produced. "
-            "Check that the store URI is accessible."
-        )
+        typer.echo("No benchmark results produced. Check that the store URI is accessible.")
         raise typer.Exit(1)
 
     header = (
-        f"{'Approach':<20} {'Store (GB)':>12} "
-        f"{'TTFB (s)':>10} {'Scan (s)':>10} {'Egress $':>10}"
+        f"{'Approach':<20} {'Store (GB)':>12} {'TTFB (s)':>10} {'Scan (s)':>10} {'Egress $':>10}"
     )
     typer.echo(f"\n{header}")
     typer.echo("-" * 66)
@@ -95,11 +83,7 @@ def benchmark(
     if "GIK+IceChunk" in results and "dynamical.org" in results:
         gik = results["GIK+IceChunk"]
         dyn = results["dynamical.org"]
-        ratio = (
-            dyn.store_size_gb / gik.store_size_gb
-            if gik.store_size_gb
-            else 0
-        )
+        ratio = dyn.store_size_gb / gik.store_size_gb if gik.store_size_gb else 0
         typer.echo(f"\nStorage compression ratio: {ratio:,.0f}x")
 
     typer.echo(f"\nResults saved to {output_dir}")
@@ -112,13 +96,9 @@ def benchmark(
 def validate_store(
     store_uri: Annotated[
         str,
-        typer.Option(
-            "--store-uri", help="IceChunk store URI (s3:// or local path)."
-        ),
+        typer.Option("--store-uri", help="IceChunk store URI (s3:// or local path)."),
     ],
-    output_json: Annotated[
-        bool, typer.Option("--json", help="Output results as JSON.")
-    ] = False,
+    output_json: Annotated[bool, typer.Option("--json", help="Output results as JSON.")] = False,
 ) -> None:
     """Validate IceChunk store integrity: committed days, gaps, variables."""
     from gik_icechain.conversion.icechunk_writer import IceChainStore
@@ -151,7 +131,6 @@ def validate_store(
     typer.echo("\nStore is valid.")
 
 
-
 def _download_admin_boundaries(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     dest = output_dir / "east_africa_admin1.geojson"
@@ -160,8 +139,21 @@ def _download_admin_boundaries(output_dir: Path) -> None:
         return
 
     typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
-    
-    _ea_countries = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI", "MDG", "SDN"]
+
+    _ea_countries = [
+        "KEN",
+        "ETH",
+        "UGA",
+        "TZA",
+        "SOM",
+        "RWA",
+        "BDI",
+        "SSD",
+        "ERI",
+        "DJI",
+        "MDG",
+        "SDN",
+    ]
     import urllib.request as _urlreq
 
     all_features: list[dict] = []
@@ -326,12 +318,8 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
                 precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
 
                 # rasterio uses 'y'/'x'; CHIRPS uses 'lat'/'lon' — normalise both
-                lat_name = next(
-                    (c for c in precip.dims if "lat" in c.lower() or c == "y"), None
-                )
-                lon_name = next(
-                    (c for c in precip.dims if "lon" in c.lower() or c == "x"), None
-                )
+                lat_name = next((c for c in precip.dims if "lat" in c.lower() or c == "y"), None)
+                lon_name = next((c for c in precip.dims if "lon" in c.lower() or c == "x"), None)
                 rename = {}
                 if lat_name and lat_name != "lat":
                     rename[lat_name] = "lat"
@@ -412,12 +400,10 @@ def _download_enso_iod(output_dir: Path) -> None:
                 continue
     typer.echo(f"    {len(dmi)} monthly DMI records")
 
-
     common = sorted(set(nino34) & set(dmi))
     if not common:
         raise RuntimeError(
-            "No overlapping dates between Niño 3.4 and DMI datasets. "
-            "Check source URLs."
+            "No overlapping dates between Niño 3.4 and DMI datasets. Check source URLs."
         )
 
     lines = ["date,nino34_anom,dmi"]
@@ -439,7 +425,7 @@ def download_gpm(
         str,
         typer.Option(
             help="Data source: 'nasa' (GPM IMERG, requires Earthdata account) "
-                 "or 'chirps' (CHIRPS v2.0, no auth required)."
+            "or 'chirps' (CHIRPS v2.0, no auth required)."
         ),
     ] = "chirps",
 ) -> None:
@@ -480,13 +466,9 @@ def download_gpm(
 def download(
     component: Annotated[
         str,
-        typer.Option(
-            help="Component to download: all, admin, thresholds, enso_iod."
-        ),
+        typer.Option(help="Component to download: all, admin, thresholds, enso_iod."),
     ] = "all",
-    output: Annotated[
-        Path, typer.Option(help="Base output directory.")
-    ] = REPO_ROOT / "data",
+    output: Annotated[Path, typer.Option(help="Base output directory.")] = REPO_ROOT / "data",
 ) -> None:
     """Download reference data (admin boundaries, thresholds, ENSO/IOD).
 
@@ -537,11 +519,7 @@ def _already_committed(store_uri: str, config_path: Path) -> set[str]:
     store = IceChainStore(uri)
     try:
         store.create_or_open()
-        return {
-            s["forecast_date"]
-            for s in store.list_snapshots()
-            if s["forecast_date"]
-        }
+        return {s["forecast_date"] for s in store.list_snapshots() if s["forecast_date"]}
     except Exception:
         return set()
 
@@ -554,16 +532,14 @@ def gap_fill(
     end: Annotated[
         str, typer.Option("--end", help="Last date (YYYY-MM-DD).")
     ] = _GAP_END.isoformat(),
-    config: Annotated[
-        Path, typer.Option(help="Path to YAML config file.")
-    ] = Path("configs/default.yaml"),
+    config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = Path(
+        "configs/default.yaml"
+    ),
     store: Annotated[
         str | None,
         typer.Option("--store", help="Override IceChunk store URI."),
     ] = None,
-    batch_size: Annotated[
-        int, typer.Option(help="Days per batch (resume-safe).")
-    ] = 7,
+    batch_size: Annotated[int, typer.Option(help="Days per batch (resume-safe).")] = 7,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Print dates without ingesting.")
     ] = False,
@@ -609,22 +585,17 @@ def gap_fill(
     while idx < len(missing):
         batch = missing[idx : idx + batch_size]
         batch_s, batch_e = batch[0], batch[-1]
-        typer.echo(
-            f"Ingesting {batch_s} -> {batch_e} ({len(batch)} days) ..."
-        )
+        typer.echo(f"Ingesting {batch_s} -> {batch_e} ({len(batch)} days) ...")
         try:
             _run_convert(cfg, batch_s, batch_e)
             processed += len(batch)
         except Exception as exc:
-            typer.echo(
-                f"Batch failed ({batch_s} -> {batch_e}): {exc}", err=True
-            )
+            typer.echo(f"Batch failed ({batch_s} -> {batch_e}): {exc}", err=True)
             typer.echo("Resuming from next batch ...")
         idx += batch_size
 
-    typer.echo(
-        f"\nGap-fill complete. Processed {processed} / {len(missing)} dates."
-    )
+    typer.echo(f"\nGap-fill complete. Processed {processed} / {len(missing)} dates.")
+
 
 @app.command("export-eahw")
 def export_eahw(
@@ -634,9 +605,7 @@ def export_eahw(
             help="Directory containing risk_scores.json files and admin1_boundaries.geojson."
         ),
     ],
-    output: Annotated[
-        Path, typer.Option(help="Output directory for EAHW GeoJSON files.")
-    ],
+    output: Annotated[Path, typer.Option(help="Output directory for EAHW GeoJSON files.")],
 ) -> None:
     """Export daily risk scores to East Africa Hazard Watch Portal format.
 
@@ -696,12 +665,12 @@ def validate_emdat(
     risk_dir: Annotated[
         Path, typer.Option(help="Directory with per-day GeoJSON risk files.")
     ] = Path("results/admin1_risk/"),
-    emdat_csv: Annotated[
-        Path, typer.Option(help="EM-DAT flood CSV (from emdat.be).")
-    ] = Path("data/emdat/east_africa_floods.csv"),
-    output: Annotated[
-        Path, typer.Option(help="Output CSV for per-event hit/miss table.")
-    ] = Path("results/validation/emdat_validation.csv"),
+    emdat_csv: Annotated[Path, typer.Option(help="EM-DAT flood CSV (from emdat.be).")] = Path(
+        "data/emdat/east_africa_floods.csv"
+    ),
+    output: Annotated[Path, typer.Option(help="Output CSV for per-event hit/miss table.")] = Path(
+        "results/validation/emdat_validation.csv"
+    ),
     risk_threshold: Annotated[
         int,
         typer.Option(help="Min risk_state for prediction (default 2=Orange)."),
@@ -739,6 +708,7 @@ def validate_emdat(
         typer.echo(f"  {k:<20} {v:>8.4f}")
 
     typer.echo(f"\nPer-event table saved to {output}")
+
 
 if __name__ == "__main__":
     app()

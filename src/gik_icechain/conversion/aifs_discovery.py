@@ -62,24 +62,27 @@ def discover_aifs_files(
         ValueError: If *run_hour* is not 0 or 12.
     """
     if run_hour not in _VALID_RUN_HOURS:
-        raise ValueError(
-            f"run_hour must be one of {_VALID_RUN_HOURS}, got {run_hour}"
-        )
+        raise ValueError(f"run_hour must be one of {_VALID_RUN_HOURS}, got {run_hour}")
 
     date_str = forecast_date.strftime("%Y%m%d")
     prefix = _ECMWF_S3_PREFIX + _AIFS_PATH_TEMPLATE.format(
-        date_str=date_str, run_hour=run_hour,
+        date_str=date_str,
+        run_hour=run_hour,
     )
 
     uris: list[str] = []
     for step in range(0, max_step_h + 1, step_resolution_h):
         ef_name = _AIFS_EF_FILENAME.format(
-            date_str=date_str, run_hour=run_hour, step=step,
+            date_str=date_str,
+            run_hour=run_hour,
+            step=step,
         )
         uris.append(prefix + ef_name)
         if include_control:
             cf_name = _AIFS_CF_FILENAME.format(
-                date_str=date_str, run_hour=run_hour, step=step,
+                date_str=date_str,
+                run_hour=run_hour,
+                step=step,
             )
             uris.append(prefix + cf_name)
 
@@ -180,14 +183,13 @@ def aifs_to_virtual_dataset(
         include_control=True,
     )
 
-    # Parallel scan 
+    # Parallel scan
     all_refs: list[dict[str, Any]] = []
     errors: list[str] = []
 
     with ThreadPoolExecutor(max_workers=min(n_workers, len(uris))) as pool:
         future_to_uri = {
-            pool.submit(scan_aifs_grib, uri, variables, s3_region): uri
-            for uri in uris
+            pool.submit(scan_aifs_grib, uri, variables, s3_region): uri for uri in uris
         }
         for future in as_completed(future_to_uri):
             uri = future_to_uri[future]
@@ -197,7 +199,9 @@ def aifs_to_virtual_dataset(
             except Exception as exc:
                 errors.append(uri)
                 log.warning(
-                    "aifs_scan_failed", uri=uri, error=str(exc)[:200],
+                    "aifs_scan_failed",
+                    uri=uri,
+                    error=str(exc)[:200],
                 )
 
     if not all_refs:
@@ -214,7 +218,7 @@ def aifs_to_virtual_dataset(
         n_errors=len(errors),
     )
 
-    # Heavy imports deferred until after scan validation 
+    # Heavy imports deferred until after scan validation
     from kerchunk.combine import MultiZarrToZarr
     from virtualizarr import open_virtual_dataset
     from virtualizarr.manifests import ManifestStore
@@ -225,7 +229,7 @@ def aifs_to_virtual_dataset(
 
     from gik_icechain.conversion.virtualizer import _build_ecmwf_registry
 
-    # Combine references into unified kerchunk dict 
+    # Combine references into unified kerchunk dict
     mzz = MultiZarrToZarr(
         all_refs,
         concat_dims=["step", "number"],
@@ -233,7 +237,7 @@ def aifs_to_virtual_dataset(
     )
     combined = mzz.translate()
 
-    # Convert to VirtualiZarr ManifestStore 
+    # Convert to VirtualiZarr ManifestStore
     store_refs = KerchunkStoreRefs(combined)
     mg = manifestgroup_from_kerchunk_refs(store_refs)
     registry = _build_ecmwf_registry()
@@ -259,7 +263,9 @@ def aifs_to_virtual_dataset(
                 f"expected >= 10 (target: {n_members})"
             )
         log.info(
-            "aifs_members_found", expected=n_members, actual=actual_members,
+            "aifs_members_found",
+            expected=n_members,
+            actual=actual_members,
         )
 
     log.info(
@@ -317,8 +323,10 @@ def _ref_matches_variables(
                 raw = refs[key]
                 attrs = json.loads(raw) if isinstance(raw, str) else raw
                 for attr_key in (
-                    "GRIB_shortName", "shortName",
-                    "GRIB_cfVarName", "cfVarName",
+                    "GRIB_shortName",
+                    "shortName",
+                    "GRIB_cfVarName",
+                    "cfVarName",
                 ):
                     if attrs.get(attr_key) in var_set:
                         return True
@@ -326,10 +334,7 @@ def _ref_matches_variables(
                 pass
 
     # 3. Legacy flat keys (backward-compat with simple test mocks)
-    return any(
-        refs.get(key) in var_set
-        for key in ("shortName", "cfVarName", "parameterName")
-    )
+    return any(refs.get(key) in var_set for key in ("shortName", "cfVarName", "parameterName"))
 
 
 def _extract_shortname(ref_dict: dict[str, Any]) -> str | None:
@@ -352,8 +357,10 @@ def _extract_shortname(ref_dict: dict[str, Any]) -> str | None:
                 raw = refs[key]
                 attrs = json.loads(raw) if isinstance(raw, str) else raw
                 for attr_key in (
-                    "GRIB_shortName", "shortName",
-                    "GRIB_cfVarName", "cfVarName",
+                    "GRIB_shortName",
+                    "shortName",
+                    "GRIB_cfVarName",
+                    "cfVarName",
                 ):
                     if attr_key in attrs:
                         return str(attrs[attr_key])
