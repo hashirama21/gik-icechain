@@ -388,17 +388,6 @@ ruff check src/ tests/
 }
 ```
 
-## Authors
-
-- **Vincess Dongmo**
-- **Dylan Kemekoum**
-- **Donald Feudjio**
-- **Chris Venyl**
-
-ECMWF Code for Earth 2026 — Challenge 41, Africa Stream (ArcX)
-
----
-
 ## License
 
 Apache License 2.0  -  see [LICENSE](LICENSE)
