@@ -122,9 +122,9 @@ def _extract_virtual_chunk_refs(
 ) -> list[ByteRange]:
     """Extract byte-range references from an IceChunk store session.
 
-    Uses ``session.all_virtual_chunk_locations()`` (IceChunk 2.x) to get
-    every virtual chunk's (url, offset, length) in a single call, then
-    filters to the requested variables and step range.
+    Uses ``session.store.array_chunk_iterator()`` (IceChunk 2.x) to get
+    per-array chunk metadata (coords, paths, offsets, lengths) in columnar
+    batches, then filters to the requested step range.
 
     No S3 data is fetched — only IceChunk metadata is accessed.
 
@@ -137,65 +137,62 @@ def _extract_virtual_chunk_refs(
     Returns:
         List of :class:`ByteRange` referencing GRIB2 byte ranges on S3.
     """
+    import asyncio
+
     refs: list[ByteRange] = []
 
-    # IceChunk 2.x exposes all virtual chunk locations in one call.
-    # Each entry maps a chunk key (zarr path) to its (url, offset, length).
+    async def _collect() -> None:
+        for var in variables:
+            array_path = f"/{date_str}/{var}"
+            try:
+                async for coords, kinds, paths, offsets, lengths, _inlined in (
+                    session.store.array_chunk_iterator(array_path)
+                ):
+                    for i in range(len(paths)):
+                        # coords[i] = (member_idx, step_idx, lat_chunk, lon_chunk)
+                        member_idx = int(coords[i, 0])
+                        step_idx = int(coords[i, 1])
+
+                        if step_idx >= max_steps:
+                            continue
+
+                        # kind=2 is virtual
+                        if int(kinds[i]) != 2:
+                            continue
+
+                        url = paths[i]
+                        if not url:
+                            continue
+
+                        refs.append(
+                            ByteRange(
+                                uri=url,
+                                offset=int(offsets[i]),
+                                length=int(lengths[i]),
+                                metadata={
+                                    "member_idx": member_idx,
+                                    "step_idx": step_idx,
+                                    "variable": var,
+                                },
+                            )
+                        )
+            except Exception:
+                log.warning(
+                    "array_chunk_iterator_failed",
+                    array_path=array_path,
+                    exc_info=True,
+                )
+
     try:
-        all_locations = session.all_virtual_chunk_locations()
-    except AttributeError:
-        log.warning(
-            "icechunk_api_missing",
-            msg="session.all_virtual_chunk_locations() not available; "
-            "upgrade icechunk or use the standard zarr path",
-        )
-        return refs
-
-    var_set = set(variables)
-
-    for chunk_key, location in all_locations.items():
-        # chunk_key format: "{date}/{var}/c/{member}/{step}/0/0"
-        parts = chunk_key.split("/")
-        # Need at least: date / var / c / member / step / 0 / 0
-        if len(parts) < 5:
-            continue
-
-        # Match date group
-        if parts[0] != date_str:
-            continue
-
-        var = parts[1]
-        if var not in var_set:
-            continue
-
-        # Parse "c/{member}/{step}/..." portion
+        asyncio.run(_collect())
+    except RuntimeError:
+        # Already inside an event loop (e.g. Jupyter) — use nest_asyncio or
+        # create a new loop in a thread.
+        loop = asyncio.new_event_loop()
         try:
-            c_idx = parts.index("c")
-            member_idx = int(parts[c_idx + 1])
-            step_idx = int(parts[c_idx + 2])
-        except (ValueError, IndexError):
-            continue
-
-        if step_idx >= max_steps:
-            continue
-
-        # Extract url/offset/length from the location object
-        url, offset, length = _parse_chunk_location(location)
-        if url is None:
-            continue
-
-        refs.append(
-            ByteRange(
-                uri=url,
-                offset=offset,
-                length=length,
-                metadata={
-                    "member_idx": member_idx,
-                    "step_idx": step_idx,
-                    "variable": var,
-                },
-            )
-        )
+            loop.run_until_complete(_collect())
+        finally:
+            loop.close()
 
     log.info(
         "virtual_chunk_refs_extracted",

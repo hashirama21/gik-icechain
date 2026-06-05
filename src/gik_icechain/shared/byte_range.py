@@ -134,10 +134,17 @@ def fetch_coalesced_ranges(
     """
     import fsspec
 
+    # Force the real AWS S3 endpoint even when AWS_ENDPOINT_URL is set
+    # (e.g. for MinIO/on-prem IceChunk storage).  botocore reads
+    # AWS_ENDPOINT_URL from the environment, so we must explicitly
+    # override it with the correct regional endpoint.
     fs = fsspec.filesystem(
         "s3",
         anon=anon,
-        client_kwargs={"region_name": s3_region},
+        client_kwargs={
+            "region_name": s3_region,
+            "endpoint_url": f"https://s3.{s3_region}.amazonaws.com",
+        },
         config_kwargs={"retries": {"max_attempts": 5}},
     )
 
