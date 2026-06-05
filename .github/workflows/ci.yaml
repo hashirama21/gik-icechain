@@ -23,7 +23,7 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: dev
-      - uses: astral-sh/ruff-action@v4
+      - uses: astral-sh/ruff-action@v4.0.0
         with:
           args: "check src/ tests/ scripts/"
       - run: mypy src/gik_icechain/ --ignore-missing-imports
