@@ -8,7 +8,7 @@ sources:
   ecmwf_s3_no_sign: true
   gpm_imerg_path: "data/gpm_imerg/"
   emdat_path: "data/emdat/east_africa_floods.csv"
-  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.gpkg"
+  admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.geojson"
 
 outputs:
   icechunk_store_uri: "s3://gik-icechain/gik-icechain-store"
@@ -27,6 +27,11 @@ component1:
     branch: "main"
     commit_message_template: "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: "{date}T{run_hour:02d}Z"
+    # Manifest splitting (VirtualiZarr #884) — keeps manifest fragments bounded
+    # at 1200+ day scale. Splits each array's manifest along `step` every N positions.
+    manifest_splitting: true
+    manifest_split_dim: "step"
+    manifest_split_size: 1000
   gap_fill:
     enabled: true
     cloud_run_job: "deploy/cloud_run/job_c1.yaml"
@@ -40,6 +45,9 @@ component2:
   step_resolution_h: 6
   max_forecast_h: null
   step_buffer: 1
+  # When a window is finer than the step resolution (e.g. 3h on 6-hourly data):
+  # true = skip it with a warning, false = raise an error and abort the day.
+  skip_subresolution_windows: true
 
   windows_h: [3, 6, 12, 24, 48, 72, 168]
   return_periods: [2, 5, 10, 20, 40, 100]
@@ -60,13 +68,13 @@ component2:
       max_forecast_h: 168
 
   spatial:
-    bbox: [-12, 23, 22, 52]
+    bbox: [-13, 24, 22, 53]
     lat_dim: "latitude"
     lon_dim: "longitude"
 
   manifest_aware:
     enabled: true
-    fetch_workers: 8
+    fetch_workers: 4
     min_members: 10
 
   byte_range_coalescing:
@@ -110,7 +118,7 @@ component2:
     return_period: -1
 
 aifs_track:
-  enabled: true
+  enabled: false
   aifs_store_uri: "s3://gik-icechain/aifs-icechain-store"
   exceedance_store_uri: ""
   variables: ["tp"]

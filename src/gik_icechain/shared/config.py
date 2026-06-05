@@ -56,6 +56,13 @@ class IceChunkConfig(BaseModel):
     branch: str = "main"
     commit_message_template: str = "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: str = "{date}T{run_hour:02d}Z"
+    # Manifest splitting (IceChunk 2.x) — caps manifest fragment size so append
+    # latency and metadata scan stay flat as the archive grows to 1200+ days.
+    # Splits every array along the given dimension every `manifest_split_size`
+    # index positions. See VirtualiZarr #884 (manifest-splitting recommendation).
+    manifest_splitting: bool = True
+    manifest_split_dim: str = "step"   # forecast-horizon axis (time-like)
+    manifest_split_size: int = 1000
 
 
 class GapFillConfig(BaseModel):
@@ -194,6 +201,10 @@ class Component2Config(BaseModel):
     step_resolution_h: int = 6
     max_forecast_h: int | None = None  # None = auto (max of active windows_h)
     step_buffer: int = 1
+    # When a requested accumulation window is finer than the loaded step
+    # resolution (e.g. a 3 h window on 6-hourly data): True = skip the window
+    # with a warning (graceful), False = raise an error and abort the day.
+    skip_subresolution_windows: bool = True
 
     # --- Dimension 3 + 7: Windows (direct + profiles) ---
     windows_h: list[int] = Field(default_factory=lambda: [3, 6, 12, 24, 48, 72, 168])

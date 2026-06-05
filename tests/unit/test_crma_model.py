@@ -8,7 +8,6 @@ import pytest
 from gik_icechain.risk.crma_model import (
     _CLUSTER_WEIGHTS,
     RISK_LEVELS,
-    CRMAEvidence,
     CRMAModel,
     EastAfricaCluster,
     EvidenceThresholds,

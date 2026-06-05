@@ -306,9 +306,9 @@ class AdaptiveGEVThresholds:
         for i, mk in enumerate(mode_keys):
             for j, wh in enumerate(all_windows):
                 for k, rp in enumerate(all_rps):
-                    da = self._thresholds.get(mk, {}).get(wh, {}).get(rp)
-                    if da is not None:
-                        data[i, j, k] = da.values.astype(np.float32)
+                    cell_da: xr.DataArray | None = self._thresholds.get(mk, {}).get(wh, {}).get(rp)
+                    if cell_da is not None:
+                        data[i, j, k] = cell_da.values.astype(np.float32)
 
         ds = xr.Dataset(
             {

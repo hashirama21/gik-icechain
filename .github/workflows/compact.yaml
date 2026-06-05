@@ -1,0 +1,36 @@
+name: Monthly IceChunk Compaction
+
+on:
+  schedule:
+    - cron: "0 2 1 * *"
+  workflow_dispatch:
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  compact:
+    name: Compact IceChunk store
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: cloud
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            eu-west-1
+      - run: |
+          python -c "
+          import os
+          from gik_icechain.conversion.icechunk_writer import IceChainStore
+          store = IceChainStore(os.environ['GIK_ICECHUNK_STORE_URI'])
+          store.create_or_open()
+          store.compact(keep_days=30)
+          "
+        env:
+          GIK_ICECHUNK_STORE_URI: ${{ secrets.GIK_ICECHUNK_STORE_URI }}

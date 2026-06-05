@@ -27,6 +27,7 @@ def compute_rolling_accumulations(
     windows_h: list[int] = WINDOWS_H,
     precip_var: str = "tp",
     step_hours: int = _IFS_STEP_HOURS,
+    skip_subresolution_windows: bool = True,
 ) -> xr.Dataset:
     """Compute accumulated precipitation for each window.
 
@@ -36,6 +37,9 @@ def compute_rolling_accumulations(
         windows_h:    List of accumulation window lengths in hours.
         precip_var:   Name of the precipitation variable.
         step_hours:   Hours between consecutive forecast steps.
+        skip_subresolution_windows:
+                      When a window is finer than ``step_hours``: True skips it
+                      with a warning, False raises ValueError (abort the day).
 
     Returns:
         Dataset with one variable per window named ``tp_{w}h``.
@@ -57,6 +61,20 @@ def compute_rolling_accumulations(
 
     accum_vars: dict[str, xr.DataArray] = {}
     for w in windows_h:
+        # Handle windows finer than the step resolution (e.g. a 3 h window when
+        # the loaded data is 6-hourly) per the configured policy.
+        if w < step_hours:
+            if skip_subresolution_windows:
+                log.warning(
+                    "window_smaller_than_step_skipped",
+                    window_h=w,
+                    step_hours=step_hours,
+                )
+                continue
+            raise ValueError(
+                f"window_h={w} must be >= step_hours={step_hours} "
+                f"(set component2.skip_subresolution_windows=true to skip instead)"
+            )
         accum_vars[f"tp_{w}h"] = accumulation_for_window(
             ds[precip_var], window_h=w, step_hours=step_hours
         )
@@ -81,36 +99,41 @@ def accumulation_for_window(
     """Accumulate *da* over *window_h* hours.
 
     IFS ``tp`` is a step-accumulated field: each value is total precipitation
-    since T+0. A *w*-hour window total at step *n* equals ``tp[n] - tp[n - w//step]``.
-    The first few steps where the lookback exceeds the available history fall back
-    to the raw value at that step.
+    since T+0. A *w*-hour window total at the step whose forecast hour is ``h``
+    equals ``tp[h] - tp[h - w]``.
+
+    This implementation looks the lagged value up by **actual forecast hour**,
+    not by a fixed index offset, so it is correct for the GIK IFS ENS grid
+    whose step spacing is non-uniform (3-hourly to 144 h, then 6-hourly to
+    360 h).  Consequences:
+      * ``h - w <= 0`` (window covers the whole history so far) -> raw value.
+      * ``h - w`` falls on a valid step  -> ``tp[h] - tp[h - w]``.
+      * ``h - w`` positive but not a stored step (e.g. a 3 h window in the
+        6-hourly region) -> NaN (genuinely undefined at that lead time).
 
     Args:
-        da:         DataArray with a ``step`` (or ``time``) dimension measured
-                    in hours. Values represent cumulative precipitation since T+0.
+        da:         DataArray with a ``step`` dimension whose coordinate values
+                    are forecast hours. Values are cumulative precip since T+0.
         window_h:   Accumulation window in hours.
-        step_hours: Hours per step.
+        step_hours: Unused for the lookback (kept for API compatibility); the
+                    real per-step hours are read from the coordinate.
 
     Returns:
         DataArray of window-accumulated values with the same dimensions as *da*.
     """
-    n_back = window_h // step_hours
-    if n_back <= 0:
-        raise ValueError(f"window_h={window_h} must be >= step_hours={step_hours}")
-
     step_dim = find_step_dim(da)
-    n = da.sizes[step_dim]
+    hours = da[step_dim].values
 
-    if n_back >= n:
-        return da
+    # Lagged forecast hour for each step.
+    lookback = hours - window_h
+    lookback_da = xr.DataArray(lookback, dims=step_dim, coords={step_dim: hours})
 
-    current = da.isel({step_dim: slice(n_back, None)})
-    lagged = da.isel({step_dim: slice(0, n - n_back)}).assign_coords({step_dim: current[step_dim]})
-    window_accum = (current - lagged).clip(min=0.0)
+    # tp at the lagged hour (exact match); hours not stored -> NaN.
+    lagged = da.reindex({step_dim: lookback}).assign_coords({step_dim: hours})
+    # Before T+0 nothing has accumulated: lookback <= 0 -> lagged = 0.
+    lagged = lagged.where(lookback_da > 0, 0.0)
 
-    # Prepend raw values for the initial n_back steps where no prior window exists
-    prefix = da.isel({step_dim: slice(0, n_back)})
-    result = xr.concat([prefix, window_accum], dim=step_dim)
-    result.attrs.update(da.attrs)
-    result.attrs["window_h"] = window_h
-    return result
+    window_accum = (da - lagged).clip(min=0.0)
+    window_accum.attrs.update(da.attrs)
+    window_accum.attrs["window_h"] = window_h
+    return window_accum

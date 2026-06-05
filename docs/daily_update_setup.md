@@ -103,7 +103,7 @@ endpoint URL.
 
 ```bash
 # Install MinIO Client: https://min.io/docs/minio/linux/reference/minio-mc.html
-mc alias set gik http://192.168.1.50:9000 minioadmin minioadmin123
+mc alias set gik http://192.168.1.50:9000  123
 
 mc mb gik/gik-icechain-store     # IceChunk virtual store  (→ GIK_ICECHUNK_STORE_URI)
 mc mb gik/gik-exceedance-zarr    # Exceedance Zarr         (→ GIK_EXCEEDANCE_STORE_URI)
@@ -114,8 +114,8 @@ mc mb gik/gik-data               # Thresholds + risk output (→ GIK_BUCKET)
 
 | Secret name | Value for MinIO |
 |---|---|
-| `AWS_ACCESS_KEY_ID` | `minioadmin` |
-| `AWS_SECRET_ACCESS_KEY` | `minioadmin123` |
+| `AWS_ACCESS_KEY_ID` | `` |
+| `AWS_SECRET_ACCESS_KEY` | `123` |
 | `GIK_ICECHUNK_STORE_URI` | `s3://gik-icechain-store` |
 | `GIK_EXCEEDANCE_STORE_URI` | `s3://gik-exceedance-zarr` |
 | `GIK_BUCKET` | `gik-data` |
@@ -136,8 +136,8 @@ When set, `IceChainStore` automatically enables `force_path_style` as required b
 
 ```bash
 export AWS_ENDPOINT_URL="http://192.168.1.50:9000"
-export AWS_ACCESS_KEY_ID="minioadmin"
-export AWS_SECRET_ACCESS_KEY="minioadmin123"
+export AWS_ACCESS_KEY_ID=""
+export AWS_SECRET_ACCESS_KEY="123"
 export AWS_REGION="us-east-1"          # dummy — required by the AWS SDK
 
 # C1 — Ingest

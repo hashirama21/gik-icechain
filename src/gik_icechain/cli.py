@@ -79,6 +79,9 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:
         branch=cfg.component1.icechunk.branch,
         commit_message_template=cfg.component1.icechunk.commit_message_template,
         tag_format=cfg.component1.icechunk.tag_format,
+        manifest_splitting=cfg.component1.icechunk.manifest_splitting,
+        manifest_split_dim=cfg.component1.icechunk.manifest_split_dim,
+        manifest_split_size=cfg.component1.icechunk.manifest_split_size,
     )
     store.create_or_open()
 
@@ -173,7 +176,13 @@ def _subset_to_bbox(
         i_max = min(nlat - 1, int((90.0 - lat_min) / dlat))
         j_min = max(0, int(lon_min / dlon))
         j_max = min(nlon - 1, int(lon_max / dlon))
-        return ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        subset = ds.isel({lat_name: slice(i_min, i_max + 1), lon_name: slice(j_min, j_max + 1)})
+        # Reassign real geographic coordinate values so downstream operations
+        # (regionmask, threshold alignment) work in degrees, not integer indices.
+        import numpy as np
+        real_lats = 90.0 - (i_min + np.arange(subset.sizes[lat_name])) * dlat
+        real_lons = (j_min + np.arange(subset.sizes[lon_name])) * dlon
+        return subset.assign_coords({lat_name: real_lats, lon_name: real_lons})
 
     # Proper geographic coordinates — use .sel()
     if float(lat_vals[0]) > float(lat_vals[-1]):
@@ -191,9 +200,9 @@ def _threshold_bbox(
     the threshold object has no spatial data.
     """
     try:
-        for mode_key in thresholds._thresholds:
-            for wh in thresholds._thresholds[mode_key]:
-                for _rp, da in thresholds._thresholds[mode_key][wh].items():
+        for mode_key in thresholds._thresholds:  # type: ignore[attr-defined]
+            for wh in thresholds._thresholds[mode_key]:  # type: ignore[attr-defined]
+                for _rp, da in thresholds._thresholds[mode_key][wh].items():  # type: ignore[attr-defined]
                     lat_name = next((c for c in da.coords if c in ("lat", "latitude")), None)
                     lon_name = next((c for c in da.coords if c in ("lon", "longitude")), None)
                     if lat_name and lon_name:
@@ -227,7 +236,7 @@ def _resolve_climate_mode(
 
     season = get_season(day.month)
     try:
-        row = enso_iod.loc[pd.Timestamp(day)]
+        row = enso_iod.loc[pd.Timestamp(day)]  # type: ignore[attr-defined]
         return ClimateMode(
             season,
             classify_enso(float(row["nino34"]), threshold=enso_thr),
@@ -295,6 +304,7 @@ def _process_exceedance_day(args: dict) -> dict:
                 ),
                 fetch_workers=args.get("fetch_workers", 8),
                 min_members=args.get("min_members", 10),
+                s3_region=args.get("s3_region", "eu-central-1"),
             )
             # Data is already concrete (in-memory), no chunking needed
         else:
@@ -302,8 +312,13 @@ def _process_exceedance_day(args: dict) -> dict:
 
             # Dimension 1: Variable pre-selection
             available = [v for v in compute_vars if v in day_ds.data_vars]
-            if available:
-                day_ds = day_ds[available]
+            if not available:
+                return {
+                    "date_str": date_str,
+                    "success": False,
+                    "error": f"none of {compute_vars} found in group {date_str}",
+                }
+            day_ds = day_ds[available]
 
             # Dimension 2: Step slicing — only load steps needed for max window
             if max_steps is not None and "step" in day_ds.dims:
@@ -325,22 +340,26 @@ def _process_exceedance_day(args: dict) -> dict:
     ).set_index("date")
     mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
 
-    acc_ds = compute_rolling_accumulations(day_ds, windows_h=args["windows_h"])
+    acc_ds = compute_rolling_accumulations(
+        day_ds,
+        windows_h=args["windows_h"],
+        skip_subresolution_windows=args.get("skip_subresolution_windows", True),
+    )
     member_dim = "member" if "member" in day_ds.dims else "number"
 
     day_results: dict[tuple[int, int], xr.DataArray] = {}
     for w in args["windows_h"]:
         for rp in args["return_periods"]:
             try:
-                thr = thresholds.get(w, rp, mode)
+                thr = thresholds.get(w, rp, mode)  # type: ignore[arg-type]
                 day_results[(w, rp)] = compute_exceedance_probabilities(
                     acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
                     window_h=w, return_period=rp, member_dim=member_dim,
                 )
-            except Exception:
+            except Exception as exc:
                 log.warning(
                     "exceedance_window_rp_failed",
-                    window_h=w, return_period=rp, date=date_str, exc_info=True,
+                    window_h=w, return_period=rp, date=date_str, error=str(exc),
                 )
                 continue
 
@@ -452,7 +471,9 @@ def _run_exceedance(
             "min_members": ma.min_members,
             "max_step_h": c2.effective_max_forecast_h,
             "step_resolution_h": c2.step_resolution_h,
+            "skip_subresolution_windows": c2.skip_subresolution_windows,
             "step_buffer": c2.step_buffer,
+            "s3_region": cfg.sources.ecmwf_s3_region,
         }
         for d in committed_dates
     ]
@@ -504,6 +525,7 @@ def _run_exceedance(
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
     if cfg.outputs.exceedance_icechunk_uri:
@@ -534,20 +556,23 @@ def _run_risk(
     start: date,
     end: date,
 ) -> list[Path]:
-    from gik_icechain.risk.crma_model import CRMAModel
+    from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
     from gik_icechain.risk.risk_engine import run_risk_batch
 
-    crma = CRMAModel(crma_cfg=cfg.component3.crma_model)
-    crma.build()
-    if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
-        crma.load_cpts(Path(cfg.component3.crma.cpt_path))
+    crma_models: dict[EastAfricaCluster, CRMAModel] = {}
+    for cluster in EastAfricaCluster:
+        m = CRMAModel(cluster=cluster, crma_cfg=cfg.component3.crma_model)
+        m.build()
+        if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
+            m.load_cpts(Path(cfg.component3.crma.cpt_path))
+        crma_models[cluster] = m
 
     crma_cfg = cfg.component3.crma_model
     return run_risk_batch(
         exceedance_store_uri=exc_uri,
         gpm_dir=Path(cfg.sources.gpm_imerg_path),
         admin_boundaries_path=Path(cfg.sources.admin_boundaries_path),
-        crma_model=crma,
+        crma_models=crma_models,
         output_dir=output,
         start=start,
         end=end,
@@ -555,6 +580,7 @@ def _run_risk(
         initial_api_mm=cfg.component3.api.initial_api_mm,
         signal_threshold=crma_cfg.signal_threshold_prob,
         rp_signal=crma_cfg.rp_signal,
+        endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
 
@@ -599,7 +625,8 @@ def convert(
             json.dumps({"commit_hash": commit_hash, "processed_date": e.isoformat()})
         )
 
-    typer.echo(f"Convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}")
+    short = commit_hash[:12] if commit_hash else "none"
+    typer.echo(f"Convert complete: {s} -> {e}  commit={short}")
 
 
 @app.command("convert-aifs")
@@ -731,7 +758,7 @@ def exceedance(
     e = _parse_date(end) if end else None
 
     dask_cfg = cfg.component2.dask
-    dask_workers = workers or dask_cfg.n_workers
+    dask_workers = workers if workers is not None else dask_cfg.n_workers
     if dask_workers > 1:
         try:
             from dask.distributed import Client

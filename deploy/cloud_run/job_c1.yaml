@@ -13,13 +13,16 @@ spec:
           serviceAccountName: gik-icechain-sa@PROJECT_ID.iam.gserviceaccount.com
           containers:
             - image: ghcr.io/hashirama21/gik-icechain:latest
-              command: ["python", "-m", "gik_icechain.conversion.gik_loader"]
-              args: ["--config", "configs/east_africa.yaml"]
+              command: ["/bin/sh", "-c"]
+              args:
+                - "gik-icechain convert --start ${TARGET_DATE} --end ${TARGET_DATE} --output-store ${GIK_ICECHUNK_STORE_URI} --config configs/default.yaml"
               resources:
                 limits:
                   cpu: "4"
                   memory: 16Gi
               env:
+                - name: TARGET_DATE
+                  value: ""
                 - name: GIK_ICECHUNK_STORE_URI
                   valueFrom:
                     secretKeyRef:
@@ -37,5 +40,7 @@ spec:
                       key: aws-secret-access-key
                 - name: HDF5_USE_FILE_LOCKING
                   value: "FALSE"
+                - name: PYTHONIOENCODING
+                  value: "utf-8"
           maxRetries: 2
           timeoutSeconds: 3600
