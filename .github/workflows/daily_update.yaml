@@ -12,7 +12,6 @@ on:
 
 env:
   PYTHONIOENCODING: utf-8
-  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
 
 jobs:
 
