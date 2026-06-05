@@ -57,6 +57,15 @@ def compute_rolling_accumulations(
 
     accum_vars: dict[str, xr.DataArray] = {}
     for w in windows_h:
+        # Skip windows finer than the step resolution (e.g. a 3 h window when
+        # the loaded data is 6-hourly) instead of crashing the whole day.
+        if w < step_hours:
+            log.warning(
+                "window_smaller_than_step_skipped",
+                window_h=w,
+                step_hours=step_hours,
+            )
+            continue
         accum_vars[f"tp_{w}h"] = accumulation_for_window(
             ds[precip_var], window_h=w, step_hours=step_hours
         )
