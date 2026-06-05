@@ -134,10 +134,15 @@ def fetch_coalesced_ranges(
     """
     import fsspec
 
+    # Explicitly set endpoint_url to the real AWS S3 regional URL so that
+    # AWS_ENDPOINT_URL (set to MinIO for icechunk writes) is not inherited.
     fs = fsspec.filesystem(
         "s3",
         anon=anon,
-        client_kwargs={"region_name": s3_region},
+        client_kwargs={
+            "region_name": s3_region,
+            "endpoint_url": f"https://s3.{s3_region}.amazonaws.com",
+        },
         config_kwargs={"retries": {"max_attempts": 5}},
     )
 
