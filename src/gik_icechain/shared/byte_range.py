@@ -132,19 +132,23 @@ def fetch_coalesced_ranges(
     Returns:
         Mapping from ``(member_idx, step_idx, variable)`` to raw GRIB2 bytes.
     """
+    import os
     import fsspec
 
-    # Explicitly set endpoint_url to the real AWS S3 regional URL so that
-    # AWS_ENDPOINT_URL (set to MinIO for icechunk writes) is not inherited.
-    fs = fsspec.filesystem(
-        "s3",
-        anon=anon,
-        client_kwargs={
-            "region_name": s3_region,
-            "endpoint_url": f"https://s3.{s3_region}.amazonaws.com",
-        },
-        config_kwargs={"retries": {"max_attempts": 5}},
-    )
+    # Remove AWS_ENDPOINT_URL from environment for this call so that boto3
+    # uses the default AWS virtual-hosted endpoint (not MinIO).
+    # We restore it afterwards to avoid side effects on other code.
+    _saved_endpoint = os.environ.pop("AWS_ENDPOINT_URL", None)
+    try:
+        fs = fsspec.filesystem(
+            "s3",
+            anon=anon,
+            client_kwargs={"region_name": s3_region},
+            config_kwargs={"retries": {"max_attempts": 5}},
+        )
+    finally:
+        if _saved_endpoint is not None:
+            os.environ["AWS_ENDPOINT_URL"] = _saved_endpoint
 
     n_original = sum(len(cr.original_ranges) for cr in coalesced)
 
