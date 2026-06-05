@@ -108,8 +108,7 @@ def _build_coalesced(
     members: list[ByteRange],
 ) -> CoalescedRange:
     slices = tuple(
-        (br.offset - merged_start, br.offset - merged_start + br.length)
-        for br in members
+        (br.offset - merged_start, br.offset - merged_start + br.length) for br in members
     )
     return CoalescedRange(
         uri=uri,
@@ -122,7 +121,7 @@ def _build_coalesced(
 
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
     """Split ``s3://bucket/key`` into ``(bucket, key)``."""
-    stripped = uri[len("s3://"):]
+    stripped = uri[len("s3://") :]
     bucket, _, key = stripped.partition("/")
     return bucket, key
 
@@ -164,8 +163,8 @@ def fetch_coalesced_ranges(
                 region=s3_region,
                 skip_signature=True,
                 endpoint=aws_endpoint,
-                client_options=_client_options,
-                retry_config=_retry_config,
+                client_options=_client_options,  # type: ignore[arg-type]
+                retry_config=_retry_config,  # type: ignore[arg-type]
             )
         return _stores[bucket]
 
@@ -174,9 +173,7 @@ def fetch_coalesced_ranges(
     def _fetch_one(cr: CoalescedRange) -> list[tuple[tuple, bytes]]:
         bucket, key = _parse_s3_uri(cr.uri)
         store = _get_store(bucket)
-        raw: bytes = bytes(
-            obs.get_range(store, key, start=cr.offset, end=cr.offset + cr.length)
-        )
+        raw: bytes = bytes(obs.get_range(store, key, start=cr.offset, end=cr.offset + cr.length))
         pieces: list[tuple[tuple, bytes]] = []
         for sl, orig in zip(cr.slices, cr.original_ranges, strict=True):
             chunk_key = (
@@ -184,7 +181,7 @@ def fetch_coalesced_ranges(
                 orig.metadata.get("step_idx"),
                 orig.metadata.get("variable"),
             )
-            pieces.append((chunk_key, raw[sl[0]:sl[1]]))
+            pieces.append((chunk_key, raw[sl[0] : sl[1]]))
         return pieces
 
     result: dict[tuple, bytes] = {}

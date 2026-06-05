@@ -151,30 +151,36 @@ def _extract_virtual_chunk_refs(
                 async for batch in it:
                     # batch = (coords, types, uris, offsets, lengths, extra)
                     coords_arr, types_arr, uris, offsets, lengths = (
-                        batch[0], batch[1], batch[2], batch[3], batch[4]
+                        batch[0],
+                        batch[1],
+                        batch[2],
+                        batch[3],
+                        batch[4],
                     )
                     for i in range(len(coords_arr)):
                         if int(types_arr[i]) != _VIRTUAL_CHUNK_TYPE:
                             continue
                         member_idx = int(coords_arr[i, 0])
-                        step_idx   = int(coords_arr[i, 1])
+                        step_idx = int(coords_arr[i, 1])
                         if step_idx >= max_steps:
                             continue
-                        uri    = uris[i]
+                        uri = uris[i]
                         offset = int(offsets[i])
                         length = int(lengths[i])
                         if not uri or length == 0:
                             continue
-                        refs.append(ByteRange(
-                            uri=uri,
-                            offset=offset,
-                            length=length,
-                            metadata={
-                                "member_idx": member_idx,
-                                "step_idx":   step_idx,
-                                "variable":   var,
-                            },
-                        ))
+                        refs.append(
+                            ByteRange(
+                                uri=uri,
+                                offset=offset,
+                                length=length,
+                                metadata={
+                                    "member_idx": member_idx,
+                                    "step_idx": step_idx,
+                                    "variable": var,
+                                },
+                            )
+                        )
             except Exception as exc:
                 log.warning(
                     "array_chunk_iterator_failed",
@@ -271,9 +277,7 @@ def _assemble_dataset(
     # Pre-allocate arrays per variable
     data_arrays: dict[str, np.ndarray] = {}
     for var in variables:
-        arr = np.full(
-            (n_members, max_steps, nlat, nlon), np.nan, dtype=np.float32
-        )
+        arr = np.full((n_members, max_steps, nlat, nlon), np.nan, dtype=np.float32)
         data_arrays[var] = arr
 
     # Place decoded grids
@@ -360,9 +364,7 @@ def load_day_manifest_aware(
     max_steps = (max_step_h // step_resolution_h) + step_buffer + 1
 
     # Step 1: Extract virtual chunk refs from IceChunk metadata
-    byte_ranges = _extract_virtual_chunk_refs(
-        session, date_str, variables, max_steps
-    )
+    byte_ranges = _extract_virtual_chunk_refs(session, date_str, variables, max_steps)
     if not byte_ranges:
         raise ValueError(f"No virtual chunk refs found for {date_str}")
 
@@ -445,7 +447,7 @@ def _read_step_hours(
         import zarr
 
         zg = zarr.open_group(session.store, mode="r")
-        full = np.asarray(zg[f"{date_str}/step"][:])
+        full = np.asarray(zg[f"{date_str}/step"][:])  # type: ignore[index]
         return full[:max_steps].astype(np.int32)
     except Exception as exc:
         log.warning(

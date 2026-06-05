@@ -96,9 +96,7 @@ class IceChainStore:
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
         self._region: str | None = (
-            region
-            or os.environ.get("AWS_REGION")
-            or os.environ.get("AWS_DEFAULT_REGION")
+            region or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
         )
 
     def _check_deps(self) -> None:
@@ -184,7 +182,8 @@ class IceChainStore:
         virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
         commit_hash = session.commit(
-            message=message or self._commit_message_template.format(
+            message=message
+            or self._commit_message_template.format(
                 date=forecast_date.isoformat(), run_hour=run_hour
             ),
             metadata={
@@ -374,19 +373,19 @@ class IceChainStore:
 
         if self._manifest_splitting:
             split_cfg = icechunk.ManifestSplittingConfig(
-                split_sizes=[
+                split_sizes=(
                     (
                         icechunk.ManifestSplitCondition.AnyArray(),
-                        [
+                        (
                             (
                                 icechunk.ManifestSplitDimCondition.DimensionName(
                                     self._manifest_split_dim
                                 ),
                                 self._manifest_split_size,
-                            )
-                        ],
-                    )
-                ]
+                            ),
+                        ),
+                    ),
+                )
             )
             config.manifest = icechunk.ManifestConfig(splitting=split_cfg)
             log.info(
