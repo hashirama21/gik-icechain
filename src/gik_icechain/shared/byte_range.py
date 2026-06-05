@@ -136,15 +136,19 @@ def fetch_coalesced_ranges(
 ) -> dict[tuple, bytes]:
     """Fetch coalesced ranges from S3 in parallel using obstore.
 
-    Uses ``obstore.store.S3Store`` with ``skip_signature=True`` — the same
-    mechanism IceChunk uses internally — so it is not affected by the
-    ``AWS_ENDPOINT_URL`` environment variable set for MinIO.
+    Uses ``obstore.store.S3Store`` with ``skip_signature=True`` (anonymous,
+    the same mechanism IceChunk uses internally) and an *explicit* AWS
+    endpoint, so the ``AWS_ENDPOINT_URL`` environment variable (set to MinIO
+    for the IceChunk store) is never inherited for ECMWF byte-range reads.
 
     Returns:
         Mapping from ``(member_idx, step_idx, variable)`` to raw GRIB2 bytes.
     """
     import obstore as obs
     from obstore.store import S3Store
+
+    # Explicit AWS regional endpoint — overrides any AWS_ENDPOINT_URL (MinIO).
+    aws_endpoint = f"https://s3.{s3_region}.amazonaws.com"
 
     # Build one store per unique bucket (all ECMWF URIs share the same bucket).
     _stores: dict[str, Any] = {}
@@ -155,6 +159,7 @@ def fetch_coalesced_ranges(
                 bucket,
                 region=s3_region,
                 skip_signature=True,
+                endpoint=aws_endpoint,
             )
         return _stores[bucket]
 

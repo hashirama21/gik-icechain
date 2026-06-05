@@ -27,6 +27,11 @@ component1:
     branch: "main"
     commit_message_template: "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: "{date}T{run_hour:02d}Z"
+    # Manifest splitting (VirtualiZarr #884) — keeps manifest fragments bounded
+    # at 1200+ day scale. Splits each array's manifest along `step` every N positions.
+    manifest_splitting: true
+    manifest_split_dim: "step"
+    manifest_split_size: 1000
   gap_fill:
     enabled: true
     cloud_run_job: "deploy/cloud_run/job_c1.yaml"

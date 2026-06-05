@@ -56,6 +56,13 @@ class IceChunkConfig(BaseModel):
     branch: str = "main"
     commit_message_template: str = "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: str = "{date}T{run_hour:02d}Z"
+    # Manifest splitting (IceChunk 2.x) — caps manifest fragment size so append
+    # latency and metadata scan stay flat as the archive grows to 1200+ days.
+    # Splits every array along the given dimension every `manifest_split_size`
+    # index positions. See VirtualiZarr #884 (manifest-splitting recommendation).
+    manifest_splitting: bool = True
+    manifest_split_dim: str = "step"   # forecast-horizon axis (time-like)
+    manifest_split_size: int = 1000
 
 
 class GapFillConfig(BaseModel):

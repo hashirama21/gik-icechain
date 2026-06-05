@@ -79,6 +79,9 @@ def _run_convert(cfg: GIKConfig, start: date, end: date) -> str:
         branch=cfg.component1.icechunk.branch,
         commit_message_template=cfg.component1.icechunk.commit_message_template,
         tag_format=cfg.component1.icechunk.tag_format,
+        manifest_splitting=cfg.component1.icechunk.manifest_splitting,
+        manifest_split_dim=cfg.component1.icechunk.manifest_split_dim,
+        manifest_split_size=cfg.component1.icechunk.manifest_split_size,
     )
     store.create_or_open()
 

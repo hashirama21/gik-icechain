@@ -65,6 +65,9 @@ class IceChainStore:
         region: str | None = None,
         commit_message_template: str = _DEFAULT_MESSAGE_TEMPLATE,
         tag_format: str = _DEFAULT_TAG_FORMAT,
+        manifest_splitting: bool = True,
+        manifest_split_dim: str = "step",
+        manifest_split_size: int = 1000,
     ) -> None:
         """
         Args:
@@ -78,11 +81,18 @@ class IceChainStore:
                                       Receives ``date`` (ISO str) and ``run_hour`` (int).
             tag_format:               Python format-string for snapshot tags.
                                       Receives ``date`` (ISO str) and ``run_hour`` (int).
+            manifest_splitting:       Enable IceChunk manifest splitting (bounds
+                                      manifest fragment size at scale).
+            manifest_split_dim:       Dimension name to split manifests along.
+            manifest_split_size:      Max index positions per manifest fragment.
         """
         self.storage_uri = storage_uri
         self.branch = branch
         self._commit_message_template = commit_message_template
         self._tag_format = tag_format
+        self._manifest_splitting = manifest_splitting
+        self._manifest_split_dim = manifest_split_dim
+        self._manifest_split_size = manifest_split_size
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
         self._region: str | None = (
@@ -342,6 +352,11 @@ class IceChainStore:
         IceChunk requires explicit virtual chunk container declarations so it
         knows which external S3 prefixes are trusted for byte-range references.
         The ECMWF bucket is public (anonymous S3 access).
+
+        When ``manifest_splitting`` is enabled, the manifest is split along the
+        configured dimension every ``manifest_split_size`` index positions, so
+        that manifest fragments stay bounded as the archive grows (mitigates the
+        single-growing-manifest problem from VirtualiZarr #884).
         """
         # Explicitly set the AWS endpoint so that AWS_ENDPOINT_URL (used for
         # the MinIO store) is not inherited by the ECMWF virtual-chunk store.
@@ -356,6 +371,29 @@ class IceChainStore:
         )
         config = icechunk.RepositoryConfig.default()
         config.set_virtual_chunk_container(container)
+
+        if self._manifest_splitting:
+            split_cfg = icechunk.ManifestSplittingConfig(
+                split_sizes=[
+                    (
+                        icechunk.ManifestSplitCondition.AnyArray(),
+                        [
+                            (
+                                icechunk.ManifestSplitDimCondition.DimensionName(
+                                    self._manifest_split_dim
+                                ),
+                                self._manifest_split_size,
+                            )
+                        ],
+                    )
+                ]
+            )
+            config.manifest = icechunk.ManifestConfig(splitting=split_cfg)
+            log.info(
+                "icechunk_manifest_splitting",
+                dim=self._manifest_split_dim,
+                size=self._manifest_split_size,
+            )
         return config
 
     def _build_storage(self) -> Any:
