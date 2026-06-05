@@ -379,13 +379,23 @@ ruff check src/ tests/
 @software{gik_icechain_2026,
   title   = {{GIK-IceChain v2.0}: Zero-Cost Cloud-Native Pipeline for
              Retrospective Flood Risk Decision Support in East Africa},
-  author  = {{Code for Earth 2026 Team}},
+  author  = {Dongmo, Vincess and Kemekoum, Dylan and
+             Feudjio, Donald and Venyl, Chris},
   year    = {2026},
   url     = {https://github.com/hashirama21/gik-icechain},
   license = {Apache-2.0},
   note    = {ECMWF Code for Earth 2026  -  Challenge 41, Africa Stream (ArcX)}
 }
 ```
+
+## Authors
+
+- **Vincess Dongmo**
+- **Dylan Kemekoum**
+- **Donald Feudjio**
+- **Chris Venyl**
+
+ECMWF Code for Earth 2026 — Challenge 41, Africa Stream (ArcX)
 
 ---
 
