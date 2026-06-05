@@ -24,7 +24,7 @@ jobs:
       processed_date: ${{ steps.ingest.outputs.processed_date }}
       commit_hash:    ${{ steps.ingest.outputs.commit_hash }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
@@ -59,7 +59,7 @@ jobs:
         run: |
           [ -n "${{ needs.ingest-daily-gik.outputs.commit_hash }}" ] || \
             { echo "::error title=Empty commit::No new data for ${{ needs.ingest-daily-gik.outputs.processed_date }}"; exit 1; }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
@@ -83,7 +83,7 @@ jobs:
     environment: production
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
@@ -107,7 +107,7 @@ jobs:
     environment: production
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: viz
