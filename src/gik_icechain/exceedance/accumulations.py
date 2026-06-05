@@ -27,6 +27,7 @@ def compute_rolling_accumulations(
     windows_h: list[int] = WINDOWS_H,
     precip_var: str = "tp",
     step_hours: int = _IFS_STEP_HOURS,
+    skip_subresolution_windows: bool = True,
 ) -> xr.Dataset:
     """Compute accumulated precipitation for each window.
 
@@ -36,6 +37,9 @@ def compute_rolling_accumulations(
         windows_h:    List of accumulation window lengths in hours.
         precip_var:   Name of the precipitation variable.
         step_hours:   Hours between consecutive forecast steps.
+        skip_subresolution_windows:
+                      When a window is finer than ``step_hours``: True skips it
+                      with a warning, False raises ValueError (abort the day).
 
     Returns:
         Dataset with one variable per window named ``tp_{w}h``.
@@ -57,15 +61,20 @@ def compute_rolling_accumulations(
 
     accum_vars: dict[str, xr.DataArray] = {}
     for w in windows_h:
-        # Skip windows finer than the step resolution (e.g. a 3 h window when
-        # the loaded data is 6-hourly) instead of crashing the whole day.
+        # Handle windows finer than the step resolution (e.g. a 3 h window when
+        # the loaded data is 6-hourly) per the configured policy.
         if w < step_hours:
-            log.warning(
-                "window_smaller_than_step_skipped",
-                window_h=w,
-                step_hours=step_hours,
+            if skip_subresolution_windows:
+                log.warning(
+                    "window_smaller_than_step_skipped",
+                    window_h=w,
+                    step_hours=step_hours,
+                )
+                continue
+            raise ValueError(
+                f"window_h={w} must be >= step_hours={step_hours} "
+                f"(set component2.skip_subresolution_windows=true to skip instead)"
             )
-            continue
         accum_vars[f"tp_{w}h"] = accumulation_for_window(
             ds[precip_var], window_h=w, step_hours=step_hours
         )

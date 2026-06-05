@@ -45,6 +45,9 @@ component2:
   step_resolution_h: 6
   max_forecast_h: null
   step_buffer: 1
+  # When a window is finer than the step resolution (e.g. 3h on 6-hourly data):
+  # true = skip it with a warning, false = raise an error and abort the day.
+  skip_subresolution_windows: true
 
   windows_h: [3, 6, 12, 24, 48, 72, 168]
   return_periods: [2, 5, 10, 20, 40, 100]

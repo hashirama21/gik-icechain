@@ -340,7 +340,11 @@ def _process_exceedance_day(args: dict) -> dict:
     ).set_index("date")
     mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
 
-    acc_ds = compute_rolling_accumulations(day_ds, windows_h=args["windows_h"])
+    acc_ds = compute_rolling_accumulations(
+        day_ds,
+        windows_h=args["windows_h"],
+        skip_subresolution_windows=args.get("skip_subresolution_windows", True),
+    )
     member_dim = "member" if "member" in day_ds.dims else "number"
 
     day_results: dict[tuple[int, int], xr.DataArray] = {}
@@ -467,6 +471,7 @@ def _run_exceedance(
             "min_members": ma.min_members,
             "max_step_h": c2.effective_max_forecast_h,
             "step_resolution_h": c2.step_resolution_h,
+            "skip_subresolution_windows": c2.skip_subresolution_windows,
             "step_buffer": c2.step_buffer,
             "s3_region": cfg.sources.ecmwf_s3_region,
         }
