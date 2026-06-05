@@ -120,35 +120,52 @@ slows append and metadata scan as the archive grows.
 
 IceChunk 2.x exposes ManifestSplittingConfig for exactly this purpose.
 
-STATUS: NOT YET IMPLEMENTED IN GIK-ICECHAIN
+STATUS: IMPLEMENTED (commit fa42f60, 2026-06-05)
 
-Current state:
-  - icechunk_writer._build_repo_config() does not set ManifestSplittingConfig
-  - All VirtualChunkRefs for all committed days accumulate in one manifest
-  - For small runs (< 100 days) this is not yet a bottleneck
-  - At 1200 days x 21,675 refs/day = ~26 million refs, manifest size and
-    append latency will degrade without splitting
+HOW GIK-ICECHAIN SOLVES IT
+---------------------------
+icechunk_writer._build_repo_config() now configures manifest splitting along
+the `step` dimension (the forecast-horizon axis, which is the time-like axis
+of each per-day array). Implemented with the *actual* IceChunk 2.0.5 API —
+the API in the original recommendation (split_after_n_chunks) does not exist.
 
-Required fix (icechunk_writer.py):
+  REAL API (verified against icechunk 2.0.5):
+    config.manifest = icechunk.ManifestConfig(
+        splitting=icechunk.ManifestSplittingConfig(
+            split_sizes=[
+                (
+                    icechunk.ManifestSplitCondition.AnyArray(),
+                    [
+                        (
+                            icechunk.ManifestSplitDimCondition.DimensionName("step"),
+                            1000,
+                        )
+                    ],
+                )
+            ]
+        )
+    )
 
-  from icechunk import (
-      ManifestConfig, ManifestSplittingConfig, ManifestSplitCondition
-  )
+  NOTE: The proposed `ManifestSplitCondition.split_after_n_chunks(1000)` does
+  NOT exist in IceChunk 2.0.5. The real API is a per-(array, dimension) size
+  map: split_sizes = [(array_condition, [(dim_condition, max_positions)])].
 
-  def _build_repo_config(self) -> RepositoryConfig:
-      return RepositoryConfig(
-          manifest=ManifestConfig(
-              splitting=ManifestSplittingConfig(
-                  condition=ManifestSplitCondition.split_after_n_chunks(1000)
-              )
-          ),
-          ...
-      )
+CONFIGURATION (configs/default.yaml -> component1.icechunk):
+    manifest_splitting: true       # enable/disable
+    manifest_split_dim: "step"     # dimension to split along
+    manifest_split_size: 1000      # max index positions per manifest fragment
 
-  Splitting by 1000 chunks per manifest file would give ~27 files for a
-  1200-day store instead of one growing monolith.
+DESIGN NOTE — why split on `step`, not `time`:
+gik-icechain does not have a single global time axis (see PROBLEM 2): each
+forecast day is its own date-keyed Zarr group with arrays shaped
+(member=51, step=85, lat=721, lon=1440). Within an array, only `member` and
+`step` have multiple chunks (lat/lon are single full-grid chunks). `step` is
+the natural time-like axis, so manifests are split along it. This bounds each
+manifest fragment regardless of how many day-groups the store accumulates.
 
-IMPACT: Low for current scale (< 50 committed days), high at 1200+ days.
+IMPACT: Low for current scale (< 50 committed days), high at 1200+ days —
+now mitigated. Validated: repo config builds correctly with the splitting
+config attached; 38 byte-range/manifest/virtualizer unit tests pass.
 
 
 ===========================================================================
@@ -170,21 +187,26 @@ Consequence:
 Solution for full historical archive: ECMWF subscription (MARS archive
 access) or local GRIB2 mirror for dates older than 15 months.
 
-ISSUE B: AWS_ENDPOINT_URL COLLISION (FIXED: commit d051604)
-------------------------------------------------------------
+ISSUE B: AWS_ENDPOINT_URL COLLISION (FIXED: commits d051604, b2b00ab, fa42f60)
+------------------------------------------------------------------------------
 Running the pipeline sets AWS_ENDPOINT_URL=http://MinIO-IP:9000 for
-IceChunk to write to local MinIO. The manifest-aware C2 path uses
-fsspec.filesystem("s3") which inherits this env var, redirecting all
-ECMWF S3 byte-range reads to MinIO (403 Forbidden).
+IceChunk to write to local MinIO. The manifest-aware C2 path inherited this
+env var, redirecting all ECMWF S3 byte-range reads to MinIO (403 Forbidden).
 
-Fix: explicit endpoint_url in byte_range.py client_kwargs:
-  client_kwargs={
-      "region_name": s3_region,
-      "endpoint_url": f"https://s3.{s3_region}.amazonaws.com",
-  }
-This overrides AWS_ENDPOINT_URL for ECMWF reads only.
-The same fix was previously applied to IceChunk's Rust S3 client
-in icechunk_writer._build_repo_config().
+Fix evolution (three iterations until robust):
+  1. d051604: fsspec with explicit endpoint_url — broke on path-style vs
+     virtual-hosted bucket addressing.
+  2. b2b00ab: switched from fsspec/boto3 (anon=True blocked by ECMWF) to
+     obstore S3Store with skip_signature=True (same mechanism as IceChunk).
+  3. fa42f60: pass explicit endpoint to obstore S3Store so the env var is
+     never consulted:
+       S3Store(bucket, region=s3_region, skip_signature=True,
+               endpoint=f"https://s3.{s3_region}.amazonaws.com")
+
+Verified: fetch succeeds against the real AWS endpoint even with
+AWS_ENDPOINT_URL=MinIO still set in the environment.
+The same explicit-endpoint pattern is used by IceChunk's Rust S3 client in
+icechunk_writer._build_repo_config().
 
 ISSUE C: ICECHUNK 2.x API MIGRATION (FIXED: commits f19d56f, d051604)
 ----------------------------------------------------------------------
@@ -219,9 +241,9 @@ Problem                              | Status in gik-icechain
 -------------------------------------|----------------------------------------
 OOM writing virtual refs (236K files)| SOLVED — per-day commits, HF catalog
 append_dim O(n) blow-up              | SOLVED — date-keyed groups, no time dim
-Manifest splitting                   | NOT IMPLEMENTED — needed at 1200+ days
+Manifest splitting                   | IMPLEMENTED (commit fa42f60) — split on step/1000
 ECMWF S3 data retention (<15 months) | ARCHITECTURAL CONSTRAINT — needs MARS
-AWS_ENDPOINT_URL collision           | FIXED (commit d051604, 2026-06-05)
+AWS_ENDPOINT_URL collision           | FIXED (commits d051604/b2b00ab/fa42f60)
 IceChunk 2.x API migration           | FIXED (commit f19d56f, 2026-06-05)
 CRMA single-cluster dispatch bug     | FIXED (commit d8e2c19, 2026-06-04)
 
@@ -243,5 +265,15 @@ at larger scale. The key insight to share with the icpac-igad discussion:
   not by batch of arbitrary size. IceChunk's snapshot history then gives
   you a time-indexed transaction log for free.
 
-  Open item: add ManifestSplittingConfig to avoid the single-manifest
-  bottleneck at full 25-year scale.
+  Manifest splitting (now implemented in gik-icechain, commit fa42f60):
+  use the real IceChunk 2.0.5 API — ManifestSplittingConfig(split_sizes=[
+  (ManifestSplitCondition.AnyArray(), [(ManifestSplitDimCondition.
+  DimensionName("<time-axis>"), N)])]). The split_after_n_chunks helper
+  referenced in earlier discussion does not exist in 2.0.5; the real config
+  is a per-(array, dimension) max-positions map. For CMORPH's single global
+  time-axis store, split on "time" every ~8760 positions (1 year of hourly)
+  or per-month for finer fragments.
+
+  No remaining open items on the manifest/append/OOM axis. The only hard
+  constraint is ECMWF S3 public data retention (~15 months) for C2 byte-range
+  reads, which requires a MARS subscription for older historical dates.
