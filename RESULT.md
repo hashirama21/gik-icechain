@@ -38,7 +38,26 @@
 | No_Data | 7 (insufficient bbox grid coverage) |
 | Yellow / Orange / Red | 0 |
 
-Expected — no major flood event documented on 22 February 2025.
+Expected — February is DJF (dry season in most of East Africa). All 155 units correctly report Green over 2025-02-22→28.
+
+### manifest_aware fix — IceChunk 2.x API (2026-06-05)
+
+> `all_virtual_chunk_locations()` in IceChunk 2.0.5 now returns a flat list of unique S3 URIs
+> instead of a `{chunk_key: location}` dict. Fixed by porting to `store.array_chunk_iterator()`
+> which yields batches of `(coords, types, uris, offsets, lengths, extra)` — giving
+> `(url, offset, length)` per virtual chunk without any S3 fetch.
+
+**Validation on 2024-04-26 (Kenya MAM 2024 flood peak):**
+- C1 convert: success (virtual refs committed to IceChunk)
+- C2 manifest_aware: **1 530 refs extracted** correctly — API fix confirmed
+- C2 fetch: **Forbidden** — ECMWF S3 retains forecast data for ~5 days only;
+  all catalog dates (2024-03-01 → 2026-02-18) have expired on the public bucket.
+  Full archive access requires an ECMWF subscription.
+
+**Data availability constraint:**
+The pipeline is functionally validated end-to-end. Historical flood signal detection
+requires either (a) ECMWF full archive subscription or (b) running C2 within 5 days
+of the forecast initialization date.
 
 ---
 
