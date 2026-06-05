@@ -120,6 +120,13 @@ def _build_coalesced(
     )
 
 
+def _parse_s3_uri(uri: str) -> tuple[str, str]:
+    """Split ``s3://bucket/key`` into ``(bucket, key)``."""
+    stripped = uri[len("s3://"):]
+    bucket, _, key = stripped.partition("/")
+    return bucket, key
+
+
 def fetch_coalesced_ranges(
     coalesced: list[CoalescedRange],
     *,
@@ -127,41 +134,46 @@ def fetch_coalesced_ranges(
     s3_region: str = "eu-central-1",
     anon: bool = True,
 ) -> dict[tuple, bytes]:
-    """Fetch coalesced ranges from S3 in parallel and demultiplex.
+    """Fetch coalesced ranges from S3 in parallel using obstore.
+
+    Uses ``obstore.store.S3Store`` with ``skip_signature=True`` — the same
+    mechanism IceChunk uses internally — so it is not affected by the
+    ``AWS_ENDPOINT_URL`` environment variable set for MinIO.
 
     Returns:
         Mapping from ``(member_idx, step_idx, variable)`` to raw GRIB2 bytes.
     """
-    import os
-    import fsspec
+    import obstore as obs
+    from obstore.store import S3Store
 
-    # Remove AWS_ENDPOINT_URL from environment for this call so that boto3
-    # uses the default AWS virtual-hosted endpoint (not MinIO).
-    # We restore it afterwards to avoid side effects on other code.
-    _saved_endpoint = os.environ.pop("AWS_ENDPOINT_URL", None)
-    try:
-        fs = fsspec.filesystem(
-            "s3",
-            anon=anon,
-            client_kwargs={"region_name": s3_region},
-            config_kwargs={"retries": {"max_attempts": 5}},
-        )
-    finally:
-        if _saved_endpoint is not None:
-            os.environ["AWS_ENDPOINT_URL"] = _saved_endpoint
+    # Build one store per unique bucket (all ECMWF URIs share the same bucket).
+    _stores: dict[str, Any] = {}
+
+    def _get_store(bucket: str) -> Any:
+        if bucket not in _stores:
+            _stores[bucket] = S3Store(
+                bucket,
+                region=s3_region,
+                skip_signature=True,
+            )
+        return _stores[bucket]
 
     n_original = sum(len(cr.original_ranges) for cr in coalesced)
 
     def _fetch_one(cr: CoalescedRange) -> list[tuple[tuple, bytes]]:
-        buf = _fetch_with_retry(fs, cr.uri, cr.offset, cr.length)
+        bucket, key = _parse_s3_uri(cr.uri)
+        store = _get_store(bucket)
+        raw: bytes = bytes(
+            obs.get_range(store, key, start=cr.offset, end=cr.offset + cr.length)
+        )
         pieces: list[tuple[tuple, bytes]] = []
         for sl, orig in zip(cr.slices, cr.original_ranges, strict=True):
-            key = (
+            chunk_key = (
                 orig.metadata.get("member_idx"),
                 orig.metadata.get("step_idx"),
                 orig.metadata.get("variable"),
             )
-            pieces.append((key, buf[sl[0]:sl[1]]))
+            pieces.append((chunk_key, raw[sl[0]:sl[1]]))
         return pieces
 
     result: dict[tuple, bytes] = {}
@@ -184,7 +196,7 @@ def fetch_coalesced_ranges(
 
 
 def _fetch_with_retry(fs: Any, uri: str, offset: int, length: int) -> bytes:
-    """Read a byte range from S3 with retry on transient errors."""
+    """Read a byte range from S3 with retry on transient errors (legacy fsspec path)."""
     from gik_icechain.shared.storage import _s3_retry
 
     @_s3_retry
