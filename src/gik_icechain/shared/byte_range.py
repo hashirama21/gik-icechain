@@ -149,16 +149,12 @@ def fetch_coalesced_ranges(
     import obstore as obs
     from obstore.store import S3Store
 
-    # Explicit AWS regional endpoint — overrides any AWS_ENDPOINT_URL (MinIO).
+    # Explicit AWS regional endpoint
     aws_endpoint = f"https://s3.{s3_region}.amazonaws.com"
 
-    # WAN-robust client + retry settings: large GRIB2 reads over a high-latency
-    # link occasionally time out; generous timeouts + retries avoid aborting a
-    # whole day on a single slow object.
     _client_options = {"timeout": "120s", "connect_timeout": "30s"}
     _retry_config = {"max_retries": 10, "retry_timeout": timedelta(seconds=300)}
 
-    # Build one store per unique bucket (all ECMWF URIs share the same bucket).
     _stores: dict[str, Any] = {}
 
     def _get_store(bucket: str) -> Any:
