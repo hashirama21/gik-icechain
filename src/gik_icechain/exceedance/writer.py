@@ -63,13 +63,17 @@ def write_exceedance_store(
         return
 
     effective_chunks = chunks or _DEFAULT_CHUNKS
-    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else {}
+    storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
 
     ds = _build_dataset(exceedance_dict, confidence_dict)
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
+    zarr_kw: dict = {}
+    if storage_options:
+        zarr_kw["storage_options"] = storage_options
+
     try:
-        existing = xr.open_zarr(output_uri, consolidated=False, storage_options=storage_options)
+        existing = xr.open_zarr(output_uri, consolidated=False, **zarr_kw)
         if append:
             existing_dates = set(str(d)[:10] for d in existing["date"].values)
             new_dates = {
@@ -80,18 +84,19 @@ def write_exceedance_store(
                 return
             new_conf = (
                 {d: confidence_dict[d] for d in new_dates.values() if d in confidence_dict}
-                if confidence_dict else None
+                if confidence_dict
+                else None
             )
             new_ds = _build_dataset(
                 {d: exceedance_dict[d] for d in new_dates.values()}, new_conf
             ).chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
-            new_ds.to_zarr(output_uri, mode="a", append_dim="date", storage_options=storage_options)
+            new_ds.to_zarr(output_uri, mode="a", append_dim="date", **zarr_kw)
             log.info("exceedance_store_appended", n_dates=len(new_dates), uri=output_uri)
             return
     except (FileNotFoundError, KeyError):
         pass
 
-    ds.to_zarr(output_uri, mode="w", consolidated=True, storage_options=storage_options)
+    ds.to_zarr(output_uri, mode="w", consolidated=True, **zarr_kw)
     log.info("exceedance_store_written", n_dates=len(exceedance_dict), uri=output_uri)
 
 
@@ -141,9 +146,7 @@ def _build_dataset(
         },
     )
     if confidence_dict:
-        conf_arrays = [
-            confidence_dict[d] for d in sorted_dates if d in confidence_dict
-        ]
+        conf_arrays = [confidence_dict[d] for d in sorted_dates if d in confidence_dict]
         if len(conf_arrays) == len(sorted_dates):
             conf_combined = xr.concat(conf_arrays, dim="date")
             ds["ensemble_confidence"] = conf_combined.astype(np.int8)

@@ -23,10 +23,14 @@ RETURN_PERIODS = [5, 20]
 @pytest.fixture(scope="module")
 def built_crma():
     pytest.importorskip("pgmpy", reason="pgmpy not installed")
-    from gik_icechain.risk.crma_model import CRMAModel
-    m = CRMAModel()
-    m.build()
-    return m
+    from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
+
+    models = {}
+    for cluster in EastAfricaCluster:
+        m = CRMAModel(cluster=cluster)
+        m.build()
+        models[cluster] = m
+    return models
 
 
 @pytest.fixture
@@ -90,11 +94,15 @@ def fake_admin_boundaries(tmp_path):
 def fake_gpm_dir(tmp_path):
     gpm_dir = tmp_path / "gpm"
     gpm_dir.mkdir()
-    ds = xr.Dataset({"precipitationCal": xr.DataArray(
-        np.random.default_rng(1).exponential(5.0, (NLAT, NLON)).astype(np.float32),
-        dims=["lat", "lon"],
-        coords={"lat": LAT, "lon": LON},
-    )})
+    ds = xr.Dataset(
+        {
+            "precipitationCal": xr.DataArray(
+                np.random.default_rng(1).exponential(5.0, (NLAT, NLON)).astype(np.float32),
+                dims=["lat", "lon"],
+                coords={"lat": LAT, "lon": LON},
+            )
+        }
+    )
     ds.to_netcdf(gpm_dir / f"3B-DAY.MS.MRG.3IMERG.{TEST_DATE.strftime('%Y%m%d')}.V07B.nc4")
     return gpm_dir
 
@@ -102,25 +110,37 @@ def fake_gpm_dir(tmp_path):
 class TestCRMAModelInference:
     def test_infer_returns_required_keys(self, built_crma):
         from gik_icechain.risk.crma_model import CRMAEvidence
+
+        model = next(iter(built_crma.values()))
         ev = CRMAEvidence(
-            exceedance_prob_24h_5y=0.3, exceedance_prob_72h_5y=0.2,
-            exceedance_prob_7d_5y=0.15, gpm_obs_24h=10.0,
-            api_mm=40.0, spatial_coverage_fraction=0.4,
-            consecutive_signal_days=1, sat_consecutive_days=0,
+            exceedance_prob_24h_5y=0.3,
+            exceedance_prob_72h_5y=0.2,
+            exceedance_prob_7d_5y=0.15,
+            gpm_obs_24h=10.0,
+            api_mm=40.0,
+            spatial_coverage_fraction=0.4,
+            consecutive_signal_days=1,
+            sat_consecutive_days=0,
         )
-        result = built_crma.infer(ev)
+        result = model.infer(ev)
         required = {"risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red"}
         assert required.issubset(result.keys())
 
     def test_probabilities_sum_to_one(self, built_crma):
         from gik_icechain.risk.crma_model import CRMAEvidence
+
+        model = next(iter(built_crma.values()))
         ev = CRMAEvidence(
-            exceedance_prob_24h_5y=0.2, exceedance_prob_72h_5y=0.15,
-            exceedance_prob_7d_5y=0.10, gpm_obs_24h=5.0,
-            api_mm=30.0, spatial_coverage_fraction=0.3,
-            consecutive_signal_days=0, sat_consecutive_days=0,
+            exceedance_prob_24h_5y=0.2,
+            exceedance_prob_72h_5y=0.15,
+            exceedance_prob_7d_5y=0.10,
+            gpm_obs_24h=5.0,
+            api_mm=30.0,
+            spatial_coverage_fraction=0.3,
+            consecutive_signal_days=0,
+            sat_consecutive_days=0,
         )
-        result = built_crma.infer(ev)
+        result = model.infer(ev)
         total = result["p_green"] + result["p_yellow"] + result["p_orange"] + result["p_red"]
         assert abs(total - 1.0) < 1e-5
 
@@ -137,7 +157,7 @@ class TestRiskBatch:
             exceedance_store_uri=fake_exceedance_store,
             gpm_dir=fake_gpm_dir,
             admin_boundaries_path=fake_admin_boundaries,
-            crma_model=built_crma,
+            crma_models=built_crma,
             output_dir=output_dir,
             start=TEST_DATE,
             end=TEST_DATE,
@@ -169,7 +189,7 @@ class TestRiskBatch:
             exceedance_store_uri=fake_exceedance_store,
             gpm_dir=fake_gpm_dir,
             admin_boundaries_path=fake_admin_boundaries,
-            crma_model=built_crma,
+            crma_models=built_crma,
             output_dir=output_dir,
             start=wrong_date,
             end=wrong_date,
