@@ -160,7 +160,9 @@ def _download_admin_boundaries(output_dir: Path) -> None:
         return
 
     typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
-    _ea_countries = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI"]
+    # African Development Bank 13-country definition + Madagascar (UN Geoscheme)
+    # Seychelles and Comoros excluded (small island states, minimal terrestrial flood risk)
+    _ea_countries = ["KEN", "ETH", "UGA", "TZA", "SOM", "RWA", "BDI", "SSD", "ERI", "DJI", "MDG", "SDN"]
     import urllib.request as _urlreq
 
     all_features: list[dict] = []

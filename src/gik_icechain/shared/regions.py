@@ -17,31 +17,38 @@ EAST_AFRICA_BBOX: dict[str, tuple[float, float]] = {
 EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
     {
         "BDI",  # Burundi
+        "COM",  # Comoros
         "DJI",  # Djibouti
         "ERI",  # Eritrea
         "ETH",  # Ethiopia
         "KEN",  # Kenya
-        "MDG",  # Madagascar
+        "MDG",  # Madagascar (UN Geoscheme Eastern Africa)
         "RWA",  # Rwanda
+        "SDN",  # Sudan
         "SOM",  # Somalia
         "SSD",  # South Sudan
+        "SYC",  # Seychelles
         "TZA",  # Tanzania
         "UGA",  # Uganda
     }
 )
 
 # Mapping ISO3 country code → CRMA climate cluster (plain strings, no circular import).
-# Source: ICPAC E4DRR regional classification (2024).
+# Reference: African Development Bank (BAD) 13-country East Africa definition +
+# Madagascar (UN Geoscheme). Source: ICPAC E4DRR regional classification (2024).
 COUNTRY_CLUSTER: dict[str, str] = {
     "BDI": "equatorial_east",
+    "COM": "equatorial_east",   # Comoros — Indian Ocean island
     "DJI": "horn_arid",
     "ERI": "horn_arid",
     "ETH": "great_rift",
     "KEN": "equatorial_east",
-    "MDG": "equatorial_east",
+    "MDG": "equatorial_east",   # Madagascar — Indian Ocean island
     "RWA": "equatorial_east",
+    "SDN": "nile_basin",        # Sudan — Nile Basin, critical for flood risk
     "SOM": "horn_arid",
     "SSD": "nile_basin",
+    "SYC": "equatorial_east",   # Seychelles — Indian Ocean island
     "TZA": "equatorial_east",
     "UGA": "equatorial_east",
 }
