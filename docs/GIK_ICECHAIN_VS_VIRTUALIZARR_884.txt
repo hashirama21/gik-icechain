@@ -1,7 +1,7 @@
 GIK-IceChain — Response to VirtualiZarr #884 / icpac-igad Discussion #1
 ==========================================================================
 Date: 2026-06-05
-Authors: hashirama21, dylan-baf, nehdf-gif (SYNTHI-AI / E4DRR)
+Authors: hashirama21, (SYNTHI-AI / E4DRR)
 
 
 CONTEXT
