@@ -45,6 +45,9 @@ jobs:
       - name: Download reference data (admin, thresholds, ENSO/IOD)
         run: python scripts/tools.py download --component all
 
+      - name: Download pre-fitted GEV thresholds
+        run: python scripts/tools.py download-thresholds
+
       - name: Run full pipeline
         env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"

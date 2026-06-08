@@ -505,6 +505,102 @@ def download(
     typer.echo("Done.")
 
 
+_HF_REPO = "E4DRR/virtualizarr-stores"
+_HF_THRESHOLDS_ARCHIVE = "cmorph_gev_thresholds.tar.gz"
+
+
+@app.command("upload-thresholds")
+def upload_thresholds(
+    source: Annotated[
+        Path, typer.Option(help="Directory containing fitted thresholds_*.nc files.")
+    ] = REPO_ROOT / "data" / "cmorph_thresholds",
+    repo_id: Annotated[str, typer.Option(help="HuggingFace dataset repo ID.")] = _HF_REPO,
+) -> None:
+    """Pack and upload pre-fitted GEV thresholds to HuggingFace (one-time).
+
+    Reads all ``thresholds_*.nc`` files from *source*, packs them into a
+    tarball, and uploads to the HuggingFace dataset repo so that
+    ``download-thresholds`` can retrieve them on any machine.
+
+    Requires a valid ``HF_TOKEN`` environment variable with write access.
+    """
+    import tarfile
+    import tempfile
+
+    from huggingface_hub import HfApi
+
+    files = sorted(source.glob("thresholds_*.nc"))
+    if not files:
+        typer.echo(f"No thresholds_*.nc files found in {source}", err=True)
+        raise typer.Exit(1)
+
+    archive = Path(tempfile.mktemp(suffix=".tar.gz"))
+    try:
+        typer.echo(f"Packing {len(files)} threshold files ...")
+        with tarfile.open(archive, "w:gz") as tar:
+            for f in files:
+                tar.add(str(f), arcname=f.name)
+        typer.echo(f"  Archive size: {archive.stat().st_size / 1024 / 1024:.1f} MB")
+
+        typer.echo(f"Uploading to {repo_id} as {_HF_THRESHOLDS_ARCHIVE} ...")
+        api = HfApi()
+        api.upload_file(
+            path_or_fileobj=str(archive),
+            path_in_repo=_HF_THRESHOLDS_ARCHIVE,
+            repo_id=repo_id,
+            repo_type="dataset",
+        )
+        typer.echo(f"Done. {len(files)} thresholds uploaded.")
+    finally:
+        archive.unlink(missing_ok=True)
+
+
+@app.command("download-thresholds")
+def download_thresholds(
+    output: Annotated[Path, typer.Option(help="Output directory for threshold files.")] = REPO_ROOT
+    / "data"
+    / "cmorph_thresholds",
+    repo_id: Annotated[str, typer.Option(help="HuggingFace dataset repo ID.")] = _HF_REPO,
+) -> None:
+    """Download and extract pre-fitted GEV thresholds from HuggingFace.
+
+    Fetches ``cmorph_gev_thresholds.tar.gz`` and extracts the individual
+    ``thresholds_*.nc`` files that ``AdaptiveGEVThresholds.load()`` expects.
+
+    This is idempotent — skips extraction if threshold files already exist.
+    """
+    import tarfile
+
+    from huggingface_hub import hf_hub_download
+
+    output.mkdir(parents=True, exist_ok=True)
+    existing = sorted(output.glob("thresholds_*.nc"))
+    if existing:
+        typer.echo(f"Already exists: {len(existing)} threshold files in {output}")
+        return
+
+    typer.echo(f"Downloading {_HF_THRESHOLDS_ARCHIVE} from {repo_id} ...")
+    archive_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=_HF_THRESHOLDS_ARCHIVE,
+        repo_type="dataset",
+    )
+
+    typer.echo("Extracting threshold files ...")
+    with tarfile.open(archive_path, "r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            member.name = Path(member.name).name
+            if member.name.startswith("thresholds_") and member.name.endswith(".nc"):
+                tar.extract(member, path=output)
+
+    extracted = sorted(output.glob("thresholds_*.nc"))
+    if not extracted:
+        raise RuntimeError(f"Extraction produced 0 threshold files in {output}")
+    typer.echo(f"Done. {len(extracted)} threshold files extracted to {output}")
+
+
 _GAP_START = date(2023, 5, 1)
 _GAP_END = date(2024, 2, 29)
 
