@@ -555,23 +555,40 @@ def upload_thresholds(
         archive.unlink(missing_ok=True)
 
 
+_DURATION_TO_HOURS: dict[str, int] = {
+    "3hr": 3,
+    "6hr": 6,
+    "12hr": 12,
+    "24hr": 24,
+    "48hr": 48,
+    "72hr": 72,
+    "7day": 168,
+}
+_TARGET_RPS = [2, 5, 10, 20, 40, 100]
+_SEASONS = ["MAM", "OND", "JJAS", "DJF"]
+_ENSO_PHASES = ["el_nino", "neutral", "la_nina"]
+_IOD_PHASES = ["positive", "neutral", "negative"]
+
+
 @app.command("download-thresholds")
 def download_thresholds(
     output: Annotated[Path, typer.Option(help="Output directory for threshold files.")] = REPO_ROOT
     / "data"
     / "cmorph_thresholds",
-    repo_id: Annotated[str, typer.Option(help="HuggingFace dataset repo ID.")] = _HF_REPO,
 ) -> None:
-    """Download and extract pre-fitted GEV thresholds from HuggingFace.
+    """Generate threshold files from cmorph_ea_return_periods.nc.
 
-    Fetches ``cmorph_gev_thresholds.tar.gz`` and extracts the individual
-    ``thresholds_*.nc`` files that ``AdaptiveGEVThresholds.load()`` expects.
+    Reads the CMORPH return-period NetCDF (downloaded by ``download
+    --component thresholds``), regrids to 1-degree East Africa, and
+    produces the individual ``thresholds_*.nc`` files that
+    ``AdaptiveGEVThresholds.load()`` expects.
 
-    This is idempotent — skips extraction if threshold files already exist.
+    Idempotent — skips if threshold files already exist.
     """
-    import tarfile
+    import itertools
 
-    from huggingface_hub import hf_hub_download
+    import numpy as np
+    import xarray as xr
 
     output.mkdir(parents=True, exist_ok=True)
     existing = sorted(output.glob("thresholds_*.nc"))
@@ -579,26 +596,59 @@ def download_thresholds(
         typer.echo(f"Already exists: {len(existing)} threshold files in {output}")
         return
 
-    typer.echo(f"Downloading {_HF_THRESHOLDS_ARCHIVE} from {repo_id} ...")
-    archive_path = hf_hub_download(
-        repo_id=repo_id,
-        filename=_HF_THRESHOLDS_ARCHIVE,
-        repo_type="dataset",
-    )
+    src_path = output / "cmorph_ea_return_periods.nc"
+    if not src_path.exists():
+        typer.echo(f"Source not found: {src_path}", err=True)
+        typer.echo("Run 'python scripts/tools.py download --component thresholds' first.", err=True)
+        raise typer.Exit(1)
 
-    typer.echo("Extracting threshold files ...")
-    with tarfile.open(archive_path, "r:gz") as tar:
-        for member in tar.getmembers():
-            if not member.isfile():
-                continue
-            member.name = Path(member.name).name
-            if member.name.startswith("thresholds_") and member.name.endswith(".nc"):
-                tar.extract(member, path=output)
+    typer.echo(f"  Opening {src_path.name} ...")
+    ds = xr.open_dataset(src_path)
 
-    extracted = sorted(output.glob("thresholds_*.nc"))
-    if not extracted:
-        raise RuntimeError(f"Extraction produced 0 threshold files in {output}")
-    typer.echo(f"Done. {len(extracted)} threshold files extracted to {output}")
+    target_lat = np.arange(-11.0, 23.0, 1.0)
+    target_lon = np.arange(22.0, 55.0, 1.0)
+    src_rps = ds.coords["return_period"].values
+
+    n_files = 0
+    for dur_label, window_h in _DURATION_TO_HOURS.items():
+        dur_data = ds["return_period_precip"].sel(duration=dur_label)
+        regridded = dur_data.interp(lat=target_lat, lon=target_lon, method="linear")
+
+        rp_arrays: dict[str, xr.DataArray] = {}
+        for rp in _TARGET_RPS:
+            if rp in src_rps:
+                rp_arrays[f"rp_{rp}y"] = regridded.sel(return_period=rp).drop_vars("return_period")
+            elif rp == 40 and 20 in src_rps and 50 in src_rps:
+                v20 = regridded.sel(return_period=20).values
+                v50 = regridded.sel(return_period=50).values
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    log20 = np.where(v20 > 0, np.log(v20), np.nan)
+                    log50 = np.where(v50 > 0, np.log(v50), np.nan)
+                frac = (np.log(40) - np.log(20)) / (np.log(50) - np.log(20))
+                rp_arrays[f"rp_{rp}y"] = xr.DataArray(
+                    np.exp(log20 + frac * (log50 - log20)),
+                    dims=("lat", "lon"),
+                    coords={"lat": target_lat, "lon": target_lon},
+                )
+
+        for season, enso, iod in itertools.product(_SEASONS, _ENSO_PHASES, _IOD_PHASES):
+            mode_key = f"{season}_{enso}_{iod}"
+            xr.Dataset(
+                rp_arrays,
+                attrs={
+                    "mode_key": mode_key,
+                    "window_h": window_h,
+                    "units": "mm",
+                    "source": "CMORPH v1.0 + GEV fit",
+                    "description": (
+                        f"GEV return-period thresholds for {mode_key}, {window_h}h accumulation"
+                    ),
+                },
+            ).to_netcdf(output / f"thresholds_{mode_key}_{window_h}h.nc")
+            n_files += 1
+
+    ds.close()
+    typer.echo(f"  Generated {n_files} threshold files in {output}")
 
 
 _GAP_START = date(2023, 5, 1)
