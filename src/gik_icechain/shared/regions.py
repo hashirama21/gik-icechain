@@ -10,8 +10,8 @@ if TYPE_CHECKING:
 
 
 EAST_AFRICA_BBOX: dict[str, tuple[float, float]] = {
-    "lat": (-12.0, 23.0),
-    "lon": (22.0, 52.0),
+    "lat": (-14.5, 25.0),
+    "lon": (20.0, 54.0),
 }
 
 EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
@@ -23,6 +23,7 @@ EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
         "ETH",  # Ethiopia
         "KEN",  # Kenya
         "MDG",  # Madagascar (UN Geoscheme Eastern Africa)
+        "MWI",  # Malawi
         "RWA",  # Rwanda
         "SDN",  # Sudan
         "SOM",  # Somalia
@@ -30,6 +31,7 @@ EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
         "SYC",  # Seychelles
         "TZA",  # Tanzania
         "UGA",  # Uganda
+        "ZMB",  # Zambia
     }
 )
 
@@ -44,6 +46,7 @@ COUNTRY_CLUSTER: dict[str, str] = {
     "ETH": "great_rift",
     "KEN": "equatorial_east",
     "MDG": "equatorial_east",   # Madagascar — Indian Ocean island
+    "MWI": "great_rift",        # placeholder cluster (no SADC cluster yet)
     "RWA": "equatorial_east",
     "SDN": "nile_basin",        # Sudan — Nile Basin, critical for flood risk
     "SOM": "horn_arid",
@@ -51,6 +54,7 @@ COUNTRY_CLUSTER: dict[str, str] = {
     "SYC": "equatorial_east",   # Seychelles — Indian Ocean island
     "TZA": "equatorial_east",
     "UGA": "equatorial_east",
+    "ZMB": "great_rift",
 }
 
 

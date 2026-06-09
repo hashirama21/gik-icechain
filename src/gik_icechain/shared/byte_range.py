@@ -126,6 +126,24 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
+def _demux_buffers(
+    crs: list[CoalescedRange],
+    buffers: list[Any],
+) -> list[tuple[tuple, bytes]]:
+    """Slice each fetched buffer back into its original per-chunk pieces."""
+    pieces: list[tuple[tuple, bytes]] = []
+    for cr, buf in zip(crs, buffers, strict=True):
+        raw = bytes(buf)
+        for sl, orig in zip(cr.slices, cr.original_ranges, strict=True):
+            chunk_key = (
+                orig.metadata.get("member_idx"),
+                orig.metadata.get("step_idx"),
+                orig.metadata.get("variable"),
+            )
+            pieces.append((chunk_key, raw[sl[0] : sl[1]]))
+    return pieces
+
+
 def fetch_coalesced_ranges(
     coalesced: list[CoalescedRange],
     *,
@@ -135,10 +153,21 @@ def fetch_coalesced_ranges(
 ) -> dict[tuple, bytes]:
     """Fetch coalesced ranges from S3 in parallel using obstore.
 
+    Ranges are grouped by file (URI) and retrieved with a single
+    ``obstore.get_ranges`` multi-range request per file, which batches and
+    coalesces them at the HTTP layer. Because each ECMWF GRIB2 step-file holds
+    all 51 ensemble members, this collapses ~1500 per-chunk ``get_range`` calls
+    into ~30 per-file requests — the request reduction the adjacency-only
+    coalescing never delivered (members are not byte-adjacent).
+
     Uses ``obstore.store.S3Store`` with ``skip_signature=True`` (anonymous,
     the same mechanism IceChunk uses internally) and an *explicit* AWS
     endpoint, so the ``AWS_ENDPOINT_URL`` environment variable (set to MinIO
     for the IceChunk store) is never inherited for ECMWF byte-range reads.
+
+    A file whose fetch fails (after obstore's own retries) is logged and
+    skipped rather than aborting the whole day; its chunks stay absent and
+    become NaN downstream, guarded by the ``min_members`` check in the caller.
 
     Returns:
         Mapping from ``(member_idx, step_idx, variable)`` to raw GRIB2 bytes.
@@ -168,36 +197,57 @@ def fetch_coalesced_ranges(
             )
         return _stores[bucket]
 
+    # Group coalesced ranges by file — one multi-range request per file.
+    by_uri: dict[str, list[CoalescedRange]] = {}
+    for cr in coalesced:
+        by_uri.setdefault(cr.uri, []).append(cr)
+
     n_original = sum(len(cr.original_ranges) for cr in coalesced)
 
-    def _fetch_one(cr: CoalescedRange) -> list[tuple[tuple, bytes]]:
-        bucket, key = _parse_s3_uri(cr.uri)
+    def _fetch_file(item: tuple[str, list[CoalescedRange]]) -> list[tuple[tuple, bytes]]:
+        uri, crs = item
+        bucket, key = _parse_s3_uri(uri)
         store = _get_store(bucket)
-        raw: bytes = bytes(obs.get_range(store, key, start=cr.offset, end=cr.offset + cr.length))
-        pieces: list[tuple[tuple, bytes]] = []
-        for sl, orig in zip(cr.slices, cr.original_ranges, strict=True):
-            chunk_key = (
-                orig.metadata.get("member_idx"),
-                orig.metadata.get("step_idx"),
-                orig.metadata.get("variable"),
+        try:
+            buffers = obs.get_ranges(
+                store,
+                key,
+                starts=[cr.offset for cr in crs],
+                ends=[cr.offset + cr.length for cr in crs],
             )
-            pieces.append((chunk_key, raw[sl[0] : sl[1]]))
-        return pieces
+        except Exception as exc:
+            log.warning(
+                "fetch_file_failed",
+                uri=uri,
+                n_ranges=len(crs),
+                n_chunks=sum(len(cr.original_ranges) for cr in crs),
+                error=str(exc)[:160],
+            )
+            return []
+        return _demux_buffers(crs, list(buffers))
 
     result: dict[tuple, bytes] = {}
-    effective_workers = min(max_workers, len(coalesced)) if coalesced else 1
+    items = list(by_uri.items())
+    effective_workers = min(max_workers, len(items)) if items else 1
+    n_failed_files = 0
     with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-        for pieces in pool.map(_fetch_one, coalesced):
+        for pieces in pool.map(_fetch_file, items):
+            if not pieces:
+                n_failed_files += 1
+                continue
             for key, data in pieces:
                 result[key] = data
 
     total_bytes = sum(cr.length for cr in coalesced)
     log.info(
         "fetch_coalesced_complete",
-        n_requests=len(coalesced),
+        n_files=len(items),
+        n_failed_files=n_failed_files,
+        n_coalesced=len(coalesced),
         n_original=n_original,
+        n_fetched=len(result),
         total_mb=round(total_bytes / 1_048_576, 2),
-        coalescing_ratio=round(n_original / max(len(coalesced), 1), 2),
+        request_reduction=round(n_original / max(len(items), 1), 2),
     )
 
     return result

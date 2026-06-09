@@ -41,6 +41,8 @@ component1:
 component2:
   compute_variables: ["tp"]
   risk_evidence_variables: ["2t", "10u", "10v", "ro"]
+  # IFS tp is decoded in metres; CMORPH thresholds are in mm. Convert m -> mm.
+  precip_scale_to_mm: 1000.0
 
   step_resolution_h: 6
   max_forecast_h: null
@@ -68,7 +70,7 @@ component2:
       max_forecast_h: 168
 
   spatial:
-    bbox: [-13, 24, 22, 53]
+    bbox: [-14.5, 25, 20, 54]   # [lat_min, lat_max, lon_min, lon_max]
     lat_dim: "latitude"
     lon_dim: "longitude"
 
@@ -179,7 +181,10 @@ component3:
     negative_sample_ratio: 3.0
     output_cpt_path: "results/validation/refined_cpts.json"
   aggregation:
-    method: "mean"
+    # Hazard exceedance → admin-1: "max" (or a high percentile "p90"/"p95")
+    # so a localized flood peak is not averaged away over the whole unit.
+    # Complementary to the Spatial_Coverage BN node (which captures % of area).
+    method: "max"
     min_coverage_fraction: 0.5
   output:
     geojson: true

@@ -68,6 +68,8 @@ def run_risk_batch(
     initial_api_mm: float = 20.0,
     signal_threshold: float = 0.15,
     rp_signal: int = 5,
+    hazard_stat: str = "max",
+    min_coverage: float = 0.5,
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
     endpoint_url: str | None = None,
 ) -> list[Path]:
@@ -85,6 +87,12 @@ def run_risk_batch(
         initial_api_mm:        Starting API for the first day (mm).
         signal_threshold:      Exceedance probability → rainfall-signal flag.
         rp_signal:             Return period (years) used for signal detection.
+        hazard_stat:           Statistic used to aggregate the gridded exceedance
+                               hazard to each admin-1 unit ("max", "mean", or a
+                               percentile "pNN"). "max"/high-percentile avoids
+                               diluting a localized flood peak over the polygon.
+        min_coverage:          Minimum fraction of an admin-1 unit that must be
+                               covered by valid grid cells; below it → No_Data.
         checkpoint_interval:   Save ``bn_states`` checkpoint every N days.
 
     Returns:
@@ -124,6 +132,8 @@ def run_risk_batch(
             api_decay,
             signal_threshold,
             rp_signal,
+            hazard_stat,
+            min_coverage,
         )
         if path is not None:
             written.append(path)
@@ -154,6 +164,8 @@ def _process_day(
     api_decay: float,
     signal_threshold: float,
     rp_signal: int,
+    hazard_stat: str = "max",
+    min_coverage: float = 0.5,
 ) -> Path | None:
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
@@ -171,10 +183,13 @@ def _process_day(
 
     gpm_da = load_gpm_daily(gpm_dir, day)
 
-    p_24h_s = aggregate_to_admin1(exc_24h, admin)
-    p_72h_s = aggregate_to_admin1(exc_72h, admin)
-    p_7d_s = aggregate_to_admin1(exc_7d, admin)
+    # Hazard exceedance: aggregate with hazard_stat (max/percentile) so a
+    # localized flood peak is not diluted over the whole admin polygon.
+    p_24h_s = aggregate_to_admin1(exc_24h, admin, stat=hazard_stat, min_coverage=min_coverage)
+    p_72h_s = aggregate_to_admin1(exc_72h, admin, stat=hazard_stat, min_coverage=min_coverage)
+    p_7d_s = aggregate_to_admin1(exc_7d, admin, stat=hazard_stat, min_coverage=min_coverage)
     cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
+    # Observed rainfall is an areal quantity → keep the mean.
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     if "ensemble_confidence" in exc_day:

@@ -187,6 +187,14 @@ Consequence:
 Solution for full historical archive: ECMWF subscription (MARS archive
 access) or local GRIB2 mirror for dates older than 15 months.
 
+UPDATE 2026-06-09: the ~15-month figure is conservative. An E2E run on
+2024-04-24 (Kenya/Tanzania MAM 2024 floods, ~26 months old) fetched all
+51 members / 1530 chunks (1318 MB) from s3://ecmwf-forecasts with
+n_failed_files=0. So historical reads currently work well beyond 15 months;
+the retention horizon is not a hard 15-month cliff in practice. Treat older
+dates as best-effort (the per-file fetch tolerates missing objects, see
+ISSUE-5) rather than guaranteed-Forbidden.
+
 ISSUE B: AWS_ENDPOINT_URL COLLISION (FIXED: commits d051604, b2b00ab, fa42f60)
 ------------------------------------------------------------------------------
 Running the pipeline sets AWS_ENDPOINT_URL=http://MinIO-IP:9000 for
@@ -266,6 +274,106 @@ the detected step spacing is skipped with a warning or raises. 175 unit
 tests pass.
 
 
+ISSUE F: C2 EXCEEDANCE ALWAYS ZERO — tp UNIT MISMATCH (FIXED 2026-06-09)
+------------------------------------------------------------------------
+Every exceedance run produced exceedance_prob = 0.0 across the ENTIRE grid
+(all 7 windows x 6 return periods), regardless of forecast date — so C3 risk
+fell back to the BN prior for all admin-1 units (196 identical scores) and
+never produced a non-Green signal. This was the root cause of "no Orange/Red"
+(ISSUE-1 in docs/ISSUES.md).
+
+ROOT CAUSE: ECMWF IFS `tp` is decoded in METRES (verified: raw last-step
+member-0 East Africa max 0.349, mean 0.044 -> metres). The CMORPH GEV
+return-period thresholds are in MILLIMETRES (rp_2y ~0.8-187 mm). The
+comparison `(tp_worst > threshold)` in exceedance.py compared metres
+(~0.05-0.35) against mm thresholds (~1-450) -> never True -> 0 everywhere.
+Even the minimum rp_2y = 0.835 mm was never exceeded by any of 51 members,
+which is impossible for a real rainfall field unless the units are off by
+~1000x. The accumulation/confidence code already ASSUMED mm ("max(median,
+1 mm)"), confirming mm was the intended unit.
+
+FIX: convert tp m -> mm once at C2 entry, before accumulation, so the whole
+chain (accumulations, ensemble confidence, exceedance) is unit-consistent.
+  - config: component2.precip_scale_to_mm (default 1000.0; set 1.0 if the
+    source is already mm). GRIB attrs carry no usable `units`, so this is a
+    config constant, not auto-detected.
+  - cli.py::_process_exceedance_day multiplies day_ds["tp"] by the scale
+    before compute_rolling_accumulations (covers both the manifest-aware and
+    the xr.open_zarr paths); passed via worker_args from _run_exceedance.
+
+VALIDATED: re-run on 2025-11-20 -> exceedance_prob max 1.0, 26,280 non-zero
+cells; per-unit probabilities now differentiate spatially (previously every
+unit was identical). 2024-04-24 -> max 1.0, 12,256 non-zero cells.
+
+
+ISSUE G: C3 HAZARD DILUTED BY MEAN AGGREGATION (FIXED 2026-06-09)
+-----------------------------------------------------------------
+After ISSUE F, exceedance was non-zero on the grid but admin-1 risk labels
+were still all Green. Cause: run_risk_batch aggregated the gridded exceedance
+hazard to each admin-1 polygon with the MEAN (aggregate_to_admin1 default
+stat="mean"), so a localized flood peak (a few cells at prob 1.0) was averaged
+away over the whole unit. The config block component3.aggregation existed
+(method, min_coverage_fraction) but was never wired into run_risk_batch.
+
+FIX (best practice for a flood EWS: "is ANY part of the unit at risk"):
+  - aggregator.aggregate_to_admin1 now also accepts a percentile stat "pNN"
+    (e.g. "p90", "p95") in addition to "mean"/"max"/"area_weighted".
+  - run_risk_batch / _process_day take hazard_stat + min_coverage and apply
+    them to the exceedance aggregations (24h/72h/7d). Observed GPM rainfall
+    stays "mean" (an areal quantity).
+  - component3.aggregation.method default changed "mean" -> "max" and is now
+    wired from config via cli._run_risk. This is complementary to the
+    Spatial_Coverage BN node, which already encodes the % of the unit's area
+    above threshold.
+
+VALIDATED: 2024-04-24 with max aggregation -> per-unit exceedance_24h_5y now
+reaches 1.0 (e.g. MDG_Amoron'i Mania, MDG_Melaky) and risk probabilities lift
+to p_yellow 0.31 / p_orange 0.125 / p_red 0.057 (vs 0.091/0.029/0.010 before).
+
+DESIGN NOTE — why labels can still read Green on a severe day: the CRMA
+Compound_Risk CPT is intentionally compound-conservative. A single-day
+FORECAST spike alone (Forecast_Hazard=High, but Spatial_Coverage=Local,
+API=Dry, no observed rain, no multi-day persistence) scores into the "mid"
+bucket -> Green remains the MAP (argmax) class while p_yellow/p_orange rise.
+Escalation to Yellow/Orange/Red requires corroborating evidence: spatial
+coverage >= regional (>=25% of the unit), antecedent wetness (API), observed
+rainfall (GPM IMERG — currently absent, see ISSUES.md ISSUE-11), or multi-day
+persistence (API + consecutive-signal build-up over a date RANGE, not a single
+day). The argmax/MAP label is retained (standard for a discrete BN); the full
+probability vector is preserved per unit for probability-based dashboards.
+
+
+ISSUE H: EAST AFRICA COVERAGE EXTENDED SOUTH + regionmask MIS-ASSIGNMENT
+------------------------------------------------------------------------
+Coverage was 196 admin-1 units / 12 countries; regions.py already declared
+14 (COM, SYC were never downloaded). Extended to the UN Geoscheme Eastern
+Africa set: added COM, SYC, MWI (Malawi), ZMB (Zambia) -> 238 units / 16
+countries. Changes:
+  - scripts/tools.py: download list synced with regions.py; threshold target
+    grid extended to the source frontier (target_lat -14..24, was -11..23).
+  - configs/default.yaml component2.spatial.bbox -> [-14.5, 25, 20, 54];
+    shared.regions.EAST_AFRICA_BBOX likewise.
+  - shared.regions: MWI/ZMB added (cluster = great_rift placeholder).
+  - thresholds regenerated; exceedance now finite down to -14.5.
+
+HARD FRONTIER: the CMORPH return-period source (cmorph_ea_return_periods.nc)
+stops at -14.48 S and interp does not extrapolate. So units south of -14.5
+(southern MWI/ZMB, most of MDG, all of Mozambique/Zimbabwe) are No_Data by
+construction. Full SADC needs a southern return-period climatology
+(e.g. GEV fit on ~30 yr CHIRPS) — not yet built.
+
+LATENT BUG FOUND + FIXED (aggregator._build_multi_region_mask): when any
+admin polygon contains no grid-cell centre (tiny islands COM/SYC at 0.25
+deg), regionmask.mask_3D drops it, so its region axis becomes a non-contiguous
+subset of regions.numbers. The overlap fallback indexed the full
+regions.numbers array by position in the reduced mask -> grid cells assigned
+to the WRONG admin unit (e.g. MDG showed 22/22 covered; truly only ~3 northern
+units are in-domain). Fix: index by mask_3d["region"] (the surviving numbers).
+Identity-safe when no region is dropped (the prior 196-unit path). Validated
+2025-01-15: MWI 3/3, ZMB 8/10, COM 2/3 now carry real data; MDG correctly
+3/22; ruff clean, 33 unit tests pass.
+
+
 ===========================================================================
 SUMMARY TABLE
 ===========================================================================
@@ -280,6 +388,10 @@ AWS_ENDPOINT_URL collision           | FIXED (commits d051604/b2b00ab/fa42f60)
 IceChunk 2.x API migration           | FIXED (commit f19d56f, 2026-06-05)
 CRMA single-cluster dispatch bug     | FIXED (commit d8e2c19, 2026-06-04)
 Non-uniform step hours (3h/6h mix)   | FIXED (commit 6a5bfae) — real hours + hour-based accum
+C2 exceedance always 0 (tp m vs mm)  | FIXED (2026-06-09) — component2.precip_scale_to_mm=1000
+C3 hazard diluted by mean aggregation| FIXED (2026-06-09) — component3.aggregation.method=max, wired
+EA coverage 196->238 (+COM/SYC/MWI/ZMB)| EXTENDED to -14.5 frontier; full SADC needs CHIRPS GEV
+regionmask cell mis-assignment       | FIXED (2026-06-09) — index by mask_3d region coord
 
 
 ===========================================================================

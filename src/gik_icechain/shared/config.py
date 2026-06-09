@@ -196,6 +196,11 @@ class Component2Config(BaseModel):
     risk_evidence_variables: list[str] = Field(
         default_factory=lambda: ["2t", "10u", "10v", "ro"],
     )
+    # ECMWF IFS `tp` is decoded in metres; CMORPH GEV thresholds are in mm.
+    # Scale the precip variable to mm before accumulation/exceedance so the
+    # comparison is unit-consistent. Default 1000.0 (m -> mm); set 1.0 if the
+    # source is already mm.
+    precip_scale_to_mm: float = 1000.0
 
     # --- Dimension 2: Steps ---
     step_resolution_h: int = 6
@@ -421,7 +426,9 @@ class EMDATRefinementConfig(BaseModel):
 
 
 class AggregationConfig(BaseModel):
-    method: str = "mean"
+    # "max" / high percentile ("pNN") for the hazard so a localized flood peak
+    # is not diluted over the admin-1 polygon (see risk_engine._process_day).
+    method: str = "max"
     min_coverage_fraction: float = 0.5
 
 

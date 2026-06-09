@@ -140,6 +140,7 @@ def _download_admin_boundaries(output_dir: Path) -> None:
 
     typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
 
+    # In sync with shared.regions.EAST_AFRICA_COUNTRIES_ISO3.
     _ea_countries = [
         "KEN",
         "ETH",
@@ -153,6 +154,10 @@ def _download_admin_boundaries(output_dir: Path) -> None:
         "DJI",
         "MDG",
         "SDN",
+        "COM",
+        "SYC",
+        "MWI",
+        "ZMB",
     ]
     import urllib.request as _urlreq
 
@@ -605,8 +610,10 @@ def download_thresholds(
     typer.echo(f"  Opening {src_path.name} ...")
     ds = xr.open_dataset(src_path)
 
-    target_lat = np.arange(-11.0, 23.0, 1.0)
-    target_lon = np.arange(22.0, 55.0, 1.0)
+    # Bounded by the source extent (lat -14.48..25.47); interp does not
+    # extrapolate, so anything further south is NaN -> No_Data.
+    target_lat = np.arange(-14.0, 25.0, 1.0)
+    target_lon = np.arange(20.0, 54.0, 1.0)
     src_rps = ds.coords["return_period"].values
 
     n_files = 0

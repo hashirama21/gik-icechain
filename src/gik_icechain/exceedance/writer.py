@@ -89,7 +89,11 @@ def write_exceedance_store(
             )
             new_ds = _build_dataset(
                 {d: exceedance_dict[d] for d in new_dates.values()}, new_conf
-            ).chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
+            )
+            new_ds = _align_append_schema(new_ds, existing)
+            new_ds = new_ds.chunk(
+                {k: v for k, v in effective_chunks.items() if k in new_ds.dims}
+            )
             new_ds.to_zarr(output_uri, mode="a", append_dim="date", **zarr_kw)
             log.info("exceedance_store_appended", n_dates=len(new_dates), uri=output_uri)
             return
@@ -129,6 +133,42 @@ def build_exceedance_dataset(
     stacked = stacked.assign_coords(date=pd.Timestamp(forecast_date)).expand_dims("date")
     stacked.attrs.update({"long_name": "Exceedance probability", "units": "1"})
     return stacked.astype(np.float32)
+
+
+def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset:
+    """Reconcile the non-append dims of *new_ds* with an existing store.
+
+    Appending along ``date`` requires every other dimension to match the store
+    exactly. When a run produces a different set of accumulation windows or
+    return periods (e.g. a 3 h window skipped on 6-hourly data — 6 windows vs
+    the store's 7), a naive ``to_zarr(append_dim="date")`` raises a cryptic
+    shape error and can corrupt the store.
+
+    This reindexes *new_ds* onto the store's ``window``/``return_period``
+    coordinates — NaN-filling values the run did not produce — and fails loudly
+    if the run introduces *new* coordinate values the store cannot represent.
+    """
+    for dim in ("window", "return_period"):
+        if dim not in existing.dims or dim not in new_ds.dims:
+            continue
+        existing_coord = existing[dim].values
+        extra = sorted(set(new_ds[dim].values.tolist()) - set(existing_coord.tolist()))
+        if extra:
+            raise ValueError(
+                f"Cannot append along {dim!r}: run produced new values {extra} "
+                f"absent from the existing store {existing_coord.tolist()}. "
+                f"Rewrite the store (append=False) or use a consistent "
+                f"window/return_period configuration."
+            )
+        if not np.array_equal(new_ds[dim].values, existing_coord):
+            log.warning(
+                "append_schema_reindexed",
+                dim=dim,
+                run_values=new_ds[dim].values.tolist(),
+                store_values=existing_coord.tolist(),
+            )
+            new_ds = new_ds.reindex({dim: existing_coord})
+    return new_ds
 
 
 def _build_dataset(

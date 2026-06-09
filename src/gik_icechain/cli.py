@@ -340,6 +340,12 @@ def _process_exceedance_day(args: dict) -> dict:
     ).set_index("date")
     mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
 
+    # IFS tp is decoded in metres; CMORPH thresholds are in mm. Scale the precip
+    # variable to mm so accumulations/exceedance compare in consistent units.
+    precip_scale = args.get("precip_scale_to_mm", 1.0)
+    if precip_scale != 1.0 and "tp" in day_ds:
+        day_ds["tp"] = day_ds["tp"] * precip_scale
+
     acc_ds = compute_rolling_accumulations(
         day_ds,
         windows_h=args["windows_h"],
@@ -461,6 +467,7 @@ def _run_exceedance(
             "chunk_dims": dict(c2.dask.chunk_dims),
             "bbox": bbox,
             "compute_variables": c2.compute_variables,
+            "precip_scale_to_mm": c2.precip_scale_to_mm,
             "tmp_dir": tmp_dir,
             # Manifest-aware params
             "manifest_aware_enabled": ma.enabled,
@@ -580,6 +587,8 @@ def _run_risk(
         initial_api_mm=cfg.component3.api.initial_api_mm,
         signal_threshold=crma_cfg.signal_threshold_prob,
         rp_signal=crma_cfg.rp_signal,
+        hazard_stat=cfg.component3.aggregation.method,
+        min_coverage=cfg.component3.aggregation.min_coverage_fraction,
         endpoint_url=cfg.outputs.endpoint_url or None,
     )
 

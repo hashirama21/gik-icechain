@@ -7,8 +7,6 @@ Only ``area_weighted`` falls back to a per-region loop.
 
 from __future__ import annotations
 
-from typing import Literal
-
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -47,8 +45,9 @@ def _build_multi_region_mask(
         mask_3d = regions.mask_3D(da[lon_name], da[lat_name])
         first_idx = np.argmax(mask_3d.values, axis=0)
         has_any = mask_3d.values.any(axis=0)
-        reg_numbers = np.array([float(n) for n in regions.numbers])
-        mask_2d_np = np.where(has_any, reg_numbers[first_idx], np.nan).astype("float32")
+        # mask_3D drops regions with no grid cell; index by its own region coord.
+        present = np.asarray(mask_3d["region"].values, dtype="float32")
+        mask_2d_np = np.where(has_any, present[first_idx], np.nan).astype("float32")
         mask = xr.DataArray(
             mask_2d_np,
             dims=[lat_name, lon_name],
@@ -64,7 +63,7 @@ def _build_multi_region_mask(
 def aggregate_to_admin1(
     da: xr.DataArray,
     admin_gdf: gpd.GeoDataFrame,
-    stat: Literal["mean", "max", "area_weighted"] = "mean",
+    stat: str = "mean",
     min_coverage: float = 0.5,
     pcode_col: str = "admin1_pcode",
 ) -> pd.Series:
@@ -75,13 +74,18 @@ def aggregate_to_admin1(
     NaN rather than a potentially misleading statistic.
 
     Uses a single ``regionmask.from_geopandas()`` call for all regions
-    (vectorised), then xarray groupby for mean/max.
+    (vectorised), then xarray groupby for mean/max/percentile.
 
     Args:
         da:           DataArray with dimensions (latitude, longitude) or
                       (lat, lon).
         admin_gdf:    GeoDataFrame with admin-1 boundaries.
-        stat:         Aggregation statistic.
+        stat:         Aggregation statistic. One of ``"mean"``, ``"max"``,
+                      ``"area_weighted"``, or a percentile ``"pNN"`` (e.g.
+                      ``"p90"``, ``"p95"``). For a localized-flood hazard field,
+                      ``"max"`` / a high percentile represents "is any part of
+                      the unit at risk", whereas ``"mean"`` dilutes a local peak
+                      over the whole polygon.
         min_coverage: Minimum fraction of grid cells that must be covered;
                       units with fewer valid cells receive NaN.
         pcode_col:    Column in *admin_gdf* used as the Series index.
@@ -105,6 +109,14 @@ def aggregate_to_admin1(
         grouped_stat = da_masked.groupby(mask).mean(skipna=True)
     elif stat == "max":
         grouped_stat = da_masked.groupby(mask).max(skipna=True)
+    elif stat.startswith("p") and stat[1:].isdigit():
+        q = int(stat[1:]) / 100.0
+        if not 0.0 <= q <= 1.0:
+            raise ValueError(f"Percentile out of range: {stat!r}")
+        # Drop the scalar `quantile` coord so downstream .sel(region=...) stays clean.
+        grouped_stat = da_masked.groupby(mask).quantile(q, skipna=True).drop_vars(
+            "quantile", errors="ignore"
+        )
     else:
         raise ValueError(f"Unknown stat: {stat!r}")
 

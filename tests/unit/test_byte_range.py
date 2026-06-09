@@ -4,6 +4,7 @@ from gik_icechain.shared.byte_range import (
     ByteRange,
     CoalescedRange,
     coalesce_byte_ranges,
+    fetch_coalesced_ranges,
 )
 
 
@@ -143,3 +144,40 @@ class TestCoalesceByteRanges:
             raise AssertionError("Should have raised AttributeError")
         except AttributeError:
             pass
+
+
+class TestFetchCoalescedRanges:
+    """Tests for the obstore-backed multi-range fetch (ISSUE-4 / ISSUE-5)."""
+
+    def test_groups_by_file_and_tolerates_failure(self, monkeypatch):
+        """One get_ranges call per file; a failing file is skipped, not fatal."""
+        import obstore
+        import obstore.store
+
+        # Two chunks in file_a, one in file_b — distinct files.
+        ranges = [
+            _br("s3://bucket/file_a", 0, 4, member=0, step=0),
+            _br("s3://bucket/file_a", 4, 4, member=1, step=0),
+            _br("s3://bucket/file_b", 0, 4, member=0, step=1),
+        ]
+        coalesced = coalesce_byte_ranges(ranges, max_gap_bytes=0)
+
+        calls: list[str] = []
+
+        def _fake_get_ranges(store, key, *, starts, ends):
+            calls.append(key)
+            if key == "file_b":
+                raise RuntimeError("simulated S3 timeout")
+            return [b"ABCDEFGH"[s:e] for s, e in zip(starts, ends, strict=True)]
+
+        monkeypatch.setattr(obstore.store, "S3Store", lambda *a, **k: object())
+        monkeypatch.setattr(obstore, "get_ranges", _fake_get_ranges)
+
+        result = fetch_coalesced_ranges(coalesced, max_workers=2)
+
+        # file_a chunks present; file_b dropped (NaN downstream), no exception.
+        assert (0, 0, "tp") in result
+        assert (1, 0, "tp") in result
+        assert (0, 1, "tp") not in result
+        # Exactly one request per file (not one per chunk).
+        assert sorted(calls) == ["file_a", "file_b"]
