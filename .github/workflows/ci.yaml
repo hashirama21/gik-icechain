@@ -66,10 +66,11 @@ jobs:
           AWS_ENDPOINT_URL:      ${{ secrets.MINIO_ENDPOINT_URL }}
 
   notebooks:
-    name: Notebook Tests
+    name: Notebook Tests (offline)
     runs-on: ubuntu-latest
     needs: test-unit
-    continue-on-error: true  # requires live MinIO data — skipped in standard CI
+    # Enforced: these notebooks fall back to synthetic data when no live store
+    # is configured (outputs.endpoint_url empty), so they run in standard CI.
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
@@ -78,11 +79,23 @@ jobs:
       - run: |
           pytest --nbmake \
             notebooks/00_quickstart.ipynb \
-            notebooks/01_component1_walkthrough.ipynb \
             notebooks/02_component2_walkthrough.ipynb \
             notebooks/03_component3_walkthrough.ipynb \
-            --nbmake-timeout=600 \
+            notebooks/04_benchmark_report.ipynb \
+            --nbmake-timeout=300 \
             -v
+
+  notebooks-live:
+    name: Notebook Tests (live store)
+    runs-on: ubuntu-latest
+    needs: test-unit
+    continue-on-error: true  # Component-1 walkthrough requires live MinIO data
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: "dev,viz"
+      - run: pytest --nbmake notebooks/01_component1_walkthrough.ipynb --nbmake-timeout=600 -v
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
