@@ -17,8 +17,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import netrc
-import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
@@ -210,68 +208,17 @@ def _download_cmorph_thresholds(output_dir: Path) -> None:
 
 
 def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
-    """Download GPM IMERG V07B from NASA GES DISC (requires Earthdata account)."""
-    import urllib.request as _urlreq
+    """Download GPM IMERG V07B (EA subset) from NASA GES DISC via the fixed loader.
 
-    base = "https://gpm1.gesdisc.eosdis.nasa.gov/data/GPM_L3/GPM_3IMERGDF.07"
+    Delegates to ``gpm_seasonal.download_gpm_ea`` (correct YYYY/MM path, .V07B.nc4
+    filename, Earthdata OAuth-redirect auth, OPeNDAP EA subset). The previous
+    inline implementation used the wrong day-of-year path + .1440.HDF5 name and a
+    basic-auth opener that never followed the GES DISC redirect (returned HTML).
+    """
+    from gik_icechain.thresholds.gpm_seasonal import download_gpm_ea
 
-    user = os.environ.get("EARTHDATA_USER")
-    password = os.environ.get("EARTHDATA_PASSWORD")
-    if not (user and password):
-        try:
-            nrc = netrc.netrc()
-            auth = nrc.authenticators("urs.earthdata.nasa.gov")
-            if auth:
-                user, _, password = auth
-        except (FileNotFoundError, netrc.NetrcParseError):
-            pass
-
-    if not (user and password):
-        typer.echo(
-            "NASA Earthdata credentials not found.\n"
-            "Set EARTHDATA_USER / EARTHDATA_PASSWORD or add to ~/.netrc:\n"
-            "  machine urs.earthdata.nasa.gov login <user> password <pass>\n"
-            "Register free at: https://urs.earthdata.nasa.gov/home\n"
-            "Tip: use --source chirps for a no-auth alternative.",
-            err=True,
-        )
-        raise typer.Exit(1)
-
-    password_mgr = _urlreq.HTTPPasswordMgrWithDefaultRealm()
-    password_mgr.add_password(None, "https://urs.earthdata.nasa.gov", user, password)
-    opener = _urlreq.build_opener(
-        _urlreq.HTTPBasicAuthHandler(password_mgr),
-        _urlreq.HTTPCookieProcessor(),
-    )
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    current, n_downloaded, n_skipped, n_failed = start, 0, 0, 0
-
-    while current <= end:
-        doy = current.timetuple().tm_yday
-        date_str = current.strftime("%Y%m%d")
-        filename = f"3B-DAY.MS.MRG.3IMERG.{date_str}-S000000-E235959.1440.V07B.HDF5"
-        out_path = output_dir / filename
-
-        if out_path.exists():
-            n_skipped += 1
-        else:
-            try:
-                url = f"{base}/{current.year}/{doy:03d}/{filename}"
-                with opener.open(url, timeout=120) as resp:
-                    out_path.write_bytes(resp.read())
-                typer.echo(f"  {date_str}: {out_path.stat().st_size // 1024} KB")
-                n_downloaded += 1
-            except Exception as exc:
-                typer.echo(f"  {date_str}: FAILED ({exc})", err=True)
-                n_failed += 1
-
-        current += timedelta(days=1)
-
-    typer.echo(
-        f"  NASA GPM: {n_downloaded} downloaded, {n_skipped} skipped"
-        + (f", {n_failed} failed" if n_failed else "")
-    )
+    got = download_gpm_ea(start, end, output_dir)
+    typer.echo(f"  NASA GPM (EA subset): {len(got)} files in {output_dir}")
 
 
 def _download_chirps(output_dir: Path, start: date, end: date) -> None:

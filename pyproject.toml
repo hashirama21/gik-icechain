@@ -224,7 +224,7 @@ omit        = [
 
 [tool.coverage.report]
 show_missing  = true
-fail_under    = 20
+fail_under    = 45  # keep in sync with CI's --cov-fail-under (.github/workflows/ci.yaml)
 exclude_lines = [
   "pragma: no cover",
   "def __repr__",
