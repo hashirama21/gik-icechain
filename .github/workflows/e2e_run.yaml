@@ -8,11 +8,6 @@ name: E2E Pipeline Run (MinIO store)
 #
 # Manual trigger only. Pick a forecast date that is BOTH in the GIK catalog
 # AND within the ~15-month ECMWF S3 public retention window.
-#
-# Required repo secrets (dev defaults shown):
-#   MINIO_ACCESS_KEY     = minioadmin
-#   MINIO_SECRET_KEY     = minioadmin
-#   MINIO_ENDPOINT_URL   = http://20.116.218.195:9000
 
 on:
   workflow_dispatch:
@@ -47,6 +42,12 @@ jobs:
 
       - name: Download pre-fitted GEV thresholds
         run: python scripts/tools.py download-thresholds
+
+      - name: Download observed rainfall for C3 (CHIRPS, no auth)
+        run: |
+          D="${{ inputs.target_date }}"
+          START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('$D')-timedelta(14))")
+          python scripts/tools.py download-gpm --source chirps --start "$START" --end "$D"
 
       - name: Run full pipeline
         env:

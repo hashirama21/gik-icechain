@@ -1,5 +1,15 @@
 name: Daily Pipeline Update
 
+# ONE-TIME prerequisites (not per-run):
+#   - Stage the 252 GEV threshold files on S3 once:
+#       python scripts/tools.py download --component thresholds
+#       python scripts/tools.py download-thresholds
+#       python scripts/tools.py upload-thresholds   # -> s3://$GIK_BUCKET/cmorph_thresholds/
+#   - Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, GIK_BUCKET,
+#       GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
+# Per-run prerequisites (admin, ENSO/IOD, eccodes, CHIRPS) are installed by the
+# jobs below.
+
 on:
   schedule:
     - cron: "0 8 * * *"
@@ -68,7 +78,13 @@ jobs:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            eu-west-1
-      - run: |
+      - name: Install eccodes + ENSO/IOD index (C2 prerequisites)
+        run: |
+          sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
+          python scripts/tools.py download --component enso_iod
+      - env:
+          ECCODES_PYTHON_USE_FINDLIBS: "1"
+        run: |
           gik-icechain exceedance \
             --store  ${{ secrets.GIK_ICECHUNK_STORE_URI }} \
             --output ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
@@ -92,6 +108,12 @@ jobs:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            eu-west-1
+      - name: Download admin boundaries + observed rainfall (C3 prerequisites)
+        run: |
+          python scripts/tools.py download --component admin
+          PROC="${{ needs.ingest-daily-gik.outputs.processed_date }}"
+          START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('$PROC')-timedelta(14))")
+          python scripts/tools.py download-gpm --source chirps --start "$START" --end "$PROC"
       - run: |
           gik-icechain risk \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
