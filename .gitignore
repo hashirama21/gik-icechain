@@ -16,6 +16,8 @@ data/
 .idea/
 *.ipynb_checkpoints/
 .env
+# Earthdata credentials — NEVER commit (real file at repo root or under data/)
+/earthdata_credentials.py
 test_aifs_vps.sh
 a.txt
 notebooks/05_aifs_vs_ifs_comparison.ipynb

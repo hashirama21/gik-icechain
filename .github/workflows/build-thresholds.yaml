@@ -1,0 +1,61 @@
+name: Build GPM Thresholds
+
+# Manually-triggered build of the season x ENSO x IOD Gumbel return-period
+# thresholds from GPM IMERG daily (NASA GES DISC). Earthdata credentials come
+# from repository secrets — NEVER commit them to the repo.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   EARTHDATA_USER       your Earthdata Login username
+#   EARTHDATA_PASSWORD   your Earthdata Login password
+# The Earthdata account must also authorise the "NASA GESDISC DATA ARCHIVE"
+# application (https://urs.earthdata.nasa.gov/profile -> Applications).
+#
+# NOTE: GitHub-hosted runners cap a job at 6 h and do not persist downloads
+# between runs. For the full 2001-2023 record, run in sub-ranges (e.g. one
+# year per dispatch) using the start/end inputs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First date (YYYY-MM-DD)"
+        default: "2015-01-01"
+      end:
+        description: "Last date (YYYY-MM-DD)"
+        default: "2023-12-31"
+      workers:
+        description: "Parallel download workers"
+        default: "6"
+
+jobs:
+  build-thresholds:
+    name: GPM seasonal thresholds
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: dev
+      - name: Build thresholds from GPM IMERG
+        env:
+          EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
+          EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
+        run: |
+          if [ -z "$EARTHDATA_USER" ] || [ -z "$EARTHDATA_PASSWORD" ]; then
+            echo "::error::Set EARTHDATA_USER and EARTHDATA_PASSWORD repository secrets."
+            exit 1
+          fi
+          python scripts/tools.py build-thresholds-gpm \
+            --download \
+            --start "${{ inputs.start }}" \
+            --end "${{ inputs.end }}" \
+            --workers "${{ inputs.workers }}" \
+            --output data/thresholds_gpm
+      - name: Upload thresholds artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpm-thresholds-${{ inputs.start }}_${{ inputs.end }}
+          path: data/thresholds_gpm/*.nc
+          if-no-files-found: error
+          retention-days: 14
