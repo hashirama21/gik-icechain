@@ -49,32 +49,32 @@ class TestDiscoverAifsFiles:
             include_control=False,
         )
         assert len(uris) == 3
-        assert all("-ef.grib2" in u for u in uris)
+        assert all("-pf.grib2" in u for u in uris)
         assert not any("-cf.grib2" in u for u in uris)
 
     def test_uri_format(self):
         uris = discover_aifs_files(
             date(2025, 7, 15), run_hour=0, max_step_h=6, step_resolution_h=6,
         )
-        ef_0 = uris[0]
-        assert ef_0.startswith(f"s3://{_ECMWF_BUCKET}/")
-        assert "20250715/00z/aifs/0p25/enfo/" in ef_0
-        assert "20250715000000-0h-enfo-ef.grib2" in ef_0
+        pf_0 = uris[0]
+        assert pf_0.startswith(f"s3://{_ECMWF_BUCKET}/")
+        assert "20250715/00z/aifs-ens/0p25/enfo/" in pf_0
+        assert "20250715000000-0h-enfo-pf.grib2" in pf_0
 
     def test_step_6_uri(self):
         uris = discover_aifs_files(
             date(2025, 7, 15), run_hour=0, max_step_h=6, step_resolution_h=6,
         )
-        # ef at step 6 should be the 3rd URI (0: ef-0h, 1: cf-0h, 2: ef-6h)
-        ef_6 = uris[2]
-        assert "20250715000000-6h-enfo-ef.grib2" in ef_6
+        # pf at step 6 should be the 3rd URI (0: pf-0h, 1: cf-0h, 2: pf-6h)
+        pf_6 = uris[2]
+        assert "20250715000000-6h-enfo-pf.grib2" in pf_6
 
     def test_run_hour_12(self):
         uris = discover_aifs_files(
             date(2025, 8, 1), run_hour=12, max_step_h=0, step_resolution_h=6,
         )
-        assert len(uris) == 2  # ef + cf at step 0
-        assert "12z/aifs" in uris[0]
+        assert len(uris) == 2  # pf + cf at step 0
+        assert "12z/aifs-ens" in uris[0]
         assert "2025080112" in uris[0]
 
     def test_date_formatting(self):

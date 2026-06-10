@@ -110,6 +110,7 @@ def _benchmark_gik(
         elapsed, data_gb = _measure_full_scan_icechunk(
             session, date_groups[:n_days], n_workers
         )
+        store_size_gb = _measure_store_size_gb(store_uri)
 
     except Exception as exc:
         log.warning("benchmark_gik_failed", error=str(exc)[:120])
@@ -119,7 +120,7 @@ def _benchmark_gik(
         approach="GIK+IceChunk",
         n_days=min(n_days, len(date_groups)),
         domain=domain,
-        store_size_gb=_GIK_STORE_METADATA_GB,
+        store_size_gb=store_size_gb,
         time_to_first_byte_s=ttfb,
         full_scan_elapsed_s=elapsed,
         data_read_gb=data_gb,
@@ -198,6 +199,48 @@ def _measure_ttfb_conventional(ds: Any) -> float:
     return time.perf_counter() - t0
 
 
+def _measure_store_size_gb(store_uri: str) -> float:
+    """Measure the real on-disk size of the IceChunk store (GB).
+
+    Sums object byte-sizes under the store prefix via s3fs (picks up
+    AWS_* / AWS_ENDPOINT_URL from the environment, so it works against both
+    AWS S3 and a MinIO mirror). Falls back to the documented metadata estimate
+    if the bucket can't be listed. See ISSUE-18.
+    """
+    try:
+        import s3fs
+
+        fs = s3fs.S3FileSystem()
+        path = store_uri.replace("s3://", "")
+        total_bytes = fs.du(path, total=True)
+        if total_bytes and total_bytes > 0:
+            return total_bytes / 1e9
+    except Exception as exc:
+        log.warning("store_size_measure_failed", uri=store_uri, error=str(exc)[:120])
+    return _GIK_STORE_METADATA_GB
+
+
+def _bbox_subset(da: Any, lat_bounds: slice, lon_bounds: slice) -> Any:
+    """Select a lat/lon bbox regardless of coordinate sort order.
+
+    ``DataArray.sel(latitude=slice(lo, hi))`` returns an EMPTY selection when
+    the coordinate is descending (IFS latitude runs 90 -> -90), which silently
+    made the benchmark scan read 0 bytes. Order each slice to match the actual
+    coordinate direction so a real EA-domain read is forced.
+    """
+    lo_lat, hi_lat = lat_bounds.start, lat_bounds.stop
+    if "latitude" in da.coords and float(da["latitude"][0]) > float(da["latitude"][-1]):
+        lat_sel = slice(hi_lat, lo_lat)
+    else:
+        lat_sel = slice(lo_lat, hi_lat)
+    lo_lon, hi_lon = lon_bounds.start, lon_bounds.stop
+    if "longitude" in da.coords and float(da["longitude"][0]) > float(da["longitude"][-1]):
+        lon_sel = slice(hi_lon, lo_lon)
+    else:
+        lon_sel = slice(lo_lon, hi_lon)
+    return da.sel(latitude=lat_sel, longitude=lon_sel)
+
+
 def _measure_full_scan_icechunk(
     session: Any,
     date_groups: list[str],
@@ -218,11 +261,7 @@ def _measure_full_scan_icechunk(
             ds = xr.open_zarr(session.store, group=group, consolidated=False)
             if "tp" not in ds:
                 continue
-            subset = ds["tp"].sel(
-                latitude=_EAST_AFRICA_LAT,
-                longitude=_EAST_AFRICA_LON,
-                method="nearest",
-            )
+            subset = _bbox_subset(ds["tp"], _EAST_AFRICA_LAT, _EAST_AFRICA_LON)
             total_bytes += getattr(subset, "nbytes", 0)
             _ = float(subset.mean().compute())
         except Exception:
@@ -247,10 +286,8 @@ def _measure_full_scan_conventional(
     if var is None or time_dim is None:
         return 0.0, 0.0
 
-    subset = (
-        ds[var]
-        .sel(latitude=_EAST_AFRICA_LAT, longitude=_EAST_AFRICA_LON, method="nearest")
-        .isel({time_dim: slice(0, n_days)})
+    subset = _bbox_subset(ds[var], _EAST_AFRICA_LAT, _EAST_AFRICA_LON).isel(
+        {time_dim: slice(0, n_days)}
     )
     data_gb = getattr(subset, "nbytes", 0) / 1e9
 

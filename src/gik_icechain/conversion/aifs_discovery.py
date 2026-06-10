@@ -4,11 +4,15 @@ Deterministically constructs S3 URIs for AIFS ensemble forecast GRIB2 files,
 scans them with kerchunk, and assembles a ManifestArray-backed virtual xarray
 Dataset suitable for ingestion into an IceChunk store via ``commit_day()``.
 
-AIFS ENS files live at::
+AIFS ENS files live on the ECMWF open-data bucket (anonymous, no subscription)
+under the ``aifs-ens`` product prefix::
 
-    s3://ecmwf-forecasts/{YYYYMMDD}/{HH}z/aifs/0p25/enfo/
-        {YYYYMMDDHH}0000-{step}h-enfo-ef.grib2   (50 perturbed members)
+    s3://ecmwf-forecasts/{YYYYMMDD}/{HH}z/aifs-ens/0p25/enfo/
+        {YYYYMMDDHH}0000-{step}h-enfo-pf.grib2   (50 perturbed members)
         {YYYYMMDDHH}0000-{step}h-enfo-cf.grib2   (1 control member)
+
+The open AIFS ENS archive begins mid-2025; earlier dates 404. Use OND 2025
+onward for validation.
 """
 
 from __future__ import annotations
@@ -29,8 +33,9 @@ log = structlog.get_logger(__name__)
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
-_AIFS_PATH_TEMPLATE = "{date_str}/{run_hour:02d}z/aifs/0p25/enfo/"
-_AIFS_EF_FILENAME = "{date_str}{run_hour:02d}0000-{step}h-enfo-ef.grib2"
+_AIFS_PATH_TEMPLATE = "{date_str}/{run_hour:02d}z/aifs-ens/0p25/enfo/"
+# Perturbed forecast (pf) holds all 50 perturbed members; control (cf) holds 1.
+_AIFS_PF_FILENAME = "{date_str}{run_hour:02d}0000-{step}h-enfo-pf.grib2"
 _AIFS_CF_FILENAME = "{date_str}{run_hour:02d}0000-{step}h-enfo-cf.grib2"
 _DEFAULT_S3_REGION = "eu-central-1"
 _VALID_RUN_HOURS = (0, 12)
@@ -72,12 +77,12 @@ def discover_aifs_files(
 
     uris: list[str] = []
     for step in range(0, max_step_h + 1, step_resolution_h):
-        ef_name = _AIFS_EF_FILENAME.format(
+        pf_name = _AIFS_PF_FILENAME.format(
             date_str=date_str,
             run_hour=run_hour,
             step=step,
         )
-        uris.append(prefix + ef_name)
+        uris.append(prefix + pf_name)
         if include_control:
             cf_name = _AIFS_CF_FILENAME.format(
                 date_str=date_str,
@@ -103,7 +108,7 @@ def scan_aifs_grib(
 ) -> list[dict[str, Any]]:
     """Scan a single AIFS GRIB2 file and return kerchunk reference dicts.
 
-    Each ``-ef.grib2`` file contains all 50 perturbed ensemble members for
+    Each ``-pf.grib2`` file contains all 50 perturbed ensemble members for
     every requested variable at a single forecast step.
 
     Args:

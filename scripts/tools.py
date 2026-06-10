@@ -575,6 +575,35 @@ _ENSO_PHASES = ["el_nino", "neutral", "la_nina"]
 _IOD_PHASES = ["positive", "neutral", "negative"]
 
 
+def _classify_years_enso_iod(
+    years: list[int], index_path: Path
+) -> dict[int, tuple[str, str]]:
+    """Classify each year by its OND-season (Oct-Dec) ENSO & IOD phase.
+
+    Uses the Oct-Dec mean of the Niño-3.4 anomaly and DMI for each year.
+    Returns ``{year: (enso_phase, iod_phase)}`` with strings matching
+    ``_ENSO_PHASES`` / ``_IOD_PHASES``; ``{}`` if the index is unavailable.
+    """
+    import pandas as pd
+
+    from gik_icechain.exceedance.thresholds import classify_enso, classify_iod
+
+    if not index_path.exists():
+        return {}
+    df = pd.read_csv(index_path, parse_dates=["date"])
+    df["year"] = df["date"].dt.year
+    ond = df[df["date"].dt.month.isin([10, 11, 12])]
+    out: dict[int, tuple[str, str]] = {}
+    for y in years:
+        sub = ond[ond["year"] == int(y)]
+        if sub.empty:
+            continue
+        enso = classify_enso(float(sub["nino34_anom"].mean())).value
+        iod = classify_iod(float(sub["dmi"].mean())).value
+        out[int(y)] = (enso, iod)
+    return out
+
+
 @app.command("download-thresholds")
 def download_thresholds(
     output: Annotated[Path, typer.Option(help="Output directory for threshold files.")] = REPO_ROOT
@@ -590,8 +619,6 @@ def download_thresholds(
 
     Idempotent — skips if threshold files already exist.
     """
-    import itertools
-
     import numpy as np
     import xarray as xr
 
@@ -610,49 +637,75 @@ def download_thresholds(
     typer.echo(f"  Opening {src_path.name} ...")
     ds = xr.open_dataset(src_path)
 
-    # Bounded by the source extent (lat -14.48..25.47); interp does not
-    # extrapolate, so anything further south is NaN -> No_Data.
+    # ENSO/IOD-stratified Method-of-Moments Gumbel fit on the per-year annual
+    # maxima (`annual_maxima`: duration × year × lat × lon). Season is NOT
+    # stratified — annual maxima conflate seasons (one max per year) — so the
+    # four season files for a given (enso, iod) are identical by construction.
+    # This delivers genuinely phase-varying thresholds (was 36 identical copies
+    # before — Innovation 2 was cosmetic). See ISSUE-20.
     target_lat = np.arange(-14.0, 25.0, 1.0)
     target_lon = np.arange(20.0, 54.0, 1.0)
-    src_rps = ds.coords["return_period"].values
+    euler = 0.5772156649015329  # Euler-Mascheroni (Gumbel mean offset)
+    min_years = 6  # below this, fall back to the all-years (unstratified) fit
+
+    years = [int(y) for y in ds["year"].values]
+    year_phase = _classify_years_enso_iod(years, REPO_ROOT / "data" / "enso_iod_index.csv")
+    if not year_phase:
+        typer.echo(
+            "  WARNING: ENSO/IOD index missing -> thresholds NOT stratified "
+            "(single climatology).",
+            err=True,
+        )
+    available = {str(d) for d in ds["duration"].values}
 
     n_files = 0
     for dur_label, window_h in _DURATION_TO_HOURS.items():
-        dur_data = ds["return_period_precip"].sel(duration=dur_label)
-        regridded = dur_data.interp(lat=target_lat, lon=target_lon, method="linear")
+        if dur_label not in available:
+            continue
+        am = ds["annual_maxima"].sel(duration=dur_label)  # (year, lat, lon)
 
-        rp_arrays: dict[str, xr.DataArray] = {}
-        for rp in _TARGET_RPS:
-            if rp in src_rps:
-                rp_arrays[f"rp_{rp}y"] = regridded.sel(return_period=rp).drop_vars("return_period")
-            elif rp == 40 and 20 in src_rps and 50 in src_rps:
-                v20 = regridded.sel(return_period=20).values
-                v50 = regridded.sel(return_period=50).values
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    log20 = np.where(v20 > 0, np.log(v20), np.nan)
-                    log50 = np.where(v50 > 0, np.log(v50), np.nan)
-                frac = (np.log(40) - np.log(20)) / (np.log(50) - np.log(20))
-                rp_arrays[f"rp_{rp}y"] = xr.DataArray(
-                    np.exp(log20 + frac * (log50 - log20)),
-                    dims=("lat", "lon"),
-                    coords={"lat": target_lat, "lon": target_lon},
-                )
+        for enso in _ENSO_PHASES:
+            for iod in _IOD_PHASES:
+                yrs = [y for y in years if year_phase.get(y) == (enso, iod)]
+                if len(yrs) >= min_years:
+                    sub, n_used, stratified = am.sel(year=yrs), len(yrs), 1
+                else:
+                    sub, n_used, stratified = am, len(years), 0  # fallback
 
-        for season, enso, iod in itertools.product(_SEASONS, _ENSO_PHASES, _IOD_PHASES):
-            mode_key = f"{season}_{enso}_{iod}"
-            xr.Dataset(
-                rp_arrays,
-                attrs={
-                    "mode_key": mode_key,
-                    "window_h": window_h,
-                    "units": "mm",
-                    "source": "CMORPH v1.0 + GEV fit",
-                    "description": (
-                        f"GEV return-period thresholds for {mode_key}, {window_h}h accumulation"
-                    ),
-                },
-            ).to_netcdf(output / f"thresholds_{mode_key}_{window_h}h.nc")
-            n_files += 1
+                # Method-of-moments Gumbel: scale = std·√6/π, loc = mean − γ·scale
+                scale = sub.std("year") * (np.sqrt(6.0) / np.pi)
+                loc = sub.mean("year") - euler * scale
+
+                rp_arrays: dict[str, xr.DataArray] = {}
+                for rp in _TARGET_RPS:
+                    y_rp = -np.log(-np.log(1.0 - 1.0 / rp))  # Gumbel reduced variate
+                    rp_arrays[f"rp_{rp}y"] = (loc + scale * y_rp).interp(
+                        lat=target_lat, lon=target_lon, method="linear"
+                    )
+
+                for season in _SEASONS:
+                    mode_key = f"{season}_{enso}_{iod}"
+                    xr.Dataset(
+                        rp_arrays,
+                        attrs={
+                            "mode_key": mode_key,
+                            "window_h": window_h,
+                            "units": "mm",
+                            "source": "CMORPH v1.0 annual maxima",
+                            "method": (
+                                "Method-of-moments Gumbel; ENSO/IOD-stratified "
+                                "(OND-season phase); season NOT stratified "
+                                "(annual maxima conflate seasons)"
+                            ),
+                            "n_years": n_used,
+                            "enso_iod_stratified": stratified,
+                            "description": (
+                                f"Gumbel return-period thresholds for {mode_key}, "
+                                f"{window_h}h accumulation"
+                            ),
+                        },
+                    ).to_netcdf(output / f"thresholds_{mode_key}_{window_h}h.nc")
+                    n_files += 1
 
     ds.close()
     typer.echo(f"  Generated {n_files} threshold files in {output}")

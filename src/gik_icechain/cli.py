@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -246,6 +246,31 @@ def _resolve_climate_mode(
         return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
 
+def _robust_to_zarr(ds: Any, path: str, attempts: int = 6) -> None:
+    """Write *ds* to a local zarr store, retrying transient Windows file locks.
+
+    zarr's atomic rename (``zarr.json.partial`` -> ``zarr.json``) can raise
+    ``PermissionError [WinError 5]`` when Windows Defender / another handle
+    briefly holds the freshly-written temp file (observed under Python 3.14 in
+    ``AppData\\Local\\Temp``). Retry with linear backoff, recreating the target
+    each attempt. See ISSUE-21.
+    """
+    import shutil
+    import time
+
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            ds.to_zarr(path, mode="w")
+            return
+        except PermissionError as exc:
+            last_exc = exc
+            shutil.rmtree(path, ignore_errors=True)
+            time.sleep(0.5 * (i + 1))
+    assert last_exc is not None
+    raise last_exc
+
+
 def _process_exceedance_day(args: dict) -> dict:
     """Compute exceedance for one forecast date. Module-level for multiprocessing pickling."""
     import pandas as pd
@@ -374,14 +399,14 @@ def _process_exceedance_day(args: dict) -> dict:
 
     exceedance_da = build_exceedance_dataset(day_results, day)
     tmp_path = str(Path(args["tmp_dir"]) / f"{date_str}.zarr")
-    exceedance_da.to_dataset(name="exceedance_prob").to_zarr(tmp_path, mode="w")
+    _robust_to_zarr(exceedance_da.to_dataset(name="exceedance_prob"), tmp_path)
 
     conf_path = None
     try:
         conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim=member_dim)
         conf_da = conf_da.assign_coords(date=pd.Timestamp(day)).expand_dims("date")
         conf_out = str(Path(args["tmp_dir"]) / f"{date_str}_conf.zarr")
-        conf_da.to_dataset(name="ensemble_confidence").to_zarr(conf_out, mode="w")
+        _robust_to_zarr(conf_da.to_dataset(name="ensemble_confidence"), conf_out)
         conf_path = conf_out
     except Exception:
         log.warning("ensemble_confidence_failed", date=date_str, exc_info=True)

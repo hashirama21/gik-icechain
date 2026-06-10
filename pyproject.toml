@@ -86,6 +86,7 @@ dependencies = [
   "click>=8.1",
   "rich>=13.7",
   "typer>=0.12",
+  "cdsapi>=0.7.7",
 
   # Logging
   "structlog>=24.1",
