@@ -76,6 +76,10 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: "dev,viz"
+      - name: Download reference data (admin, thresholds, ENSO/IOD)
+        run: |
+          python scripts/tools.py download --component all
+          python scripts/tools.py download-thresholds
       - run: |
           pytest --nbmake \
             notebooks/00_quickstart.ipynb \

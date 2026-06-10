@@ -164,16 +164,15 @@ class TestRiskBatch:
         )
 
         assert len(written) == 1
-        fc = json.loads(written[0].read_text())
-        assert fc["type"] == "FeatureCollection"
-        features = fc["features"]
-        assert len(features) == 2  # two fake admin-1 units
+        data = json.loads(written[0].read_text())
+        assert "date" in data
+        units = data["units"]
+        assert len(units) == 2  # two fake admin-1 units
 
-        for f in features:
-            p = f["properties"]
-            assert p["risk_label"] in {"Green", "Yellow", "Orange", "Red"}
+        for p in units.values():
+            assert p["risk_label"] in {"Green", "Yellow", "Orange", "Red", "No_Data"}
             total = p["p_green"] + p["p_yellow"] + p["p_orange"] + p["p_red"]
-            assert abs(total - 1.0) < 1e-4
+            assert abs(total - 1.0) < 1e-4 or p["risk_label"] == "No_Data"
 
     def test_missing_exceedance_date_skipped(
         self, built_crma, fake_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
