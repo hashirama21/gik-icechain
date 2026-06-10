@@ -38,3 +38,13 @@ Resume-safe: re-running continues from where it stopped.
 ## Credentials
 Use the standard AWS chain (instance role, `~/.aws`, or `AWS_ACCESS_KEY_ID` /
 `AWS_SECRET_ACCESS_KEY` env). Never commit keys.
+
+## Deliverables hosting (ISSUE-19)
+- **Dashboard** → GitHub Pages via `.github/workflows/deploy-dashboard.yaml`
+  (publishes `dashboard/calendar_map/`; the daily pipeline writes its `data/`).
+  Enable Pages once: repo Settings → Pages → Source = GitHub Actions.
+- **Public IceChunk store** → apply `public_store_bucket_policy.json` to the
+  store bucket (adjust the bucket name), or register it on AWS Open Data.
+- **TiTiler tiles** → deploy the official TiTiler AWS Lambda stack
+  (https://developmentseed.org/titiler/deployment/aws/) and point the storymap
+  `titiler_config.yaml` endpoint at it.
