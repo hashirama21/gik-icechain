@@ -5,10 +5,11 @@
   "containerProperties": {
     "image": "ghcr.io/hashirama21/gik-icechain:latest",
     "command": [
-      "gik-icechain", "gap-fill",
+      "convert",
       "--start", "Ref::start",
       "--end", "Ref::end",
-      "--store", "Ref::store"
+      "--output-store", "Ref::store",
+      "--config", "configs/default.yaml"
     ],
     "resourceRequirements": [
       {"type": "VCPU", "value": "4"},

@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.source="https://github.com/hashirama21/GIK-IceChain"
+LABEL org.opencontainers.image.source="https://github.com/hashirama21/gik-icechain"
 LABEL org.opencontainers.image.description="GIK-IceChain flood risk pipeline"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 COPY configs/ ./configs/
+COPY scripts/ ./scripts/
 
 RUN pip install --no-cache-dir ".[cloud]"
 
