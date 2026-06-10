@@ -34,8 +34,8 @@ component1:
     manifest_split_size: 1000
   gap_fill:
     enabled: true
-    cloud_run_job: "deploy/cloud_run/job_c1.yaml"
-    lithops_config: "deploy/cloud_run/lithops_config.yaml"
+    aws_batch_job: "deploy/aws/batch_job_definition.json"
+    lithops_config: "deploy/aws/lithops_config.yaml"
     workers: 50
 
 component2:

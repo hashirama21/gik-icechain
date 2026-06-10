@@ -1,0 +1,33 @@
+{
+  "jobDefinitionName": "gik-icechain-gapfill",
+  "type": "container",
+  "platformCapabilities": ["FARGATE"],
+  "containerProperties": {
+    "image": "ghcr.io/hashirama21/gik-icechain:latest",
+    "command": [
+      "gik-icechain", "gap-fill",
+      "--start", "Ref::start",
+      "--end", "Ref::end",
+      "--store", "Ref::store"
+    ],
+    "resourceRequirements": [
+      {"type": "VCPU", "value": "4"},
+      {"type": "MEMORY", "value": "16384"}
+    ],
+    "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gik-icechain-batch-exec",
+    "jobRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gik-icechain-batch-job",
+    "environment": [
+      {"name": "HDF5_USE_FILE_LOCKING", "value": "FALSE"},
+      {"name": "PYTHONIOENCODING", "value": "utf-8"},
+      {"name": "ECCODES_PYTHON_USE_FINDLIBS", "value": "1"}
+    ],
+    "networkConfiguration": {"assignPublicIp": "ENABLED"}
+  },
+  "parameters": {
+    "start": "2023-05-01",
+    "end": "2024-02-29",
+    "store": "s3://gik-icechain/gik-icechain-store"
+  },
+  "retryStrategy": {"attempts": 2},
+  "timeout": {"attemptDurationSeconds": 3600}
+}

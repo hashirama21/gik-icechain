@@ -1,0 +1,19 @@
+# Lithops on AWS Lambda for distributed GIK gap-fill (C1). See deploy/aws/README.md.
+lithops:
+  backend: aws_lambda
+  storage: aws_s3
+  log_level: INFO
+  execution_timeout: 900
+
+aws:
+  region: eu-west-1
+
+aws_lambda:
+  execution_role: arn:aws:iam::ACCOUNT_ID:role/gik-icechain-lithops
+  runtime: gik-icechain-runtime
+  runtime_memory: 8192
+  runtime_timeout: 900
+  max_workers: 50
+
+aws_s3:
+  storage_bucket: gik-icechain-lithops
