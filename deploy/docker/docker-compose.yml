@@ -1,18 +1,34 @@
+x-gik-build: &gik-build
+  context: ../..
+  dockerfile: deploy/docker/Dockerfile
+
 services:
+  pipeline-init:
+    build: *gik-build
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        python scripts/tools.py download --component all &&
+        python scripts/tools.py download-thresholds &&
+        python scripts/tools.py download-gpm --source chirps --start ${START_DATE} --end ${END_DATE}
+    env_file: .env
+    volumes:
+      - ../../configs:/app/configs:ro
+      - ../../data:/app/data
+
   pipeline-c1:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *gik-build
     command: ["convert", "--start", "${START_DATE}", "--end", "${END_DATE}", "--config", "configs/default.yaml"]
     env_file: .env
+    depends_on:
+      pipeline-init:
+        condition: service_completed_successfully
     volumes:
       - ../../configs:/app/configs:ro
       - ../../data:/app/data:ro
 
   pipeline-c2:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *gik-build
     command: ["exceedance", "--store", "${GIK_ICECHUNK_STORE_URI}", "--output", "${GIK_EXCEEDANCE_STORE_URI}", "--config", "configs/default.yaml"]
     env_file: .env
     depends_on:
@@ -23,9 +39,7 @@ services:
       - ../../data:/app/data:ro
 
   pipeline-c3:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
+    build: *gik-build
     command: ["risk", "--exceedance-store", "${GIK_EXCEEDANCE_STORE_URI}", "--output", "/results/admin1_risk/", "--config", "configs/default.yaml"]
     env_file: .env
     depends_on:
