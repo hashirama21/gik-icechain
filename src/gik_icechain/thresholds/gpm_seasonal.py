@@ -155,6 +155,21 @@ def _earthdata_session(user: str, password: str):
 _HDF5_MAGIC = b"\x89HDF"
 
 
+def _gpm_url(day: date, fname: str, subset_ea: bool, ranges: tuple[int, int, int, int]):
+    """Return (url, params) for a single GPM daily file (OPeNDAP subset or full)."""
+    if subset_ea:
+        lo0, lo1, la0, la1 = ranges
+        url = f"{GPM_OPENDAP}/{day.year}/{day.month:02d}/{fname}.dap.nc4"
+        params = {
+            "dap4.ce": (
+                f"/precipitation[0][{lo0}:{lo1}][{la0}:{la1}];"
+                f"/lat[{la0}:{la1}];/lon[{lo0}:{lo1}];/time[0]"
+            )
+        }
+        return url, params
+    return f"{GPM_BASE}/{day.year}/{day.month:02d}/{fname}", None
+
+
 def download_gpm_ea(
     start: date,
     end: date,
@@ -163,76 +178,93 @@ def download_gpm_ea(
     earthdata_password: str | None = None,
     force: bool = False,
     subset_ea: bool = True,
+    workers: int = 12,
 ) -> list[Path]:
-    """Download GPM IMERG V07B daily ``.nc4`` files for [start, end].
+    """Download GPM IMERG V07B daily ``.nc4`` files for [start, end] in parallel.
 
     With *subset_ea* (default), fetches only the East Africa window via OPeNDAP
-    DAP4 (~200 KB/file vs ~30 MB global). Saved as
-    ``3B-DAY.MS.MRG.3IMERG.YYYYMMDD-S000000-E235959.V07B.nc4``.
-    Skips existing files unless *force*. Validates HDF5 magic bytes — a returned
-    HTML page (not HDF5/nc4) means the Earthdata "NASA GESDISC DATA ARCHIVE" app
-    is not authorised in your Earthdata profile (Applications -> Authorized Apps).
+    DAP4 (~150 KB/file vs ~30 MB global). Runs *workers* concurrent requests
+    (OPeNDAP is I/O-bound). Saved as
+    ``3B-DAY.MS.MRG.3IMERG.YYYYMMDD-S000000-E235959.V07B.nc4``; skips existing
+    files unless *force* (so the download is resumable). Validates HDF5 magic
+    bytes — a returned HTML page means the Earthdata "NASA GESDISC DATA ARCHIVE"
+    app is not authorised (Earthdata profile -> Applications -> Authorized Apps).
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from threading import local
+
     user, pwd = _get_credentials(earthdata_user, earthdata_password)
-    session = _earthdata_session(user, pwd)
     output_dir.mkdir(parents=True, exist_ok=True)
-    lo0, lo1, la0, la1 = _ea_index_ranges()
+    ranges = _ea_index_ranges()
 
-    downloaded: list[Path] = []
+    # Enumerate the dates still to fetch (resumable: skip existing).
+    todo: list[tuple[date, Path]] = []
+    done: list[Path] = []
     current = start
-    n_dl = n_skip = n_fail = 0
-    saw_auth_html = False
-
     while current <= end:
-        ds = current.strftime("%Y%m%d")
-        fname = f"3B-DAY.MS.MRG.3IMERG.{ds}-S000000-E235959.V07B.nc4"
+        fname = f"3B-DAY.MS.MRG.3IMERG.{current.strftime('%Y%m%d')}-S000000-E235959.V07B.nc4"
         out = output_dir / fname
-
         if out.exists() and not force:
-            downloaded.append(out)
-            n_skip += 1
-            current += timedelta(days=1)
-            continue
-
-        # GPM_3IMERGDF daily is organised by YYYY/MM (not day-of-year).
-        params: dict[str, str] | None = None
-        if subset_ea:
-            url = f"{GPM_OPENDAP}/{current.year}/{current.month:02d}/{fname}.dap.nc4"
-            params = {
-                "dap4.ce": (
-                    f"/precipitation[0][{lo0}:{lo1}][{la0}:{la1}];"
-                    f"/lat[{la0}:{la1}];/lon[{lo0}:{lo1}];/time[0]"
-                )
-            }
+            done.append(out)
         else:
-            url = f"{GPM_BASE}/{current.year}/{current.month:02d}/{fname}"
-        try:
-            resp = session.get(url, params=params, timeout=180)
-            resp.raise_for_status()
-            content = resp.content
-            if content[:4] != _HDF5_MAGIC:
-                saw_auth_html = True
-                raise ValueError("response is not HDF5 (auth/HTML page)")
-            out.write_bytes(content)
-            downloaded.append(out)
-            n_dl += 1
-            log.info("gpm_downloaded", date=ds, size_kb=out.stat().st_size // 1024)
-        except Exception as exc:
-            n_fail += 1
-            log.warning("gpm_download_failed", date=ds, error=str(exc)[:120])
-
+            todo.append((current, out))
         current += timedelta(days=1)
 
-    log.info(
-        "gpm_download_done", downloaded=n_dl, skipped=n_skip, failed=n_fail, total=len(downloaded)
-    )
-    if n_dl == 0 and saw_auth_html:
+    # One requests.Session per worker thread (cookies/redirect auth are per-session).
+    _tls = local()
+
+    def _get_session():
+        s = getattr(_tls, "session", None)
+        if s is None:
+            s = _earthdata_session(user, pwd)
+            _tls.session = s
+        return s
+
+    counts = {"dl": 0, "fail": 0, "html": 0}
+
+    def _fetch(item: tuple[date, Path]) -> Path | None:
+        import time
+
+        day, out = item
+        url, params = _gpm_url(day, out.name, subset_ea, ranges)
+        last = ""
+        # GES DISC throttles concurrent OPeNDAP requests -> retry with backoff.
+        for attempt in range(4):
+            try:
+                resp = _get_session().get(url, params=params, timeout=180)
+                resp.raise_for_status()
+                content = resp.content
+                if content[:4] != _HDF5_MAGIC:
+                    counts["html"] += 1
+                    raise ValueError("response is not HDF5 (auth/HTML page)")
+                out.write_bytes(content)
+                counts["dl"] += 1
+                if counts["dl"] % 200 == 0:
+                    log.info("gpm_download_progress", downloaded=counts["dl"], remaining=len(todo))
+                return out
+            except Exception as exc:
+                last = str(exc)[:100]
+                time.sleep(2.0 * (attempt + 1))
+        counts["fail"] += 1
+        log.warning("gpm_download_failed", date=day.isoformat(), error=last)
+        return None
+
+    log.info("gpm_download_start", to_fetch=len(todo), already=len(done), workers=workers)
+    if todo:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for fut in as_completed(pool.submit(_fetch, it) for it in todo):
+                got = fut.result()
+                if got is not None:
+                    done.append(got)
+
+    log.info("gpm_download_done", downloaded=counts["dl"], failed=counts["fail"], total=len(done))
+    if counts["dl"] == 0 and counts["html"] > 0:
         raise RuntimeError(
             "GES DISC returned HTML (not HDF5). Authorise the 'NASA GESDISC DATA "
             "ARCHIVE' app at https://urs.earthdata.nasa.gov/profile -> Applications "
             "-> Authorized Apps, then retry."
         )
-    return downloaded
+    return done
 
 def load_gpm_daily_ea(paths: list[Path]) -> xr.DataArray:
     """Load GPM IMERG V07B daily ``.nc4`` files, subset to East Africa (mm/day).

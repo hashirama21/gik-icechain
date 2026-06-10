@@ -729,6 +729,7 @@ def build_thresholds_gpm(
     download: Annotated[
         bool, typer.Option(help="Download missing GPM files first (needs Earthdata).")
     ] = False,
+    workers: Annotated[int, typer.Option(help="Parallel download workers.")] = 12,
 ) -> None:
     """Build season x ENSO x IOD Gumbel thresholds from GPM IMERG daily data.
 
@@ -747,8 +748,8 @@ def build_thresholds_gpm(
     s, e = date.fromisoformat(start), date.fromisoformat(end)
 
     if download:
-        typer.echo(f"Downloading GPM IMERG {s} -> {e} (this can take a while) ...")
-        download_gpm_ea(s, e, gpm_dir)
+        typer.echo(f"Downloading GPM IMERG {s} -> {e} ({workers} workers) ...")
+        download_gpm_ea(s, e, gpm_dir, workers=workers)
 
     all_files = sorted(gpm_dir.glob("3B-DAY.MS.MRG.3IMERG.*.V07B.nc4"))
     files_in_range = [
