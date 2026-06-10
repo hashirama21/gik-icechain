@@ -711,6 +711,72 @@ def download_thresholds(
     typer.echo(f"  Generated {n_files} threshold files in {output}")
 
 
+@app.command("build-thresholds-gpm")
+def build_thresholds_gpm(
+    start: Annotated[str, typer.Option("--start", help="First date YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option("--end", help="Last date YYYY-MM-DD.")],
+    gpm_dir: Annotated[
+        Path, typer.Option(help="Directory with GPM IMERG V07B HDF5 files.")
+    ] = REPO_ROOT / "data" / "gpm_imerg",
+    output: Annotated[
+        Path, typer.Option(help="Output directory for threshold NetCDFs.")
+    ] = REPO_ROOT / "data" / "cmorph_thresholds",
+    enso_iod_csv: Annotated[
+        Path, typer.Option(help="ENSO/IOD index CSV.")
+    ] = REPO_ROOT / "data" / "enso_iod_index.csv",
+    min_years: Annotated[int, typer.Option(help="Min years per bin before fallback.")] = 6,
+    seasons: Annotated[str, typer.Option(help="Comma-separated seasons.")] = "MAM,OND,JJAS,DJF",
+    download: Annotated[
+        bool, typer.Option(help="Download missing GPM files first (needs Earthdata).")
+    ] = False,
+) -> None:
+    """Build season x ENSO x IOD Gumbel thresholds from GPM IMERG daily data.
+
+    Sub-daily windows (3/6/12 h) are skipped (daily input). With --download,
+    missing HDF5 files are fetched first (EARTHDATA_USER/PASSWORD or ~/.netrc).
+
+    Example:
+      python scripts/tools.py build-thresholds-gpm --start 2001-01-01 --end 2023-12-31
+    """
+    from gik_icechain.thresholds.gpm_seasonal import (
+        build_seasonal_thresholds,
+        download_gpm_ea,
+        load_gpm_daily_ea,
+    )
+
+    s, e = date.fromisoformat(start), date.fromisoformat(end)
+
+    if download:
+        typer.echo(f"Downloading GPM IMERG {s} -> {e} (this can take a while) ...")
+        download_gpm_ea(s, e, gpm_dir)
+
+    all_files = sorted(gpm_dir.glob("3B-DAY.MS.MRG.3IMERG.*.V07B.nc4"))
+    files_in_range = [
+        f for f in all_files if s <= date.fromisoformat(f.name.split(".")[4][:8]) <= e
+    ]
+    if not files_in_range:
+        typer.echo(
+            f"No GPM files in {gpm_dir} for {s} -> {e}.\n"
+            f"Run with --download, or: python scripts/tools.py download-gpm "
+            f"--source nasa --start {start} --end {end}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"Loading {len(files_in_range)} GPM files ({s} -> {e}) ...")
+    daily_da = load_gpm_daily_ea(files_in_range)
+    season_list = [x.strip() for x in seasons.split(",")]
+    typer.echo(f"Fitting thresholds: seasons={season_list}, min_years={min_years} ...")
+    written = build_seasonal_thresholds(
+        daily_da=daily_da,
+        enso_iod_csv=enso_iod_csv,
+        output_dir=output,
+        min_years=min_years,
+        seasons=season_list,
+    )
+    typer.echo(f"Wrote {len(written)} threshold files to {output}")
+
+
 _GAP_START = date(2023, 5, 1)
 _GAP_END = date(2024, 2, 29)
 
