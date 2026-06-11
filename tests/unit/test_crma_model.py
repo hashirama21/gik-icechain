@@ -117,6 +117,23 @@ class TestCRMAModelInference:
         result = built_model.infer(evidence)
         assert result["risk_state"] in (2, 3), f"Expected high risk, got {result['risk_label']}"
 
+    def test_medium_confidence_does_not_veto_strong_signal(self, built_model, make_evidence):
+        """Regression: a strong forecast signal at Medium data-confidence (the
+        precip-ensemble norm) must NOT collapse to Green. The old hardcoded
+        [0.5, 0.8, 1.0] damping vetoed it, producing a structural all-Green run.
+        """
+        evidence = make_evidence(
+            exceedance_prob_24h_5y=1.0,
+            exceedance_prob_72h_5y=1.0,
+            spatial_coverage_fraction=0.36,  # Regional
+            gpm_quality=1,                    # Medium confidence
+        )
+        assert evidence.data_confidence_state == 1
+        result = built_model.infer(evidence)
+        assert result["risk_state"] >= 1, (
+            f"Strong signal vetoed by Medium confidence → {result['risk_label']}"
+        )
+
     def test_probabilities_sum_to_one(self, built_model, make_evidence):
         evidence = make_evidence(exceedance_prob_24h_5y=0.3, gpm_obs_24h=15.0)
         result = built_model.infer(evidence)

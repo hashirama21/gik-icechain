@@ -510,6 +510,9 @@ class CRMAModel:
 
         fresh_thr = cfg.compound_score_thresholds.fresh    # [low, mid, high]
         prol_thr = cfg.compound_score_thresholds.prolonged
+        # Data_Confidence dampening [Low, Medium, High] — config-driven so the
+        # common Medium case for precip ensembles does not veto strong signals.
+        damping = list(cfg.confidence_damping)
 
         fresh_b = cfg.compound_cpt_buckets.fresh
         prol_b = cfg.compound_cpt_buckets.prolonged
@@ -526,7 +529,7 @@ class CRMAModel:
                 + t_persist * 1.5
                 + spatial * 1.0
                 + api * w["api"]
-            ) * [0.5, 0.8, 1.0][confidence]
+            ) * damping[confidence]
 
             if soil_mem == 0:
                 lo, mi, hi = fresh_thr
