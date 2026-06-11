@@ -616,6 +616,7 @@ def _run_risk(
         initial_api_mm=cfg.component3.api.initial_api_mm,
         signal_threshold=crma_cfg.signal_threshold_prob,
         rp_signal=crma_cfg.rp_signal,
+        rp_signal_options=crma_cfg.rp_signal_options,
         hazard_stat=cfg.component3.aggregation.method,
         min_coverage=cfg.component3.aggregation.min_coverage_fraction,
         endpoint_url=cfg.outputs.endpoint_url or None,

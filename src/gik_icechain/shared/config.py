@@ -374,6 +374,9 @@ class CRMAModelConfig(BaseModel):
     # Exceedance signal thresholds
     signal_threshold_prob: float = 0.15
     rp_signal: int = 5
+    # Return periods the risk engine evaluates (risk_state produced per RP so the
+    # dashboard can switch 2yr↔5yr). rp_signal is the primary/default one.
+    rp_signal_options: list[int] = Field(default_factory=lambda: [2, 5])
 
     # Data_Confidence dampening applied to the compound risk score, indexed by
     # confidence state [Low, Medium, High]. Precip ensembles are typically

@@ -80,6 +80,7 @@ def build_score(
     result: dict[str, Any],
     evidence: Any,
     emdat_flood_match: bool = False,
+    risk_by_rp: dict[str, dict] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build a (pcode, score_dict) pair from CRMA inference outputs — no geometry.
 
@@ -106,6 +107,14 @@ def build_score(
         "spatial_coverage": round(evidence.spatial_coverage_fraction, 4),
         "emdat_flood_match": emdat_flood_match,
     }
+    if risk_by_rp:
+        # Per-return-period risk_state/probabilities so the dashboard can switch
+        # 2yr↔5yr. Top-level fields stay the primary RP for backward-compat.
+        score["risk_by_rp"] = {
+            rp: {k: (round(v[k], 4) if k.startswith("p_") else v[k])
+                 for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")}
+            for rp, v in risk_by_rp.items()
+        }
     return pcode, score
 
 

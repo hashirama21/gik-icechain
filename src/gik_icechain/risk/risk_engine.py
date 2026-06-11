@@ -68,6 +68,7 @@ def run_risk_batch(
     initial_api_mm: float = 20.0,
     signal_threshold: float = 0.15,
     rp_signal: int = 5,
+    rp_signal_options: list[int] | None = None,
     hazard_stat: str = "max",
     min_coverage: float = 0.5,
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
@@ -115,6 +116,10 @@ def run_risk_batch(
     checkpoint_path = output_dir / _CHECKPOINT_FILE
     bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start)
 
+    # Risk is produced for each of these RPs (primary first); the dashboard
+    # toggles between them. Always include the primary rp_signal.
+    rp_options = list(dict.fromkeys([rp_signal, *(rp_signal_options or [])]))
+
     written: list[Path] = []
     current = resume_date
     day_count = 0
@@ -134,6 +139,7 @@ def run_risk_batch(
             rp_signal,
             hazard_stat,
             min_coverage,
+            rp_options,
         )
         if path is not None:
             written.append(path)
@@ -151,6 +157,12 @@ def run_risk_batch(
     return written
 
 
+_NO_DATA_RESULT = {
+    "risk_state": -1, "risk_label": "No_Data",
+    "p_green": 0.0, "p_yellow": 0.0, "p_orange": 0.0, "p_red": 0.0,
+}
+
+
 def _process_day(
     day: date,
     exc_ds: xr.Dataset,
@@ -166,30 +178,34 @@ def _process_day(
     rp_signal: int,
     hazard_stat: str = "max",
     min_coverage: float = 0.5,
+    rp_options: list[int] | None = None,
 ) -> Path | None:
+    rp_options = rp_options or [rp_signal]
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
     except KeyError:
         log.warning("exceedance_date_missing", date=day)
         return None
 
-    try:
-        exc_24h = exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal)
-        exc_72h = exc_day["exceedance_prob"].sel(window=72, return_period=rp_signal)
-        exc_7d = exc_day["exceedance_prob"].sel(window=168, return_period=rp_signal)
-    except KeyError as exc:
-        log.warning("exceedance_window_missing", date=day, rp=rp_signal, error=str(exc))
+    # Aggregate hazard exceedance per RP (24h/72h/7d) so risk_state can be
+    # produced for each return period (dashboard toggles 2yr↔5yr).
+    agg: dict[int, dict[str, pd.Series]] = {}
+    for rp in rp_options:
+        try:
+            e = {w: exc_day["exceedance_prob"].sel(window=wh, return_period=rp)
+                 for w, wh in (("24h", 24), ("72h", 72), ("7d", 168))}
+        except KeyError as exc:
+            log.warning("exceedance_window_missing", date=day, rp=rp, error=str(exc))
+            continue
+        agg[rp] = {w: aggregate_to_admin1(da, admin, stat=hazard_stat, min_coverage=min_coverage)
+                   for w, da in e.items()}
+    if rp_signal not in agg:
+        log.warning("primary_rp_missing", date=day, rp=rp_signal)
         return None
 
+    cov_s = coverage_fraction(
+        exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal), admin, signal_threshold)
     gpm_da = load_gpm_daily(gpm_dir, day)
-
-    # Hazard exceedance: aggregate with hazard_stat (max/percentile) so a
-    # localized flood peak is not diluted over the whole admin polygon.
-    p_24h_s = aggregate_to_admin1(exc_24h, admin, stat=hazard_stat, min_coverage=min_coverage)
-    p_72h_s = aggregate_to_admin1(exc_72h, admin, stat=hazard_stat, min_coverage=min_coverage)
-    p_7d_s = aggregate_to_admin1(exc_7d, admin, stat=hazard_stat, min_coverage=min_coverage)
-    cov_s = coverage_fraction(exc_24h, admin, signal_threshold)
-    # Observed rainfall is an areal quantity → keep the mean.
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     if "ensemble_confidence" in exc_day:
@@ -198,65 +214,64 @@ def _process_day(
     else:
         conf_s = pd.Series(dtype="int8")
 
+    def _exc(rp: int) -> tuple[float, float, float]:
+        return tuple(float(agg[rp][w].get(pcode, float("nan"))) for w in ("24h", "72h", "7d"))
+
+    def _evidence(exc: tuple[float, float, float], state: DynamicBNState,
+                  gpm24: float, cov: float, quality: int) -> Any:
+        return CRMAEvidence(
+            exceedance_prob_24h_5y=exc[0], exceedance_prob_72h_5y=exc[1],
+            exceedance_prob_7d_5y=exc[2], gpm_obs_24h=gpm24, api_mm=state.api_mm,
+            spatial_coverage_fraction=cov, consecutive_signal_days=state.consecutive_days,
+            sat_consecutive_days=state.sat_consecutive_days, gpm_quality=quality,
+        )
+
+    def _slim(result: dict) -> dict:
+        return {k: result[k] for k in
+                ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")}
+
     scores: dict[str, dict] = {}
     for pcode, cluster in pcode_cluster.items():
         unit = unit_by_pcode[pcode]
-        p_24h = p_24h_s.get(pcode, float("nan"))
-        p_72h = p_72h_s.get(pcode, float("nan"))
-        p_7d = p_7d_s.get(pcode, float("nan"))
-        gpm_24h = gpm_s.get(pcode, float("nan"))
-        cov_val = cov_s.get(pcode, float("nan"))
+        state = bn_states[pcode]
+        exc_primary = _exc(rp_signal)
 
-        if any(not math.isfinite(v) for v in [p_24h, p_72h, p_7d]):
-            log.warning("nan_in_aggregated_values", pcode=pcode, date=day)
-            bn_states[pcode] = replace(bn_states[pcode], api_mm=bn_states[pcode].api_mm * api_decay)
-            no_data_result = {
-                "risk_state": -1,
-                "risk_label": "No_Data",
-                "p_green": 0.0,
-                "p_yellow": 0.0,
-                "p_orange": 0.0,
-                "p_red": 0.0,
-            }
-            no_data_evidence = CRMAEvidence(
-                exceedance_prob_24h_5y=0.0,
-                exceedance_prob_72h_5y=0.0,
-                exceedance_prob_7d_5y=0.0,
-                gpm_obs_24h=0.0,
-                api_mm=bn_states[pcode].api_mm,
-                spatial_coverage_fraction=0.0,
-                consecutive_signal_days=0,
-                sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
-            )
-            _, scores[pcode] = build_score(unit, no_data_result, no_data_evidence)
+        if any(not math.isfinite(v) for v in exc_primary):
+            bn_states[pcode] = replace(state, api_mm=state.api_mm * api_decay)
+            nd_ev = _evidence((0.0, 0.0, 0.0), bn_states[pcode], 0.0, 0.0, 2)
+            _, scores[pcode] = build_score(unit, _NO_DATA_RESULT, nd_ev,
+                                           risk_by_rp={str(rp): _NO_DATA_RESULT for rp in agg})
             continue
 
-        gpm_24h = gpm_24h if math.isfinite(gpm_24h) else 0.0
-        cov_val = cov_val if math.isfinite(cov_val) else 0.0
+        gpm_24h = gpm_s.get(pcode, float("nan"))
+        gpm_24h = float(gpm_24h) if math.isfinite(gpm_24h) else 0.0
+        cov_val = cov_s.get(pcode, float("nan"))
+        cov_val = float(cov_val) if math.isfinite(cov_val) else 0.0
+        quality = int(conf_s.get(pcode, 2.0))
 
-        evidence = CRMAEvidence(
-            exceedance_prob_24h_5y=float(p_24h),
-            exceedance_prob_72h_5y=float(p_72h),
-            exceedance_prob_7d_5y=float(p_7d),
-            gpm_obs_24h=float(gpm_24h),
-            api_mm=bn_states[pcode].api_mm,
-            spatial_coverage_fraction=float(cov_val),
-            consecutive_signal_days=bn_states[pcode].consecutive_days,
-            sat_consecutive_days=bn_states[pcode].sat_consecutive_days,
-            gpm_quality=int(conf_s.get(pcode, 2.0)),
-        )
+        # Non-primary RPs: infer with the current (pre-advance) state.
+        risk_by_rp: dict[str, dict] = {}
+        for rp in agg:
+            if rp == rp_signal:
+                continue
+            exc = _exc(rp)
+            if any(not math.isfinite(v) for v in exc):
+                risk_by_rp[str(rp)] = _NO_DATA_RESULT
+            else:
+                ev_rp = _evidence(exc, state, gpm_24h, cov_val, quality)
+                risk_by_rp[str(rp)] = _slim(crma_models[cluster].infer(ev_rp))
+
+        # Primary RP: bn_step advances the persistent state.
+        ev = _evidence(exc_primary, state, gpm_24h, cov_val, quality)
         result, bn_states[pcode] = bn_step(
-            bn_states[pcode],
-            evidence,
-            crma_models[cluster],
-            api_decay=api_decay,
-            gpm_obs_mm=float(gpm_24h),
-            signal_threshold=signal_threshold,
-        )
-        _, scores[pcode] = build_score(unit, result, evidence)
+            state, ev, crma_models[cluster], api_decay=api_decay,
+            gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold)
+        risk_by_rp[str(rp_signal)] = _slim(result)
+
+        _, scores[pcode] = build_score(unit, result, ev, risk_by_rp=risk_by_rp)
 
     out_path = write_risk_scores(day, scores, output_dir)
-    log.info("risk_day_written", date=day, n_units=len(scores))
+    log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
 
 
