@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens ported verbatim from GIK-IceChain-Dashboard-v4.html ──
+   Everything else is expressed with Tailwind utilities + arbitrary values
+   referencing these vars, e.g. bg-[var(--sur)] border-[var(--brd)]. */
+:root {
+  --r50:#FFF5F5;--r100:#FFECEC;--r200:#FFCECE;--r300:#FFA3A3;
+  --r400:#FF6B6B;--r500:#FF2626;--r600:#E01F1F;--r700:#B31515;
+  --r800:#7A0D0D;--r900:#4D0808;--r950:#2B0404;
+  --db50:#EDF2FF;--db100:#D9E1F1;--db200:#B1BDD6;--db300:#8899BB;
+  --db400:#445577;--db500:#2A3F6A;--db600:#1E2D4A;--db700:#121E38;
+  --db800:#0D1526;--db900:#080D15;--db950:#04060B;
+  --blue:#3B82F6;--teal:#14B8A6;--purple:#A855F7;--amber:#F59E0B;--green:#10B981;
+  --mono:'Space Mono',monospace;--sans:'Sora',sans-serif;
+  --hdr:54px;--nav:60px;--r:6px;--rl:12px;
+}
+[data-theme="dark"]{
+  --bg:var(--db950);--sur:var(--db900);--ele:var(--db800);
+  --hov:var(--db700);--brd:var(--db700);--bhi:var(--db600);
+  --tp:var(--db50);--ts:var(--db300);--td:var(--db400);
+  --c-normal:var(--db800);--c-nodata:var(--db700);
+  --c-low:var(--r950);--c-mod:var(--r900);--c-sig:var(--r800);
+  --c-high:var(--r700);--c-vhi:var(--r600);--c-crit:var(--r500);
+  --c-brd:rgba(255,255,255,.06);--c-brd-r:rgba(255,255,255,.1);
+  --c-txt-n:var(--db500);--c-txt-l:#6B3333;--c-txt-m:#995555;
+  --c-txt-s:#CC8888;--c-txt-h:#FFB0B0;--c-txt-v:#FFCCCC;--c-txt-c:#FFFFFF;
+  --map-filter:brightness(.65) saturate(.5);--tag-border:rgba(255,255,255,.12);
+}
+[data-theme="light"]{
+  --bg:var(--db50);--sur:#FFFFFF;--ele:var(--db50);
+  --hov:var(--db100);--brd:var(--db200);--bhi:var(--db300);
+  --tp:var(--db950);--ts:var(--db500);--td:var(--db400);
+  --c-normal:#FAFAFA;--c-nodata:#F0F0F0;
+  --c-low:var(--r50);--c-mod:var(--r100);--c-sig:var(--r200);
+  --c-high:var(--r300);--c-vhi:var(--r400);--c-crit:var(--r500);
+  --c-brd:rgba(0,0,0,.07);--c-brd-r:rgba(255,38,38,.18);
+  --c-txt-n:#AAAAAA;--c-txt-l:#CC7777;--c-txt-m:#BB5555;
+  --c-txt-s:#AA3333;--c-txt-h:#881111;--c-txt-v:#770000;--c-txt-c:#FFFFFF;
+  --map-filter:none;--tag-border:rgba(0,0,0,.1);
+}
+
+@layer base {
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: var(--bg); color: var(--tp);
+    font-family: var(--sans); font-size: 14px;
+    transition: background .25s, color .25s;
+  }
+}
+
+/* Keyframes + things Tailwind can't express cleanly (kept minimal). */
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes cpulse { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 10px 2px var(--c-crit)} }
+@keyframes cpulse-l { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 8px 2px rgba(255,38,38,.45)} }
+@keyframes tfade { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+.anim-blink{animation:blink 2s infinite}
+.cell-high{animation:cpulse 2s infinite}
+.cell-vhi{animation:cpulse 1.5s infinite}
+.cell-crit{animation:cpulse 1s infinite}
+[data-theme="light"] .cell-high,[data-theme="light"] .cell-vhi,[data-theme="light"] .cell-crit{animation-name:cpulse-l}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--brd);border-radius:2px}
+[data-theme="dark"] .leaflet-tile{filter:brightness(.62) saturate(.45)}
+[data-theme="light"] .leaflet-tile{filter:none}
+.leaflet-container{background:var(--bg)}

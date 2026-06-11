@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.env*.local
+# Generated data contract (rebuilt by data_pipeline/)
+public/data/
+public/cogs/
+public/stac/
