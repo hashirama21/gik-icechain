@@ -66,6 +66,7 @@ def compute_exceedance_probabilities(
     window_h: int,
     return_period: int,
     member_dim: str = "number",
+    flood_floor_mm: float = 0.0,
 ) -> xr.DataArray:
     """Compute empirical exceedance probability for a given window and return period.
 
@@ -100,6 +101,12 @@ def compute_exceedance_probabilities(
     tp_worst = tp.max(dim=step_dim)
 
     threshold = _align_threshold_to_forecast(threshold, tp_worst)
+
+    # Flood-relevance floor: arid cells have near-zero GEV thresholds → a few mm
+    # would false-alarm. Raise the effective threshold to a flood-capable minimum
+    # (equatorial thresholds >> floor are unaffected; NaN stays NaN → exceedance 0).
+    if flood_floor_mm > 0:
+        threshold = threshold.clip(min=flood_floor_mm)
 
     exceedance = (tp_worst > threshold).mean(dim=member_dim)
     exceedance.attrs.update(

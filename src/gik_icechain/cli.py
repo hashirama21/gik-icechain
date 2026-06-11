@@ -383,9 +383,12 @@ def _process_exceedance_day(args: dict) -> dict:
         for rp in args["return_periods"]:
             try:
                 thr = thresholds.get(w, rp, mode)  # type: ignore[arg-type]
+                floor_map = args.get("flood_floor_mm", {}) or {}
+                floor = float(floor_map.get(w, floor_map.get(str(w), 0.0)))
                 day_results[(w, rp)] = compute_exceedance_probabilities(
                     acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
                     window_h=w, return_period=rp, member_dim=member_dim,
+                    flood_floor_mm=floor,
                 )
             except Exception as exc:
                 log.warning(
@@ -493,6 +496,7 @@ def _run_exceedance(
             "bbox": bbox,
             "compute_variables": c2.compute_variables,
             "precip_scale_to_mm": c2.precip_scale_to_mm,
+            "flood_floor_mm": dict(c2.flood_floor_mm),
             "tmp_dir": tmp_dir,
             # Manifest-aware params
             "manifest_aware_enabled": ma.enabled,

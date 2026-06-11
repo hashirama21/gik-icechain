@@ -147,6 +147,22 @@ class TestComputeExceedanceProbabilities:
                                              member_dim="member")
         assert float(p.mean()) == pytest.approx(1.0, abs=0.01)
 
+    def test_flood_floor_suppresses_arid_false_alarm(self):
+        """A near-zero (arid) threshold + small forecast → floor suppresses it."""
+        ds = _make_forecast(nmembers=10)
+        acc = compute_rolling_accumulations(ds, windows_h=[24])
+        thr = xr.Dataset({"rp_5y": xr.DataArray(
+            np.full((5, 5), 0.01, dtype=np.float32),
+            dims=["latitude", "longitude"],
+            coords={"latitude": np.linspace(0, 4, 5), "longitude": np.linspace(35, 39, 5)},
+        )})
+        no_floor = compute_exceedance_probabilities(
+            acc, thr, window_h=24, return_period=5, member_dim="member", flood_floor_mm=0.0)
+        floored = compute_exceedance_probabilities(
+            acc, thr, window_h=24, return_period=5, member_dim="member", flood_floor_mm=30.0)
+        assert float(no_floor.mean()) > 0.9
+        assert float(floored.mean()) == pytest.approx(0.0, abs=0.01)
+
 
 class TestComputeEnsembleConfidence:
     def test_states_in_0_1_2(self):
