@@ -1,0 +1,56 @@
+name: Deploy Dashboard (Next.js)
+
+# Builds the GIK-IceChain dashboard (static export) and publishes it to GitHub
+# Pages. The data contract under web/public/data is expected to be committed by
+# the daily_update workflow (or built here from a committed results/ snapshot).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "dashboard/web/**"
+      - ".github/workflows/deploy-web.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-web
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: dashboard/web/package-lock.json
+      - run: npm ci || npm install
+      - name: Build static export
+        env:
+          NEXT_PUBLIC_BASE_PATH: /gik-icechain
+          NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
+          NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
+        run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/web/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

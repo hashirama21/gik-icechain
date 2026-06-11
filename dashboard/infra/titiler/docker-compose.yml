@@ -1,0 +1,23 @@
+# Local TiTiler for dashboard development.
+#   docker compose -f dashboard/infra/titiler/docker-compose.yml up -d
+# Serves COGs from dashboard/web/public/cogs at http://localhost:8000
+# (and any public S3/HTTP COG via the ?url= parameter).
+
+services:
+  titiler:
+    image: ghcr.io/developmentseed/titiler:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - CPL_VSIL_CURL_ALLOWED_EXTENSIONS=.tif,.tiff
+      - GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR
+      - TITILER_API_CORS_ORIGINS=*
+      # Allow reading COGs mounted from the web build output.
+      - AWS_NO_SIGN_REQUEST=YES
+    volumes:
+      - ../../web/public/cogs:/data/cogs:ro
+    command: >
+      uvicorn titiler.application.main:app
+      --host 0.0.0.0 --port 8000
+    restart: unless-stopped
