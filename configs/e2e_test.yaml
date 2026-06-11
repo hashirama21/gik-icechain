@@ -18,7 +18,7 @@ outputs:
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""
   risk_output_dir: "results/e2e_test/admin1_risk/"
-  dashboard_data_dir: "dashboard/calendar_map/data/"
+  dashboard_data_dir: "dashboard/web/public/data/"
 
 component2:
   manifest_aware:

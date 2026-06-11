@@ -47,7 +47,7 @@ class OutputsConfig(BaseModel):
     exceedance_icechunk_uri: str = ""
     risk_icechunk_uri: str = ""
     risk_output_dir: str = "results/admin1_risk/"
-    dashboard_data_dir: str = "dashboard/calendar_map/data/"
+    dashboard_data_dir: str = "dashboard/web/public/data/"
 
 
 #  Component 1
@@ -201,6 +201,12 @@ class Component2Config(BaseModel):
     # comparison is unit-consistent. Default 1000.0 (m -> mm); set 1.0 if the
     # source is already mm.
     precip_scale_to_mm: float = 1000.0
+
+    # Flood-relevance floor (mm) per window: raises the effective GEV threshold
+    # so arid cells with near-zero thresholds don't false-alarm.
+    flood_floor_mm: dict[int, float] = Field(
+        default_factory=lambda: {3: 15, 6: 20, 12: 25, 24: 30, 48: 40, 72: 50, 168: 75}
+    )
 
     # --- Dimension 2: Steps ---
     step_resolution_h: int = 6
@@ -368,6 +374,12 @@ class CRMAModelConfig(BaseModel):
     # Exceedance signal thresholds
     signal_threshold_prob: float = 0.15
     rp_signal: int = 5
+
+    # Data_Confidence dampening applied to the compound risk score, indexed by
+    # confidence state [Low, Medium, High]. Precip ensembles are typically
+    # Medium (IQR/median ~0.3-1.0), so Medium must stay near-neutral — otherwise
+    # it structurally vetoes strong forecast signals (all-Green failure mode).
+    confidence_damping: list[float] = Field(default_factory=lambda: [0.8, 0.95, 1.0])
 
     # CPT parameters
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(
