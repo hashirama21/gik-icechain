@@ -74,7 +74,19 @@ def write_exceedance_store(
 
     try:
         existing = xr.open_zarr(output_uri, consolidated=False, **zarr_kw)
-        if append:
+        compatible, mismatch = _spatial_grids_compatible(ds, existing)
+        if append and not compatible:
+            # The store was written with a different spatial grid (the bbox
+            # changed between runs). Dates already in the store were computed on
+            # the old grid, so they cannot be concatenated along `date` and are
+            # no longer consistent with the new domain. Recreate the store.
+            log.warning(
+                "exceedance_store_grid_changed",
+                mismatch=mismatch,
+                uri=output_uri,
+                action="bbox changed; recreating store (mode=w)",
+            )
+        elif append:
             existing_dates = set(str(d)[:10] for d in existing["date"].values)
             new_dates = {
                 d.isoformat(): d for d in exceedance_dict if d.isoformat() not in existing_dates
@@ -133,6 +145,31 @@ def build_exceedance_dataset(
     stacked = stacked.assign_coords(date=pd.Timestamp(forecast_date)).expand_dims("date")
     stacked.attrs.update({"long_name": "Exceedance probability", "units": "1"})
     return stacked.astype(np.float32)
+
+
+def _spatial_grids_compatible(
+    new_ds: xr.Dataset, existing: xr.Dataset
+) -> tuple[bool, dict]:
+    """Check whether *new_ds* shares the store's ``latitude``/``longitude`` grid.
+
+    Appending along ``date`` is only meaningful when the spatial grid is
+    identical. A changed bounding box (e.g. the East Africa coverage extension
+    to -14.5°) shifts the grid, so the store must be recreated rather than
+    appended. Returns ``(compatible, mismatch_info)``.
+    """
+    mismatch: dict = {}
+    for dim in ("latitude", "longitude"):
+        if dim not in existing.dims or dim not in new_ds.dims:
+            continue
+        same = existing.sizes[dim] == new_ds.sizes[dim] and np.array_equal(
+            np.asarray(existing[dim].values), np.asarray(new_ds[dim].values)
+        )
+        if not same:
+            mismatch[dim] = {
+                "store": int(existing.sizes[dim]),
+                "run": int(new_ds.sizes[dim]),
+            }
+    return (len(mismatch) == 0, mismatch)
 
 
 def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset:

@@ -12,9 +12,15 @@ from gik_icechain.exceedance.writer import (
 )
 
 
-def _exc_da(windows: list[int], rps: list[int], day: date, value: float = 0.5):
+def _exc_da(
+    windows: list[int],
+    rps: list[int],
+    day: date,
+    value: float = 0.5,
+    lat: np.ndarray | None = None,
+):
     """Build an exceedance DataArray (date, lat, lon, window, return_period)."""
-    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lat = np.array([0.0, 1.0], dtype=np.float32) if lat is None else lat
     lon = np.array([10.0, 11.0], dtype=np.float32)
     results = {
         (w, rp): xr.DataArray(
@@ -69,3 +75,25 @@ class TestAppendSchemaSafety:
                 uri,
                 append=True,
             )
+
+    def test_append_changed_spatial_grid_recreates_store(self, tmp_path):
+        """A changed bbox (different latitude grid) recreates the store, no crash."""
+        uri = str(tmp_path / "exc.zarr")
+        # Store written on a 2-cell latitude grid (old bbox).
+        write_exceedance_store(
+            {date(2024, 1, 1): _exc_da([6, 12], [2, 5], date(2024, 1, 1))},
+            uri,
+            append=False,
+        )
+        # New run on a 3-cell latitude grid (bbox extended) — cannot append.
+        new_lat = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        write_exceedance_store(
+            {date(2024, 1, 2): _exc_da([6, 12], [2, 5], date(2024, 1, 2), lat=new_lat)},
+            uri,
+            append=True,
+        )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        # Store recreated on the new grid: only the new date, new latitude size.
+        assert ds.sizes["latitude"] == 3
+        assert list(str(d)[:10] for d in ds["date"].values) == ["2024-01-02"]
