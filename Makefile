@@ -87,12 +87,13 @@ export-eahw: ## Export admin-1 risk to East Africa Hazard Watch Portal format
 dashboard: ## Launch dashboard locally
 	$(PYTHON) -m gik_icechain dashboard --port 8080
 
-.PHONY: build-storymaps
-build-storymaps: ## Regenerate all VEDA-UI storymap MDX files
-	$(PYTHON) dashboard/storymaps/generate_storymaps.py \
+.PHONY: build-dashboard-data
+build-dashboard-data: ## Build the dashboard data contract from results/
+	$(PYTHON) -m dashboard.data_pipeline.pipeline all \
 	  --exceedance-store $${GIK_EXCEEDANCE_STORE_URI} \
-	  --risk-dir results/admin1_risk/ \
-	  --output dashboard/calendar_map/data/
+	  --results results/admin1_risk \
+	  --out dashboard/web/public \
+	  --date $${DATE}
 
 .PHONY: docker-build
 docker-build: ## Build Docker image

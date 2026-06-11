@@ -139,16 +139,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            eu-west-1
       - run: |
-          python dashboard/storymaps/generate_storymaps.py \
+          python -m dashboard.data_pipeline.pipeline contract \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
-            --risk-dir s3://${{ secrets.GIK_BUCKET }}/admin1_risk/ \
-            --output dashboard/calendar_map/data/ \
+            --results results/admin1_risk \
+            --out dashboard/web/public \
             --date ${{ needs.ingest-daily-gik.outputs.processed_date }}
       - name: Commit dashboard data
         run: |
           git config user.name  "gik-icechain-bot"
           git config user.email "bot@gik-icechain.earth"
-          git add dashboard/calendar_map/data/
+          git add dashboard/web/public/data/
           git diff --staged --quiet || { \
             git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }} [skip ci]" && \
             git push origin HEAD:${{ github.ref_name }}; }
