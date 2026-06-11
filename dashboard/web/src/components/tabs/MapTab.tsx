@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { COUNTRIES, COUNTRY_BY_CODE } from "@/lib/config";
 import {
-  DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER,
+  DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER, riskForRp,
   type DisplayClass, type UnitRisk,
 } from "@/lib/risk";
 import type { UnitDependency } from "@/lib/api";
@@ -19,29 +19,33 @@ export interface MapTabProps {
   date: string | null;
   risks: Record<string, UnitRisk>;
   deps: Record<string, UnitDependency>;
+  rp: string;
+  onRp: (rp: string) => void;
 }
 
-export default function MapTab({ date, risks, deps }: MapTabProps) {
+export default function MapTab({ date, risks, deps, rp, onRp }: MapTabProps) {
   const [country, setCountry] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  // worst display class per country (for the sidebar chips)
+  // worst display class per country (for the sidebar chips), at the chosen RP
   const countryWorst = useMemo(() => {
     const m: Record<string, DisplayClass> = {};
     for (const u of Object.values(risks)) {
       const code = u.country.toLowerCase();
-      const cls = displayClass(u);
+      const cls = displayClass(riskForRp(u, rp));
       if (!m[code] || DISPLAY_ORDER.indexOf(cls) < DISPLAY_ORDER.indexOf(m[code])) m[code] = cls;
     }
     return m;
-  }, [risks]);
+  }, [risks, rp]);
 
   const regionList = useMemo(() => {
     if (!country) return [];
     return Object.values(risks)
       .filter((u) => u.country.toLowerCase() === country)
-      .sort((a, b) => DISPLAY_ORDER.indexOf(displayClass(a)) - DISPLAY_ORDER.indexOf(displayClass(b)));
-  }, [country, risks]);
+      .sort((a, b) =>
+        DISPLAY_ORDER.indexOf(displayClass(riskForRp(a, rp)))
+        - DISPLAY_ORDER.indexOf(displayClass(riskForRp(b, rp))));
+  }, [country, risks, rp]);
 
   const selUnit = selected ? risks[selected] : null;
 
@@ -77,7 +81,7 @@ export default function MapTab({ date, risks, deps }: MapTabProps) {
               {COUNTRY_BY_CODE[country]?.flag} {COUNTRY_BY_CODE[country]?.name} — Admin-1
             </div>
             {regionList.map((u) => {
-              const cls = displayClass(u);
+              const cls = displayClass(riskForRp(u, rp));
               return (
                 <button key={u.pcode} onClick={() => setSelected(u.pcode)}
                   className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-[5px] mb-0.5 text-left hover:brightness-110"
@@ -104,9 +108,21 @@ export default function MapTab({ date, risks, deps }: MapTabProps) {
               ? `${COUNTRY_BY_CODE[country]?.name} · admin-1`
               : "East Africa Overview · 16 countries · 238 admin-1"}
           </span>
+          {/* Return-period selector — risk_state switches 2yr↔5yr */}
+          <div className="flex rounded p-[2px] gap-px" style={{ background: "var(--bg)", border: "1px solid var(--brd)" }}>
+            {["2", "5"].map((opt) => (
+              <button key={opt} onClick={() => onRp(opt)}
+                className="px-2 py-0.5 rounded text-[10px] font-mono transition-colors"
+                style={rp === opt
+                  ? { background: "var(--blue)", color: "#fff" }
+                  : { color: "var(--ts)" }}>
+                {opt}yr
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex-1 relative">
-          <LeafletMap risks={risks} selected={selected} onSelect={setSelected} />
+          <LeafletMap risks={risks} rp={rp} selected={selected} onSelect={setSelected} />
           <div className="absolute bottom-7 left-2 z-[400] font-mono text-[8px] px-2 py-1 rounded pointer-events-none max-w-[190px] leading-tight"
             style={{ background: "rgba(7,12,23,.88)", border: "1px solid var(--brd)", color: "var(--td)" }}>
             Boundaries: GADM/HDX · No political value
@@ -118,7 +134,7 @@ export default function MapTab({ date, risks, deps }: MapTabProps) {
       <aside className="hidden md:block w-[290px] overflow-y-auto shrink-0"
         style={{ background: "var(--sur)", borderLeft: "1px solid var(--brd)" }}>
         {selUnit && date ? (
-          <DependencyPanel date={date} unit={selUnit} dep={deps[selUnit.pcode]} />
+          <DependencyPanel date={date} unit={selUnit} dep={deps[selUnit.pcode]} rp={rp} />
         ) : (
           <div className="text-center px-3 py-7">
             <div className="text-[28px] mb-2.5">🌍</div>

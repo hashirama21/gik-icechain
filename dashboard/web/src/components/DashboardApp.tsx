@@ -16,6 +16,7 @@ import type { UnitRisk } from "@/lib/risk";
 export default function DashboardApp() {
   const [tab, setTab] = useState<TabId>("map");
   const [date, setDate] = useState<string | null>(null);
+  const [rp, setRp] = useState("5");
   const [risks, setRisks] = useState<Record<string, UnitRisk>>({});
   const [deps, setDeps] = useState<Record<string, UnitDependency>>({});
 
@@ -47,7 +48,7 @@ export default function DashboardApp() {
 
       <main className="flex-1 relative overflow-hidden">
         <div className={tab === "map" ? "absolute inset-0 flex" : "hidden"}>
-          <MapTab date={date} risks={risks} deps={deps} />
+          <MapTab date={date} risks={risks} deps={deps} rp={rp} onRp={setRp} />
         </div>
         <div className={tab === "archive" ? "absolute inset-0 overflow-y-auto" : "hidden"}>
           <ArchiveTab risks={risks} onPick={setDate} />

@@ -9,15 +9,16 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { COUNTRIES, EA_BOUNDS } from "@/lib/config";
 import { getGeoJson } from "@/lib/api";
-import { DISPLAY_VAR, displayClass, type UnitRisk } from "@/lib/risk";
+import { DISPLAY_VAR, displayClass, riskForRp, type UnitRisk } from "@/lib/risk";
 
 export interface LeafletMapProps {
   risks: Record<string, UnitRisk>;
+  rp: string;
   selected: string | null;
   onSelect: (pcode: string) => void;
 }
 
-export default function LeafletMap({ risks, selected, onSelect }: LeafletMapProps) {
+export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMapProps) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.GeoJSON | null>(null);
@@ -63,6 +64,7 @@ export default function LeafletMap({ risks, selected, onSelect }: LeafletMapProp
           onEachFeature: (feat, lyr) => {
             const pcode = feat.properties?.pcode as string;
             const r = risks[pcode];
+            const label = r ? riskForRp(r, rp).risk_label : "No data";
             lyr.on({
               click: () => onSelect(pcode),
               mouseover: (e) => {
@@ -70,7 +72,7 @@ export default function LeafletMap({ risks, selected, onSelect }: LeafletMapProp
                 L.popup({ closeButton: false })
                   .setLatLng((e as L.LeafletMouseEvent).latlng)
                   .setContent(
-                    `<div style="font-family:monospace;font-size:11px;background:#121E38;color:#EDF2FF;padding:5px 9px;border-radius:4px;border:1px solid #1E2D4A"><strong>${r?.name ?? pcode}</strong><br>${r?.risk_label ?? "No data"}</div>`,
+                    `<div style="font-family:monospace;font-size:11px;background:#121E38;color:#EDF2FF;padding:5px 9px;border-radius:4px;border:1px solid #1E2D4A"><strong>${r?.name ?? pcode}</strong><br>${label} · ${rp}yr</div>`,
                   )
                   .openOn(map);
               },
@@ -87,12 +89,12 @@ export default function LeafletMap({ risks, selected, onSelect }: LeafletMapProp
 
     function styleFor(pcode: string): L.PathOptions {
       const r = risks[pcode];
-      const bg = r ? DISPLAY_VAR[displayClass(r)] : DISPLAY_VAR.no_data;
+      const bg = r ? DISPLAY_VAR[displayClass(riskForRp(r, rp))] : DISPLAY_VAR.no_data;
       return { color: "rgba(200,220,255,.38)", weight: 0.8, fillColor: bg, fillOpacity: 0.78 };
     }
 
     return () => { cancelled = true; };
-  }, [risks, selected, onSelect]);
+  }, [risks, rp, selected, onSelect]);
 
   return <div ref={ref} className="w-full h-full z-[1]" />;
 }

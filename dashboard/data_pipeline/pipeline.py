@@ -97,6 +97,8 @@ def region_risks(scores: dict, boundaries: Path, data_dir: Path, day: str) -> in
             "p_orange": round(float(u.get("p_orange", 0.0)), 4),
             "p_red": round(float(u.get("p_red", 0.0)), 4),
         }
+        if "risk_by_rp" in u:
+            out[pcode]["risk_by_rp"] = u["risk_by_rp"]
     d = data_dir / day
     d.mkdir(parents=True, exist_ok=True)
     (d / "region_risks.json").write_text(json.dumps(out, separators=(",", ":")))

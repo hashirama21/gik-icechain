@@ -14,17 +14,28 @@ export const RISK_COLOR: Record<RiskState, string> = {
   [-1]: "#445577", 0: "#10B981", 1: "#F59E0B", 2: "#FF9800", 3: "#FF2626",
 };
 
-/** Per-admin-1 risk record from {date}/region_risks.json. */
-export interface UnitRisk {
-  pcode: string;
-  name: string;
-  country: string;
+/** Risk fields for one return period. */
+export interface RiskFields {
   risk_state: RiskState;
   risk_label: string;
   p_green: number;
   p_yellow: number;
   p_orange: number;
   p_red: number;
+}
+
+/** Per-admin-1 risk record from {date}/region_risks.json. */
+export interface UnitRisk extends RiskFields {
+  pcode: string;
+  name: string;
+  country: string;
+  /** Per-return-period risk so the UI can switch 2yr↔5yr. */
+  risk_by_rp?: Record<string, RiskFields>;
+}
+
+/** Resolve the risk fields for a chosen return period (falls back to top-level). */
+export function riskForRp(unit: UnitRisk, rp: string): RiskFields {
+  return unit.risk_by_rp?.[rp] ?? unit;
 }
 
 /**
@@ -45,7 +56,7 @@ const DISPLAY_BANDS: [number, DisplayClass][] = [
   [0.4, "significant"], [0.25, "moderate"], [0.12, "low"], [0, "normal"],
 ];
 
-export function displayClass(u: UnitRisk): DisplayClass {
+export function displayClass(u: RiskFields): DisplayClass {
   if (u.risk_state === -1) return "normal";
   const s = severity(u);
   for (const [thr, cls] of DISPLAY_BANDS) if (s >= thr) return cls;

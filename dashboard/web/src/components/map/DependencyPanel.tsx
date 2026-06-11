@@ -7,7 +7,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { N_MEMBERS, RETURN_PERIODS, WINDOWS } from "@/lib/config";
 import {
-  DISPLAY_LABEL, DISPLAY_VAR, displayClass, type RiskState, type UnitRisk,
+  DISPLAY_LABEL, DISPLAY_VAR, displayClass, riskForRp, type RiskState, type UnitRisk,
 } from "@/lib/risk";
 import type { UnitDependency } from "@/lib/api";
 
@@ -15,11 +15,12 @@ const SEV_LABEL = ["—", "Low", "Moderate", "High"];
 const SEV_VAR = ["var(--c-normal)", "var(--c-low)", "var(--c-sig)", "var(--c-crit)"];
 
 export default function DependencyPanel({
-  date, unit, dep,
-}: { date: string; unit: UnitRisk; dep: UnitDependency | undefined }) {
+  date, unit, dep, rp,
+}: { date: string; unit: UnitRisk; dep: UnitDependency | undefined; rp: string }) {
   const [win, setWin] = useState("24h");
   const gev = dep?.gev?.[win] ?? {};
-  const cls = displayClass(unit);
+  const risk = riskForRp(unit, rp);
+  const cls = displayClass(risk);
   const topRp = RETURN_PERIODS.find((rp) => (gev[String(rp)] ?? 0) >= 0.15) ?? 5;
   const nExc = Math.round((gev[String(topRp)] ?? 0) * N_MEMBERS);
 
@@ -29,7 +30,7 @@ export default function DependencyPanel({
       <div className="rounded-lg p-2.5" style={{ background: "var(--ele)", border: "1px solid var(--brd)" }}>
         <div className="text-sm font-bold">{unit.name}</div>
         <div className="font-mono text-[10px]" style={{ color: DISPLAY_VAR[cls] }}>
-          {DISPLAY_LABEL[cls]} · {unit.risk_label}
+          {DISPLAY_LABEL[cls]} · {risk.risk_label} · {rp}yr
         </div>
         <div className="font-mono text-[8px]" style={{ color: "var(--td)" }}>
           {unit.country} · {date} · IFS ENS 00z
