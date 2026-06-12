@@ -120,6 +120,7 @@ class DecisionStore:
 
         target_date = max(valid)  # ISO date strings sort chronologically
         snap = snaps[target_date]
+        assert self._repo is not None
         session = self._repo.readonly_session(snapshot_id=snap.id)
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
 

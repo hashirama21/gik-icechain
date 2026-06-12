@@ -257,6 +257,7 @@ class IceChainStore:
             snapshot=snap.id[:12],
         )
 
+        assert self._repo is not None
         session = self._repo.readonly_session(snapshot_id=snap.id)
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
 
@@ -275,6 +276,7 @@ class IceChainStore:
         if not snaps:
             raise RuntimeError("Store has no committed snapshots.")
         latest_date = max(snaps)  # ISO date strings sort chronologically
+        assert self._repo is not None
         session = self._repo.readonly_session(branch=self.branch)
         ds = xr.open_zarr(session.store, group=latest_date, consolidated=False)
         log.info("store_opened_latest", date=latest_date, dims=dict(ds.sizes))
