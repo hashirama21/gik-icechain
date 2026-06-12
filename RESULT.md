@@ -134,6 +134,29 @@ Refactored format: geometries separated from daily scores.
 
 ---
 
+## Dual return-period risk (2yr / 5yr)
+
+The risk engine produces `risk_state` for every RP in
+`component3.crma_model.rp_signal_options` (default `[2, 5]`); the dashboard
+toggles between them via the `risk_by_rp` field in the daily scores.
+
+Design decisions:
+
+- **Per-RP calibration** — Forecast_Hazard discretization boundaries come from
+  `hazard_thresholds_by_rp` (2yr: 0.30/0.60, 5yr: 0.15/0.40). A 2yr threshold
+  is exceeded far more often, so re-using the 5yr boundaries would
+  systematically inflate the 2yr risk view.
+- **Per-RP dynamic state** — each (admin-1, RP) pair carries its own
+  `DynamicBNState`: signal-day streaks and API evolve from that RP's own
+  exceedances, never from another RP's. Checkpoints are versioned (v2);
+  v1 checkpoints are migrated by seeding every RP with the flat state.
+- **Known limitation** — the CRMA CPT structure (expert elicitation, EGU26-18323)
+  was designed against 5yr exceedance semantics. The 2yr view is calibrated at
+  the evidence-discretization level, not via separately elicited CPTs; treat it
+  as a sensitivity view rather than an independently validated risk product.
+
+---
+
 ## CI/CD overhaul
 
 | Commit | File | Change |

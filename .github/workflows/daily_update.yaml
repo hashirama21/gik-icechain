@@ -46,9 +46,13 @@ jobs:
       - name: Ingest GIK batch
         id: ingest
         run: |
+          set -euo pipefail
           TARGET_DATE="${{ inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
-            TARGET_DATE=$(python -c "from datetime import date, timedelta; print(date.today() - timedelta(1))")
+            TARGET_DATE=$(date -u -d "yesterday" +%F)
+          fi
+          if ! [[ "$TARGET_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::invalid TARGET_DATE: '$TARGET_DATE'" && exit 1
           fi
           gik-icechain convert \
             --start "$TARGET_DATE" \
