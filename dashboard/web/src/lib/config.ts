@@ -1,6 +1,3 @@
-// Central configuration — mirrors configs/default.yaml (component2) and
-// dashboard/storymaps/titiler_config.yaml. Single source of truth for the UI.
-
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 /** Static data contract (GitHub Pages) produced by data_pipeline/. */
@@ -22,6 +19,9 @@ export const WINDOW_HOURS: Record<string, number> = {
 
 /** Return periods in years (component2.return_periods). */
 export const RETURN_PERIODS = [2, 5, 10, 20, 40, 100] as const;
+
+/** RPs the risk engine produces risk_state for (component3 rp_signal_options). */
+export const RISK_RETURN_PERIODS = ["2", "5"] as const;
 
 /** Ensemble size (IFS ENS: 50 perturbed + 1 control). */
 export const N_MEMBERS = 51;

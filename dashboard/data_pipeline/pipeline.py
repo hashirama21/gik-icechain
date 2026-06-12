@@ -119,8 +119,11 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
             gev, conf_m = zonal[pcode]["gev"], zonal[pcode]["conf_m"]
         else:
             gev = {lbl: {} for lbl in WINDOW_LABELS.values()}
-            gev["24h"]["5"] = round(float(u.get("exceedance_24h_5y", 0.0)), 4)
-            gev["72h"]["5"] = round(float(u.get("exceedance_72h_5y", 0.0)), 4)
+            rp = str(u.get("rp_years", 5))
+            gev["24h"][rp] = round(float(
+                u.get("exceedance_24h", u.get("exceedance_24h_5y", 0.0))), 4)
+            gev["72h"][rp] = round(float(
+                u.get("exceedance_72h", u.get("exceedance_72h_5y", 0.0))), 4)
             conf_m = round(float(u.get("spatial_coverage", 0.0)) * N_MEMBERS)
         win = {lbl: _sev(max((gev.get(lbl, {}) or {}).values(), default=0.0))
                for lbl in WINDOW_LABELS.values()}

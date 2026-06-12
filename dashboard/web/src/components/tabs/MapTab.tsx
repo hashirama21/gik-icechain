@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { COUNTRIES, COUNTRY_BY_CODE } from "@/lib/config";
+import { COUNTRIES, COUNTRY_BY_CODE, RISK_RETURN_PERIODS } from "@/lib/config";
 import {
   DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER, riskForRp,
   type DisplayClass, type UnitRisk,
@@ -108,9 +108,8 @@ export default function MapTab({ date, risks, deps, rp, onRp }: MapTabProps) {
               ? `${COUNTRY_BY_CODE[country]?.name} · admin-1`
               : "East Africa Overview · 16 countries · 238 admin-1"}
           </span>
-          {/* Return-period selector — risk_state switches 2yr↔5yr */}
           <div className="flex rounded p-[2px] gap-px" style={{ background: "var(--bg)", border: "1px solid var(--brd)" }}>
-            {["2", "5"].map((opt) => (
+            {RISK_RETURN_PERIODS.map((opt) => (
               <button key={opt} onClick={() => onRp(opt)}
                 className="px-2 py-0.5 rounded text-[10px] font-mono transition-colors"
                 style={rp === opt

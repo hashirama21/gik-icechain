@@ -64,7 +64,7 @@ facturé à l'invocation (≈ 0 € au repos).
   "units": { "KEN_Turkana": {
       "risk_state": 0, "risk_label": "Green",
       "p_green": 0.87, "p_yellow": 0.09, "p_orange": 0.03, "p_red": 0.01,
-      "exceedance_24h_5y": 0.0, "exceedance_72h_5y": 0.0,
+      "exceedance_24h": 0.0, "exceedance_72h": 0.0,
       "api_mm": 20.0, "spatial_coverage": 0.0, "emdat_flood_match": false } } }
 ```
 
