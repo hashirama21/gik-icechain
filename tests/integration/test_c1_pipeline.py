@@ -23,18 +23,31 @@ TEST_DATE = date(2024, 10, 15)
 def fake_parquet(tmp_path) -> str:
     rows = []
     for step in STEPS:
-        rows.append({
-            "key": f"step_{step}/tp/sfc/0/0",
-            "value": json.dumps([f"s3://ecmwf-forecasts/fake/{step}.grib2", int(step) * 100, 500]),
-        })
-    rows.append({
-        "key": "2m_temperature/heightAboveGround/2/.zarray",
-        "value": json.dumps({
-            "chunks": [1, NLAT, NLON], "compressor": None, "dtype": "<f4",
-            "fill_value": "NaN", "filters": None, "order": "C",
-            "shape": [NSTEPS, NLAT, NLON], "zarr_format": 2,
-        }),
-    })
+        rows.append(
+            {
+                "key": f"step_{step}/tp/sfc/0/0",
+                "value": json.dumps(
+                    [f"s3://ecmwf-forecasts/fake/{step}.grib2", int(step) * 100, 500]
+                ),
+            }
+        )
+    rows.append(
+        {
+            "key": "2m_temperature/heightAboveGround/2/.zarray",
+            "value": json.dumps(
+                {
+                    "chunks": [1, NLAT, NLON],
+                    "compressor": None,
+                    "dtype": "<f4",
+                    "fill_value": "NaN",
+                    "filters": None,
+                    "order": "C",
+                    "shape": [NSTEPS, NLAT, NLON],
+                    "zarr_format": 2,
+                }
+            ),
+        }
+    )
     path = tmp_path / "fake.parquet"
     pd.DataFrame(rows).to_parquet(path)
     return str(path)
@@ -54,10 +67,12 @@ class TestVirtualizerParsing:
 
         GIKFlatParquetParser()
         import pandas as _pd
+
         df = _pd.read_parquet(fake_parquet)
         df["key"] = df["key"].astype(str)
 
         from gik_icechain.conversion.virtualizer import _SFC_STEP_RE
+
         extracted = df["key"].str.extract(_SFC_STEP_RE, expand=True)
         sfc_mask = extracted[0].notna()
         assert sfc_mask.any(), "No SFC chunk refs found in synthetic parquet"
@@ -86,12 +101,17 @@ class TestIceChunkCommit:
 
         # Write real numpy data directly (bypasses ManifestArray / S3 reads)
         import zarr
+
         session = store._repo.writable_session(store.branch)
-        ds = xr.Dataset({"tp": xr.DataArray(
-            np.random.default_rng(0).random((3, NSTEPS, NLAT, NLON), dtype=np.float32),
-            dims=["member", "step", "latitude", "longitude"],
-            coords={"member": [0, 1, 2], "step": STEPS, "latitude": LAT, "longitude": LON},
-        )})
+        ds = xr.Dataset(
+            {
+                "tp": xr.DataArray(
+                    np.random.default_rng(0).random((3, NSTEPS, NLAT, NLON), dtype=np.float32),
+                    dims=["member", "step", "latitude", "longitude"],
+                    coords={"member": [0, 1, 2], "step": STEPS, "latitude": LAT, "longitude": LON},
+                )
+            }
+        )
         date_str = TEST_DATE.isoformat()
         root = zarr.open_group(session.store, zarr_format=3)
         if date_str in root:
@@ -115,11 +135,15 @@ class TestIceChunkCommit:
         store.create_or_open()
 
         session = store._repo.writable_session(store.branch)
-        ds = xr.Dataset({"tp": xr.DataArray(
-            np.ones((2, NSTEPS, NLAT, NLON), dtype=np.float32),
-            dims=["member", "step", "latitude", "longitude"],
-            coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
-        )})
+        ds = xr.Dataset(
+            {
+                "tp": xr.DataArray(
+                    np.ones((2, NSTEPS, NLAT, NLON), dtype=np.float32),
+                    dims=["member", "step", "latitude", "longitude"],
+                    coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
+                )
+            }
+        )
         date_str = TEST_DATE.isoformat()
         root = zarr.open_group(session.store, zarr_format=3)
         if date_str in root:
@@ -142,11 +166,15 @@ class TestIceChunkCommit:
         store.create_or_open()
 
         session = store._repo.writable_session(store.branch)
-        ds = xr.Dataset({"tp": xr.DataArray(
-            np.ones((2, NSTEPS, NLAT, NLON), dtype=np.float32),
-            dims=["member", "step", "latitude", "longitude"],
-            coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
-        )})
+        ds = xr.Dataset(
+            {
+                "tp": xr.DataArray(
+                    np.ones((2, NSTEPS, NLAT, NLON), dtype=np.float32),
+                    dims=["member", "step", "latitude", "longitude"],
+                    coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
+                )
+            }
+        )
         date_str = TEST_DATE.isoformat()
         root = zarr.open_group(session.store, zarr_format=3)
         if date_str in root:
@@ -179,15 +207,19 @@ class TestIceChunkCommit:
             def virtualize(self) -> _FakeVirtual:
                 return self
 
-            def to_icechunk(self, store, group: str) -> None:  # noqa: ANN001
+            def to_icechunk(self, store, group: str) -> None:
                 self._ds.to_zarr(store, group=group, mode="w")
 
         def _day(value: float) -> _FakeVirtual:
-            ds = xr.Dataset({"tp": xr.DataArray(
-                np.full((2, NSTEPS, NLAT, NLON), value, dtype=np.float32),
-                dims=["member", "step", "latitude", "longitude"],
-                coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
-            )})
+            ds = xr.Dataset(
+                {
+                    "tp": xr.DataArray(
+                        np.full((2, NSTEPS, NLAT, NLON), value, dtype=np.float32),
+                        dims=["member", "step", "latitude", "longitude"],
+                        coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
+                    )
+                }
+            )
             return _FakeVirtual(ds)
 
         store = IceChainStore(local_store)
