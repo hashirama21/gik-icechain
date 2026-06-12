@@ -11,9 +11,9 @@ from gik_icechain.risk.dynamic_bn import step as bn_step
 
 def _evidence(**kwargs) -> CRMAEvidence:
     defaults = dict(
-        exceedance_prob_24h_5y=0.0,
-        exceedance_prob_72h_5y=0.0,
-        exceedance_prob_7d_5y=0.0,
+        exceedance_prob_24h=0.0,
+        exceedance_prob_72h=0.0,
+        exceedance_prob_7d=0.0,
         gpm_obs_24h=0.0,
         api_mm=20.0,
         spatial_coverage_fraction=0.1,
@@ -61,14 +61,14 @@ class TestBNStep:
     def test_no_signal_resets_consecutive(self, built_model):
         state = DynamicBNState(api_mm=20.0, consecutive_days=3,
                                sat_consecutive_days=0, last_risk_state=1)
-        ev = _evidence(exceedance_prob_24h_5y=0.05)  # below signal_threshold=0.15
+        ev = _evidence(exceedance_prob_24h=0.05)  # below signal_threshold=0.15
         _, new_state = bn_step(state, ev, built_model, signal_threshold=0.15)
         assert new_state.consecutive_days == 0
 
     def test_signal_increments_consecutive(self, built_model):
         state = DynamicBNState(api_mm=20.0, consecutive_days=2,
                                sat_consecutive_days=0, last_risk_state=1)
-        ev = _evidence(exceedance_prob_24h_5y=0.40)  # above signal_threshold
+        ev = _evidence(exceedance_prob_24h=0.40)  # above signal_threshold
         _, new_state = bn_step(state, ev, built_model, signal_threshold=0.15)
         assert new_state.consecutive_days == 3
 
@@ -109,8 +109,8 @@ class TestRunTemporalSequence:
 
     def test_prolonged_saturation_amplifies_risk(self, built_model):
         # 10 days of saturated soil → soil_memory activates
-        evidences_sat = [_evidence(api_mm=120.0, exceedance_prob_24h_5y=0.30)] * 10
-        evidences_dry = [_evidence(api_mm=5.0,   exceedance_prob_24h_5y=0.30)] * 10
+        evidences_sat = [_evidence(api_mm=120.0, exceedance_prob_24h=0.30)] * 10
+        evidences_dry = [_evidence(api_mm=5.0,   exceedance_prob_24h=0.30)] * 10
 
         results_sat = run_temporal_sequence(evidences_sat, built_model, initial_api_mm=120.0)
         results_dry = run_temporal_sequence(evidences_dry, built_model, initial_api_mm=5.0)

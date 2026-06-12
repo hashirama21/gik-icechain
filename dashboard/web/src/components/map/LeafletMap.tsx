@@ -1,9 +1,5 @@
 "use client";
 
-// Admin-1 risk map (vector GeoJSON, no tile server). Loads per-country
-// boundaries from the data contract and colours each unit by its risk display
-// class. Click a unit → onSelect(pcode).
-
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -22,6 +18,16 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.GeoJSON | null>(null);
+  // Latest props, readable from stable Leaflet event handlers.
+  const stateRef = useRef({ risks, rp, selected, onSelect });
+  stateRef.current = { risks, rp, selected, onSelect };
+
+  function styleFor(pcode: string): L.PathOptions {
+    const { risks, rp } = stateRef.current;
+    const r = risks[pcode];
+    const bg = r ? DISPLAY_VAR[displayClass(riskForRp(r, rp))] : DISPLAY_VAR.no_data;
+    return { color: "rgba(200,220,255,.38)", weight: 0.8, fillColor: bg, fillOpacity: 0.78 };
+  }
 
   // init once
   useEffect(() => {
@@ -37,10 +43,10 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     return () => { map.remove(); mapRef.current = null; };
   }, []);
 
-  // (re)draw admin-1 layer whenever risks change
+  // fetch boundaries + build layer once
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || layerRef.current) return;
     let cancelled = false;
 
     (async () => {
@@ -56,18 +62,18 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
         } catch { /* country not built yet */ }
       }
       if (cancelled) return;
-      layerRef.current?.remove();
       const layer = L.geoJSON(
         { type: "FeatureCollection", features } as GeoJSON.FeatureCollection,
         {
           style: (feat) => styleFor(feat?.properties?.pcode),
           onEachFeature: (feat, lyr) => {
             const pcode = feat.properties?.pcode as string;
-            const r = risks[pcode];
-            const label = r ? riskForRp(r, rp).risk_label : "No data";
             lyr.on({
-              click: () => onSelect(pcode),
+              click: () => stateRef.current.onSelect(pcode),
               mouseover: (e) => {
+                const { risks, rp } = stateRef.current;
+                const r = risks[pcode];
+                const label = r ? riskForRp(r, rp).risk_label : "No data";
                 (e.target as L.Path).setStyle({ weight: 2, fillOpacity: 0.95 });
                 L.popup({ closeButton: false })
                   .setLatLng((e as L.LeafletMouseEvent).latlng)
@@ -77,7 +83,7 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
                   .openOn(map);
               },
               mouseout: (e) => {
-                if (selected !== pcode) (e.target as L.Path).setStyle(styleFor(pcode));
+                if (stateRef.current.selected !== pcode) (e.target as L.Path).setStyle(styleFor(pcode));
                 map.closePopup();
               },
             });
@@ -87,14 +93,18 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
       layerRef.current = layer;
     })();
 
-    function styleFor(pcode: string): L.PathOptions {
-      const r = risks[pcode];
-      const bg = r ? DISPLAY_VAR[displayClass(riskForRp(r, rp))] : DISPLAY_VAR.no_data;
-      return { color: "rgba(200,220,255,.38)", weight: 0.8, fillColor: bg, fillOpacity: 0.78 };
-    }
-
     return () => { cancelled = true; };
-  }, [risks, rp, selected, onSelect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // restyle on risk/RP/selection change — no refetch
+  useEffect(() => {
+    layerRef.current?.eachLayer((lyr) => {
+      const pcode = (lyr as L.Path & { feature?: GeoJSON.Feature }).feature?.properties?.pcode;
+      if (pcode) (lyr as L.Path).setStyle(styleFor(pcode));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [risks, rp, selected]);
 
   return <div ref={ref} className="w-full h-full z-[1]" />;
 }

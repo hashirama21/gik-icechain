@@ -31,9 +31,9 @@ def _make_dataframes(pcode="KE001", event_date="2024-10-15"):
         {
             "date": d,
             "admin1_pcode": pcode,
-            "exceedance_prob_24h_5y": 0.4 if str(d) == event_date else 0.05,
-            "exceedance_prob_72h_5y": 0.3,
-            "exceedance_prob_7d_5y": 0.2,
+            "exceedance_prob_24h": 0.4 if str(d) == event_date else 0.05,
+            "exceedance_prob_72h": 0.3,
+            "exceedance_prob_7d": 0.2,
             "spatial_coverage_fraction": 0.5,
             "consecutive_signal_days": 2,
         }

@@ -4,7 +4,10 @@ Refines the Risk_State leaf CPT using historical EM-DAT flood events as
 labeled ground truth via Maximum Likelihood Estimation with Laplace smoothing.
 
 Positive samples: EM-DAT flood event days → Risk_State = Red (3).
-Negative samples: randomly drawn non-event days → Risk_State ≤ Yellow (≤1).
+Negative samples: randomly drawn non-event days, labeled with the alert level
+implied by the forecast hazard (0..2) — a high-hazard day without a flood is a
+legitimate Orange (probabilistic warning that did not verify), so the Orange
+boundary stays learnable.
 Root-node CPTs (expert priors) are left unchanged.
 """
 
@@ -113,6 +116,21 @@ def _col_or_default(df: pd.DataFrame, col: str, default: float = 0.0) -> float:
     return float(df[col].iloc[0])
 
 
+def _evidence_row(evidence: CRMAEvidence, risk_state: int, **extra: object) -> dict:
+    """One labeled training row from discretised evidence (shared pos/neg)."""
+    return {
+        "Forecast_Hazard": evidence.forecast_hazard_state,
+        "Obs_Antecedent": evidence.obs_antecedent_state,
+        "Temporal_Persist": evidence.temporal_persistence_state,
+        "Spatial_Coverage": evidence.spatial_coverage_state,
+        "Data_Confidence": evidence.data_confidence_state,
+        "API_State": evidence.api_state,
+        "Soil_Memory": evidence.soil_memory_state,
+        "Risk_State": risk_state,
+        **extra,
+    }
+
+
 def build_training_dataset(
     emdat_records: list[EMDATFloodRecord],
     exceedance_df: pd.DataFrame,
@@ -125,8 +143,8 @@ def build_training_dataset(
 
     Args:
         emdat_records:         EM-DAT flood events.
-        exceedance_df:         Columns: date, admin1_pcode, exceedance_prob_24h_5y,
-                               exceedance_prob_72h_5y, spatial_coverage_fraction,
+        exceedance_df:         Columns: date, admin1_pcode, exceedance_prob_24h,
+                               exceedance_prob_72h, spatial_coverage_fraction,
                                consecutive_signal_days.
         gpm_df:                Columns: date, admin1_pcode, gpm_obs_24h.
         api_df:                Columns: date, admin1_pcode, api_mm.
@@ -136,8 +154,15 @@ def build_training_dataset(
         DataFrame with discretised evidence columns and a Risk_State label.
     """
     rows: list[dict] = []
+    n_dropped_no_pcode = 0
+    n_dropped_no_match = 0
 
     for record in emdat_records:
+        if not record.admin1_pcode:
+            n_dropped_no_pcode += 1
+            log.warning("emdat_record_no_pcode", event_id=record.event_id,
+                        country=record.country, admin1=record.admin1_name)
+            continue
         for offset in range(3):
             event_date = record.start_date + pd.Timedelta(days=offset)
             pcode = record.admin1_pcode
@@ -154,12 +179,13 @@ def build_training_dataset(
             ]
 
             if exc_row.empty or gpm_row.empty:
+                n_dropped_no_match += 1
                 continue
 
             evidence = CRMAEvidence(
-                exceedance_prob_24h_5y=float(exc_row["exceedance_prob_24h_5y"].iloc[0]),
-                exceedance_prob_72h_5y=_col_or_default(exc_row, "exceedance_prob_72h_5y"),
-                exceedance_prob_7d_5y=_col_or_default(exc_row, "exceedance_prob_7d_5y"),
+                exceedance_prob_24h=float(exc_row["exceedance_prob_24h"].iloc[0]),
+                exceedance_prob_72h=_col_or_default(exc_row, "exceedance_prob_72h"),
+                exceedance_prob_7d=_col_or_default(exc_row, "exceedance_prob_7d"),
                 gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
                 api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 20.0,
                 spatial_coverage_fraction=_col_or_default(
@@ -173,26 +199,19 @@ def build_training_dataset(
                 ),
                 thresholds=thresholds or EvidenceThresholds(),
             )
-
-            rows.append(
-                {
-                    "Forecast_Hazard": evidence.forecast_hazard_state,
-                    "Obs_Antecedent": evidence.obs_antecedent_state,
-                    "Temporal_Persist": evidence.temporal_persistence_state,
-                    "Spatial_Coverage": evidence.spatial_coverage_state,
-                    "Data_Confidence": evidence.data_confidence_state,
-                    "API_State": evidence.api_state,
-                    "Soil_Memory": evidence.soil_memory_state,
-                    "Risk_State": 3,
-                    "source": "emdat_positive",
-                    "event_id": record.event_id,
-                    "date": event_date.date(),
-                    "admin1_pcode": pcode,
-                }
-            )
+            rows.append(_evidence_row(
+                evidence, 3,
+                source="emdat_positive", event_id=record.event_id,
+                date=event_date.date(), admin1_pcode=pcode,
+            ))
 
     n_positive = len(rows)
-    log.info("positive_examples_built", n=n_positive)
+    log.info(
+        "positive_examples_built",
+        n=n_positive,
+        dropped_no_pcode=n_dropped_no_pcode,
+        dropped_no_data_match=n_dropped_no_match,
+    )
 
     n_negative = int(n_positive * negative_sample_ratio)
     flood_day_pcodes = {(r.start_date.date(), r.admin1_pcode) for r in emdat_records}
@@ -216,9 +235,9 @@ def build_training_dataset(
             continue
 
         evidence = CRMAEvidence(
-            exceedance_prob_24h_5y=float(row.get("exceedance_prob_24h_5y", 0.0)),
-            exceedance_prob_72h_5y=float(row.get("exceedance_prob_72h_5y", 0.0)),
-            exceedance_prob_7d_5y=float(row.get("exceedance_prob_7d_5y", 0.0)),
+            exceedance_prob_24h=float(row.get("exceedance_prob_24h", 0.0)),
+            exceedance_prob_72h=float(row.get("exceedance_prob_72h", 0.0)),
+            exceedance_prob_7d=float(row.get("exceedance_prob_7d", 0.0)),
             gpm_obs_24h=float(gpm_row["gpm_obs_24h"].iloc[0]),
             api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
             spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
@@ -228,23 +247,14 @@ def build_training_dataset(
             ),
             thresholds=thresholds or EvidenceThresholds(),
         )
-
-        rows.append(
-            {
-                "Forecast_Hazard": evidence.forecast_hazard_state,
-                "Obs_Antecedent": evidence.obs_antecedent_state,
-                "Temporal_Persist": evidence.temporal_persistence_state,
-                "Spatial_Coverage": evidence.spatial_coverage_state,
-                "Data_Confidence": evidence.data_confidence_state,
-                "API_State": evidence.api_state,
-                "Soil_Memory": evidence.soil_memory_state,
-                "Risk_State": min(evidence.forecast_hazard_state, 1),
-                "source": "negative_sample",
-                "event_id": None,
-                "date": row["date"],
-                "admin1_pcode": row["admin1_pcode"],
-            }
-        )
+        # Label = alert level implied by the hazard (0..2, never Red): a
+        # high-hazard non-event day is a legitimate Orange, keeping the
+        # Orange boundary learnable (was min(.,1) → Orange never seen).
+        rows.append(_evidence_row(
+            evidence, evidence.forecast_hazard_state,
+            source="negative_sample", event_id=None,
+            date=row["date"], admin1_pcode=row["admin1_pcode"],
+        ))
 
     df = pd.DataFrame(rows)
     dist = df["Risk_State"].value_counts().to_dict() if not df.empty else {}

@@ -157,6 +157,11 @@ component3:
     signal_threshold_prob: 0.15
     rp_signal: 5
     rp_signal_options: [2, 5]   # risk_state produced for both → dashboard toggles
+    # Per-RP Forecast_Hazard boundaries [medium, high]: 2yr exceedances run
+    # structurally higher, so their boundaries sit above the 5yr ones.
+    hazard_thresholds_by_rp:
+      2: [0.30, 0.60]
+      5: [0.15, 0.40]
     # Data_Confidence dampening of the compound score [Low, Medium, High].
     # Medium is the precip-ensemble norm → kept near-neutral so it doesn't
     # structurally veto strong signals (was [0.5,0.8,1.0] → all-Green bug).

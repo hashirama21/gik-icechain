@@ -102,6 +102,8 @@ def _decode_grib_message(
             grid = grid[bbox_slices[0], bbox_slices[1]]
         return grid
 
+    except MemoryError:
+        raise
     except Exception:
         log.warning(
             "grib_decode_failed",
@@ -291,10 +293,18 @@ def _assemble_dataset(
 
     # Build coordinates from decoded grid shape (not from bbox indices)
     # to guarantee coordinate arrays match actual data dimensions.
-    # Use the real (possibly non-uniform) step hours, trimmed/padded to max_steps.
-    steps = np.asarray(step_hours, dtype=np.int32)
-    if steps.shape[0] != max_steps:
-        steps = steps[:max_steps]
+    # Real (possibly non-uniform) step hours; when the forecast produced fewer
+    # steps than max_steps, trim the data arrays too — a silent length mismatch
+    # would otherwise break or misalign the Dataset.
+    steps = np.asarray(step_hours, dtype=np.int32)[:max_steps]
+    if steps.shape[0] < max_steps:
+        log.warning(
+            "step_hours_shorter_than_allocated",
+            n_steps=int(steps.shape[0]),
+            max_steps=max_steps,
+        )
+        for var in data_arrays:
+            data_arrays[var] = data_arrays[var][:, : steps.shape[0]]
     if bbox is not None:
         lat_min, lat_max, lon_min, lon_max = bbox
         lats = np.linspace(lat_max, lat_min, nlat, dtype=np.float32)

@@ -193,6 +193,12 @@ Output: daily admin-1 GeoJSON risk files, integrated directly into the
 calendar-map storymaps and exportable to the
 [East Africa Hazard Watch Portal](https://www.icpac.net/hazard-watch/).
 
+Risk is produced per return period (`rp_signal_options`, default 2yr + 5yr),
+each with its own hazard calibration (`hazard_thresholds_by_rp`) and its own
+dynamic BN state. The CRMA CPTs were elicited against 5yr exceedance
+semantics; the 2yr view is calibrated at the discretization level and should
+be read as a sensitivity view (see RESULT.md, "Dual return-period risk").
+
 ---
 
 ## Quick Start

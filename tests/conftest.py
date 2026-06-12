@@ -53,9 +53,9 @@ def make_evidence():
 
     def _factory(**kwargs):
         defaults = dict(
-            exceedance_prob_24h_5y=0.0,
-            exceedance_prob_72h_5y=0.0,
-            exceedance_prob_7d_5y=0.0,
+            exceedance_prob_24h=0.0,
+            exceedance_prob_72h=0.0,
+            exceedance_prob_7d=0.0,
             gpm_obs_24h=0.0,
             api_mm=15.0,
             spatial_coverage_fraction=0.1,

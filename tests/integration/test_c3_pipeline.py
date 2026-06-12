@@ -113,9 +113,9 @@ class TestCRMAModelInference:
 
         model = next(iter(built_crma.values()))
         ev = CRMAEvidence(
-            exceedance_prob_24h_5y=0.3,
-            exceedance_prob_72h_5y=0.2,
-            exceedance_prob_7d_5y=0.15,
+            exceedance_prob_24h=0.3,
+            exceedance_prob_72h=0.2,
+            exceedance_prob_7d=0.15,
             gpm_obs_24h=10.0,
             api_mm=40.0,
             spatial_coverage_fraction=0.4,
@@ -131,9 +131,9 @@ class TestCRMAModelInference:
 
         model = next(iter(built_crma.values()))
         ev = CRMAEvidence(
-            exceedance_prob_24h_5y=0.2,
-            exceedance_prob_72h_5y=0.15,
-            exceedance_prob_7d_5y=0.10,
+            exceedance_prob_24h=0.2,
+            exceedance_prob_72h=0.15,
+            exceedance_prob_7d=0.10,
             gpm_obs_24h=5.0,
             api_mm=30.0,
             spatial_coverage_fraction=0.3,
@@ -173,6 +173,41 @@ class TestRiskBatch:
             assert p["risk_label"] in {"Green", "Yellow", "Orange", "Red", "No_Data"}
             total = p["p_green"] + p["p_yellow"] + p["p_orange"] + p["p_red"]
             assert abs(total - 1.0) < 1e-4 or p["risk_label"] == "No_Data"
+
+    def test_dual_rp_risk_by_rp(
+        self, built_crma, fake_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
+    ):
+        pytest.importorskip("regionmask", reason="regionmask not installed")
+        from gik_icechain.risk.risk_engine import run_risk_batch
+
+        written = run_risk_batch(
+            exceedance_store_uri=fake_exceedance_store,
+            gpm_dir=fake_gpm_dir,
+            admin_boundaries_path=fake_admin_boundaries,
+            crma_models=built_crma,
+            output_dir=tmp_path / "risk_dual_rp",
+            start=TEST_DATE,
+            end=TEST_DATE,
+            rp_signal=5,
+            rp_signal_options=[5, 20],
+        )
+
+        assert len(written) == 1
+        units = json.loads(written[0].read_text())["units"]
+        prob_keys = ("p_green", "p_yellow", "p_orange", "p_red")
+
+        any_differs = False
+        for u in units.values():
+            by_rp = u["risk_by_rp"]
+            assert set(by_rp) == {"5", "20"}
+            for rp_risk in by_rp.values():
+                if rp_risk["risk_label"] != "No_Data":
+                    assert abs(sum(rp_risk[k] for k in prob_keys) - 1.0) < 1e-4
+            assert u["risk_state"] == by_rp["5"]["risk_state"]
+            if any(by_rp["5"][k] != by_rp["20"][k] for k in prob_keys):
+                any_differs = True
+        # exceedances are random across the RP dim → at least one unit differs
+        assert any_differs
 
     def test_missing_exceedance_date_skipped(
         self, built_crma, fake_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path

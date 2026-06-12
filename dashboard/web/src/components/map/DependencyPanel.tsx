@@ -21,7 +21,7 @@ export default function DependencyPanel({
   const gev = dep?.gev?.[win] ?? {};
   const risk = riskForRp(unit, rp);
   const cls = displayClass(risk);
-  const topRp = RETURN_PERIODS.find((rp) => (gev[String(rp)] ?? 0) >= 0.15) ?? 5;
+  const topRp = RETURN_PERIODS.find((r) => (gev[String(r)] ?? 0) >= 0.15) ?? 5;
   const nExc = Math.round((gev[String(topRp)] ?? 0) * N_MEMBERS);
 
   return (

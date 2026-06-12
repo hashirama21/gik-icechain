@@ -53,7 +53,6 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: test-unit
-    continue-on-error: true  # requires live MinIO + ECMWF S3 — skipped in standard CI
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
@@ -86,7 +85,8 @@ jobs:
             notebooks/02_component2_walkthrough.ipynb \
             notebooks/03_component3_walkthrough.ipynb \
             notebooks/04_benchmark_report.ipynb \
-            --nbmake-timeout=300 \
+            --nbmake-timeout=600 \
+            --timeout=900 \
             -v
 
   notebooks-live:
