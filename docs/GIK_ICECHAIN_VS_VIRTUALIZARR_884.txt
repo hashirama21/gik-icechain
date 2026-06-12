@@ -374,6 +374,51 @@ Identity-safe when no region is dropped (the prior 196-unit path). Validated
 3/22; ruff clean, 33 unit tests pass.
 
 
+ISSUE I: ICECHUNK TAG IMMUTABILITY — RE-INGEST RETURNS STALE SNAPSHOT (FIXED 2026-06-12)
+----------------------------------------------------------------------------------------
+Re-running C1 for a date that was already ingested created a fresh IceChunk
+commit (branch HEAD advanced, new data written) but the time-travel and listing
+APIs kept returning the OLD snapshot.
+
+OBSERVED: 01_component1_walkthrough.ipynb snapshot list on 2026-06-12 showed
+2025-11-19 pointing at the 2026-06-09 commit (CYEVPYV0GHZ4) even though that day
+had just been re-ingested (BE40GYNHWZM6). A genuinely new date (2025-11-18)
+correctly showed the same-day commit. Time-travel checkout_as_of(2025-11-19)
+would therefore have served stale data.
+
+ROOT CAUSE: the per-day tag scheme ("{date}T{run_hour:02d}Z"). IceChunk tags are
+IMMUTABLE and — verified on 2.0.5 — a tag NAME CANNOT BE REUSED even after
+delete_tag:
+    create_tag(...) -> "icechunk does not allow tag reuse and tag was already
+                        deleted `2025-11-19T00Z`"
+So a re-ingest cannot move its tag. commit_day swallowed the create_tag failure
+at debug level, leaving the tag pinned to the first commit. checkout_as_of,
+list_snapshots and open_latest all resolved snapshots via tags (list_tags /
+lookup_tag) -> they served the stale first commit.
+
+FIX: resolve "current snapshot for forecast_date X" from BRANCH ANCESTRY plus
+commit metadata, never from tags. New _snapshots_by_date() walks
+repo.ancestry(branch=...) (newest-first) and keeps the first SnapshotInfo per
+metadata["forecast_date"] -> the most recent re-ingest wins.
+  - conversion/icechunk_writer.py (IceChainStore): checkout_as_of /
+    list_snapshots / open_latest rewritten on _snapshots_by_date; the obsolete
+    tag helper (_tag_before_or_on) was removed. commit_day still creates a tag
+    best-effort (human label, non-authoritative; failure logged at debug).
+  - exceedance/icechunk_output.py (DecisionStore): same fix to checkout_as_of /
+    list_dates (dormant store — outputs.exceedance_icechunk_uri empty — fixed for
+    consistency).
+
+VALIDATED: regression tests test_commit_day_reingest_resolves_fresh (C1) and
+test_reingest_resolves_fresh (DecisionStore) assert the immutable tag stays on
+the first commit while the public API surfaces the re-ingested data; 6 IceChunk
+store tests pass. No tag-based resolution (list_tags / lookup_tag) remains in
+src/.
+
+GENERAL LESSON: for any IceChunk store keyed by a logical date, resolve the
+current snapshot via branch ancestry + commit metadata, not by tag name. Tags
+are write-once labels, not movable pointers.
+
+
 ===========================================================================
 SUMMARY TABLE
 ===========================================================================
@@ -392,6 +437,7 @@ C2 exceedance always 0 (tp m vs mm)  | FIXED (2026-06-09) — component2.precip_
 C3 hazard diluted by mean aggregation| FIXED (2026-06-09) — component3.aggregation.method=max, wired
 EA coverage 196->238 (+COM/SYC/MWI/ZMB)| EXTENDED to -14.5 frontier; full SADC needs CHIRPS GEV
 regionmask cell mis-assignment       | FIXED (2026-06-09) — index by mask_3d region coord
+IceChunk tag immutability (re-ingest stale)| FIXED (2026-06-12) — resolve snapshot via branch ancestry, not tags
 
 
 ===========================================================================

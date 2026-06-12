@@ -10,7 +10,7 @@
 | C2 windows | 3, 6, 12, 24, 48, 72, 168 h |
 | Return periods | 2, 5, 10, 20, 40, 100 yr |
 | Ensemble members | 50/51 (1 filtered — divergent step count on some days) |
-| Admin-1 units | 155 (East Africa) |
+| Admin-1 units | 238 (East Africa, extended to −14.5° frontier) |
 
 ---
 
@@ -79,6 +79,33 @@ of the forecast initialization date.
 | C3 risk | ~28 min | 1 |
 | **Total** | **~89 min** | |
 
+### 2-day run — 2025-11-18/19 (238 units, dual RP 2yr/5yr)
+
+> Run on 2026-06-12 after resetting `develop` to `origin/develop`. Window chosen
+> inside both the IFS catalog and local GPM IMERG coverage (ends 2025-11-19) so C3
+> has observed-precip evidence. Manifest_aware + byte-range coalescing active.
+
+| Step | Duration | Workers | Notes |
+|---|---|---|---|
+| C1 convert | ~2 min | 1 | 51 members × 85 steps × 5 variables → IceChunk/MinIO |
+| C2 exceedance | ~8 min | 2 | 7 windows × 6 RP, bbox `[-14.5, 25, 20, 54]`, 1 530 refs/day |
+| C3 risk | ~30 s | 1 | 238 admin-1 units, RP 2yr + 5yr |
+| **Total** | **~12 min** | | exit 0 |
+
+**Risk scores (238 units/day):**
+
+| Day | RP | Green | Yellow | Orange/Red | No_Data |
+|---|---|---|---|---|---|
+| 2025-11-18 | 2yr | 182 | 2 | 0 | 54 |
+| 2025-11-18 | 5yr | 182 | 2 | 0 | 54 |
+| 2025-11-19 | 2yr | 184 | 0 | 0 | 54 |
+| 2025-11-19 | 5yr | 184 | 0 | 0 | 54 |
+
+Notable signals (2025-11-18, Darfur / South Sudan): `SDN_North Darfur` Yellow
+(exceedance 24h = 0.73), `SDN_Central Darfur` Yellow (5yr, 0.41), `SSD_Lakes`
+Yellow (2yr). All revert to Green on 11-19 — fading rain episode, no Orange/Red.
+54 No_Data units = coastal/edge units outside bbox or `nan_in_aggregated_values`.
+
 ---
 
 ## Produced data (final state)
@@ -131,6 +158,8 @@ Refactored format: geometries separated from daily scores.
 | `e9c4860` | `risk/geojson_writer.py` | Separate geometries from scores: `write_boundaries()` + `write_risk_scores()` |
 | `e9c4860` | `risk/risk_engine.py` | `.load()` after `.sel(date=...)` — pre-load into memory, avoids 4 MinIO round-trips |
 | `af1823b` | `cli.py` | `exc_info=True` → `str(exc)[:120]` in ensemble_confidence handler (UnicodeEncodeError on Windows cp1252) |
+| _(pending)_ | `conversion/icechunk_writer.py` | Re-ingest staleness: IceChunk tags are immutable + non-reusable, so re-running a date kept its tag on the old commit and `checkout_as_of`/`list_snapshots` returned stale data. Resolve current snapshot per `forecast_date` from **branch ancestry** instead of tags. |
+| _(pending)_ | `exceedance/icechunk_output.py` | Same fix applied to `DecisionStore.checkout_as_of`/`list_dates` (ancestry-based) for consistency, even though the store is dormant (`exceedance_icechunk_uri` empty). |
 
 ---
 

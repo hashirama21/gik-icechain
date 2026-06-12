@@ -42,14 +42,6 @@ _DEFAULT_MESSAGE_TEMPLATE = "GIK ingest: {date}T{run_hour:02d}Z"
 _DEFAULT_TAG_FORMAT = "{date}T{run_hour:02d}Z"
 
 
-def _tag_before_or_on(tag: str, as_of: date) -> bool:
-    """Return True if tag's date prefix is a valid ISO date on or before as_of."""
-    try:
-        return date.fromisoformat(tag[:10]) <= as_of
-    except ValueError:
-        return False
-
-
 class IceChainStore:
     """Manages the GIK-IceChain virtual store lifecycle.
 
@@ -193,6 +185,11 @@ class IceChainStore:
                 "source": "gik-icechain",
             },
         )
+        # Tags are a best-effort human label for the *first* ingest of a date.
+        # IceChunk tags are immutable and names cannot be reused even after
+        # deletion, so a re-ingest cannot move its tag — which is why time-travel
+        # resolution relies on branch ancestry + commit metadata, not tags
+        # (see _snapshots_by_date). A failing create_tag here is therefore benign.
         try:
             self._repo.create_tag(tag, commit_hash)
         except Exception as exc:
@@ -206,10 +203,34 @@ class IceChainStore:
         )
         return commit_hash
 
+    def _snapshots_by_date(self) -> dict[str, Any]:
+        """Map each forecast_date to its current snapshot via branch ancestry.
+
+        ``ancestry`` yields snapshots newest-first, so the first snapshot seen
+        for a given ``forecast_date`` is its most recent (re-)ingest. This is the
+        source of truth for time-travel and listing: IceChunk tags are immutable
+        and non-reusable, so a re-ingested date keeps a stale tag but advances the
+        branch — only ancestry reflects the fresh snapshot.
+
+        Returns:
+            Ordered ``{forecast_date_iso: SnapshotInfo}`` (insertion = newest-first).
+        """
+        if self._repo is None:
+            raise RuntimeError("Store not opened. Call create_or_open() first.")
+        latest: dict[str, Any] = {}
+        for snap in self._repo.ancestry(branch=self.branch):
+            meta = snap.metadata or {}
+            fdate = meta.get("forecast_date")
+            if not fdate or fdate in latest:
+                continue
+            latest[fdate] = snap
+        return latest
+
     def checkout_as_of(self, as_of_date: date) -> xr.Dataset:
         """Return the store as it existed on as_of_date (read-only).
 
-        Resolves to the most recent commit tagged on or before as_of_date.
+        Resolves to the most recent commit for the latest forecast_date on or
+        before as_of_date, using branch ancestry (re-ingest aware).
 
         Args:
             as_of_date: The historical date to check out.
@@ -221,27 +242,22 @@ class IceChainStore:
 
             ds = store.checkout_as_of(date(2023, 10, 22))
         """
-        if self._repo is None:
-            raise RuntimeError("Store not opened. Call create_or_open() first.")
-
-        all_tags = self._repo.list_tags()
-        valid_tags = [t for t in all_tags if _tag_before_or_on(t, as_of_date)]
-
-        if not valid_tags:
-            earliest = min(t[:10] for t in all_tags)
+        snaps = self._snapshots_by_date()
+        valid = [d for d in snaps if date.fromisoformat(d) <= as_of_date]
+        if not valid:
+            earliest = min(snaps) if snaps else "none"
             raise ValueError(f"No commits on or before {as_of_date}. Earliest: {earliest}")
 
-        latest_tag = sorted(valid_tags)[-1]
-        snapshot_id = self._repo.lookup_tag(latest_tag)
+        target_date = max(valid)  # ISO date strings sort chronologically
+        snap = snaps[target_date]
         log.info(
             "time_travel_checkout",
             as_of_date=as_of_date.isoformat(),
-            resolved_tag=latest_tag,
-            snapshot=snapshot_id[:12],
+            resolved_date=target_date,
+            snapshot=snap.id[:12],
         )
 
-        session = self._repo.readonly_session(snapshot_id=snapshot_id)
-        target_date = latest_tag[:10]
+        session = self._repo.readonly_session(snapshot_id=snap.id)
         return xr.open_zarr(session.store, group=target_date, consolidated=False)
 
     def readonly_session(self) -> Any:
@@ -255,33 +271,36 @@ class IceChainStore:
 
     def open_latest(self) -> xr.Dataset:
         """Open the most recent snapshot of the store, returning the latest date's group."""
-        if self._repo is None:
-            raise RuntimeError("Store not opened. Call create_or_open() first.")
-        session = self._repo.readonly_session(branch=self.branch)
-        tags = sorted(self._repo.list_tags())
-        if not tags:
+        snaps = self._snapshots_by_date()
+        if not snaps:
             raise RuntimeError("Store has no committed snapshots.")
-        latest_date = tags[-1][:10]
+        latest_date = max(snaps)  # ISO date strings sort chronologically
+        session = self._repo.readonly_session(branch=self.branch)
         ds = xr.open_zarr(session.store, group=latest_date, consolidated=False)
         log.info("store_opened_latest", date=latest_date, dims=dict(ds.sizes))
         return ds
 
     def list_snapshots(self) -> list[dict[str, str]]:
-        """Return all committed snapshots with metadata, sorted by tag."""
-        if self._repo is None:
-            raise RuntimeError("Store not opened. Call create_or_open() first.")
+        """Return the current snapshot per forecast_date, sorted by date.
+
+        One row per date (the most recent re-ingest), resolved from branch
+        ancestry rather than tags so re-ingested days report their fresh commit.
+        """
+        snaps = self._snapshots_by_date()
         snapshots = []
-        for tag in sorted(self._repo.list_tags()):
-            snapshot_id = self._repo.lookup_tag(tag)
-            info = self._repo.inspect_snapshot(snapshot_id)
-            meta = info.get("metadata") or {}
+        for fdate in sorted(snaps):
+            snap = snaps[fdate]
+            meta = snap.metadata or {}
+            run_hour = int(meta.get("run_hour", "0") or 0)
+            written = getattr(snap, "written_at", None)
             snapshots.append(
                 {
-                    "tag": tag,
-                    "commit": snapshot_id[:12],
-                    "forecast_date": meta.get("forecast_date", ""),
-                    "commit_time": meta.get("commit_time", ""),
-                    "message": info.get("commit_message", ""),
+                    "tag": f"{fdate}T{run_hour:02d}Z",
+                    "commit": snap.id[:12],
+                    "forecast_date": fdate,
+                    "commit_time": meta.get("commit_time")
+                    or (written.isoformat() if written else ""),
+                    "message": snap.message or "",
                 }
             )
         return snapshots

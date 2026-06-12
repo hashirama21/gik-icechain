@@ -158,3 +158,51 @@ class TestIceChunkCommit:
         report = store.validate()
         assert report["committed_days"] >= 1
         assert report["gaps_detected"] == 0
+
+    def test_commit_day_reingest_resolves_fresh(self, local_store):
+        """Re-ingesting a date surfaces the new snapshot via the public API.
+
+        IceChunk tags are immutable and non-reusable, so the date's tag stays on
+        the first commit. checkout_as_of/list_snapshots must instead resolve from
+        branch ancestry and report the most recent re-ingest, not the stale one.
+        """
+        pytest.importorskip("icechunk", reason="icechunk not installed")
+        from gik_icechain.conversion.icechunk_writer import IceChainStore
+
+        class _FakeVirtual:
+            """Stub for virtual_ds: commit_day only calls .virtualize.to_icechunk."""
+
+            def __init__(self, ds: xr.Dataset) -> None:
+                self._ds = ds
+
+            @property
+            def virtualize(self) -> _FakeVirtual:
+                return self
+
+            def to_icechunk(self, store, group: str) -> None:  # noqa: ANN001
+                self._ds.to_zarr(store, group=group, mode="w")
+
+        def _day(value: float) -> _FakeVirtual:
+            ds = xr.Dataset({"tp": xr.DataArray(
+                np.full((2, NSTEPS, NLAT, NLON), value, dtype=np.float32),
+                dims=["member", "step", "latitude", "longitude"],
+                coords={"member": [0, 1], "step": STEPS, "latitude": LAT, "longitude": LON},
+            )})
+            return _FakeVirtual(ds)
+
+        store = IceChainStore(local_store)
+        store.create_or_open()
+
+        first = store.commit_day(TEST_DATE, _day(1.0))
+        second = store.commit_day(TEST_DATE, _day(2.0))
+        tag = f"{TEST_DATE.isoformat()}T00Z"
+
+        assert first != second
+        # The immutable tag is stuck on the first commit (expected IceChunk semantics).
+        assert store._repo.lookup_tag(tag) == first
+        # But the public API resolves the fresh snapshot from branch ancestry.
+        snaps = store.list_snapshots()
+        assert len(snaps) == 1  # one row per date, de-duplicated
+        assert snaps[-1]["commit"] == second[:12]
+        historical = store.checkout_as_of(TEST_DATE)
+        assert float(historical["tp"].mean()) == pytest.approx(2.0)

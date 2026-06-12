@@ -92,26 +92,40 @@ class DecisionStore:
         session = self._repo.readonly_session(branch=self.branch)
         return xr.open_zarr(session.store, group=forecast_date.isoformat(), consolidated=False)
 
-    def checkout_as_of(self, as_of_date: date) -> xr.Dataset:
-        """Time-travel: open artefacts as they existed on ``as_of_date``."""
+    def _snapshots_by_date(self) -> dict[str, Any]:
+        """Map each forecast_date to its current snapshot via branch ancestry.
+
+        ``ancestry`` yields snapshots newest-first, so the first one seen per
+        ``forecast_date`` is its most recent (re-)ingest. IceChunk tags are
+        immutable and non-reusable, so a re-committed date keeps a stale tag but
+        advances the branch — only ancestry reflects the fresh snapshot.
+        """
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")
+        latest: dict[str, Any] = {}
+        for snap in self._repo.ancestry(branch=self.branch):
+            meta = snap.metadata or {}
+            fdate = meta.get("forecast_date")
+            if not fdate or fdate in latest:
+                continue
+            latest[fdate] = snap
+        return latest
 
-        tags = sorted(self._repo.list_tags())
-        valid = [t for t in tags if t[:10] <= as_of_date.isoformat()]
+    def checkout_as_of(self, as_of_date: date) -> xr.Dataset:
+        """Time-travel: open artefacts as they existed on ``as_of_date``."""
+        snaps = self._snapshots_by_date()
+        valid = [d for d in snaps if d <= as_of_date.isoformat()]
         if not valid:
             raise ValueError(f"No artefacts available on or before {as_of_date}")
 
-        latest_tag = valid[-1]
-        snapshot_id = self._repo.lookup_tag(latest_tag)
-        session = self._repo.readonly_session(snapshot_id=snapshot_id)
-        return xr.open_zarr(session.store, group=latest_tag[:10], consolidated=False)
+        target_date = max(valid)  # ISO date strings sort chronologically
+        snap = snaps[target_date]
+        session = self._repo.readonly_session(snapshot_id=snap.id)
+        return xr.open_zarr(session.store, group=target_date, consolidated=False)
 
     def list_dates(self) -> list[str]:
-        """Return sorted list of committed forecast dates."""
-        if self._repo is None:
-            raise RuntimeError("Store not opened. Call create_or_open() first.")
-        return sorted(self._repo.list_tags())
+        """Return sorted list of committed forecast dates (re-ingest aware)."""
+        return sorted(self._snapshots_by_date())
 
     def _build_storage(self) -> Any:
         import icechunk
