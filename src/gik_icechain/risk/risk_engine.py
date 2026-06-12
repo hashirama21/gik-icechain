@@ -231,7 +231,11 @@ def _process_day(
     for pcode, cluster in pcode_cluster.items():
         unit = unit_by_pcode[pcode]
         model = crma_models[cluster]
-        gpm_24h = _finite(gpm_s, pcode)
+        # Distinguish a missing observation from an observed 0 mm: a NaN/absent
+        # GPM value must not be read as "dry day" (biases risk toward Green).
+        gpm_raw = float(gpm_s.get(pcode, float("nan")))
+        gpm_missing = not math.isfinite(gpm_raw)
+        gpm_24h = 0.0 if gpm_missing else gpm_raw
         quality = int(conf_s.get(pcode, 2.0))
 
         risk_by_rp: dict[str, dict] = {}
@@ -257,7 +261,7 @@ def _process_day(
                 spatial_coverage_fraction=_finite(agg[rp]["cov"], pcode),
                 consecutive_signal_days=state.consecutive_days,
                 sat_consecutive_days=state.sat_consecutive_days,
-                gpm_quality=quality, rp_years=rp,
+                gpm_quality=quality, gpm_missing=gpm_missing, rp_years=rp,
                 thresholds=model.evidence_thresholds(rp),
             )
             result, bn_states[pcode][rp] = bn_step(
@@ -273,7 +277,7 @@ def _process_day(
                 gpm_obs_24h=0.0, api_mm=bn_states[pcode][rp_signal].api_mm,
                 spatial_coverage_fraction=0.0, consecutive_signal_days=0,
                 sat_consecutive_days=bn_states[pcode][rp_signal].sat_consecutive_days,
-                gpm_quality=quality, rp_years=rp_signal,
+                gpm_quality=quality, gpm_missing=gpm_missing, rp_years=rp_signal,
             )
         _, scores[pcode] = build_score(
             unit, primary_result or _NO_DATA_RESULT, primary_ev, risk_by_rp=risk_by_rp)

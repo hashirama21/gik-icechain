@@ -158,6 +158,7 @@ class CRMAEvidence:
     consecutive_signal_days: int
     sat_consecutive_days: int = 0
     gpm_quality: int = 2
+    gpm_missing: bool = False
     rp_years: int = 5
     thresholds: EvidenceThresholds = field(default_factory=EvidenceThresholds)
 
@@ -188,7 +189,14 @@ class CRMAEvidence:
 
     @property
     def obs_antecedent_state(self) -> int:
-        """0=Below normal, 1=Normal, 2=Above normal."""
+        """0=Below normal, 1=Normal, 2=Above normal.
+
+        When the GPM observation is missing, return Normal (neutral) instead of
+        deriving "Below normal" from a placeholder 0 mm — an absent observation
+        is not evidence of a dry day.
+        """
+        if self.gpm_missing:
+            return 1
         if self.gpm_obs_24h >= self.thresholds.gpm_above_mmday:
             return 2
         if self.gpm_obs_24h >= self.thresholds.gpm_normal_mmday:
@@ -211,7 +219,13 @@ class CRMAEvidence:
 
     @property
     def data_confidence_state(self) -> int:
-        """0=Low, 1=Medium, 2=High."""
+        """0=Low, 1=Medium, 2=High.
+
+        A missing GPM observation forces Low confidence so the compound score is
+        dampened to reflect the absent evidence.
+        """
+        if self.gpm_missing:
+            return 0
         return min(self.gpm_quality, 2)
 
     @property

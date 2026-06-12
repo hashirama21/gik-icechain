@@ -39,6 +39,20 @@ class TestCRMAEvidenceDiscretisation:
         e = make_evidence(gpm_obs_24h=30.0)
         assert e.obs_antecedent_state == 2
 
+    def test_missing_obs_is_neutral_not_dry(self, make_evidence):
+        # A missing observation must not read as "Below normal" (a dry day).
+        e = make_evidence(gpm_obs_24h=0.0, gpm_missing=True)
+        assert e.obs_antecedent_state == 1
+
+    def test_present_zero_obs_is_dry(self, make_evidence):
+        # An actually-observed 0 mm still discretises to Below normal.
+        e = make_evidence(gpm_obs_24h=0.0, gpm_missing=False)
+        assert e.obs_antecedent_state == 0
+
+    def test_missing_obs_forces_low_confidence(self, make_evidence):
+        e = make_evidence(gpm_quality=2, gpm_missing=True)
+        assert e.data_confidence_state == 0
+
     def test_no_persistence(self, make_evidence):
         e = make_evidence(consecutive_signal_days=2)
         assert e.temporal_persistence_state == 0
