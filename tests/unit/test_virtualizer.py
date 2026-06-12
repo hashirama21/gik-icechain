@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from gik_icechain.conversion.virtualizer import GIKFlatParquetParser, _to_ref_value
 
@@ -42,29 +44,39 @@ class TestGIKFlatParquetParser:
         rows = []
         for step in steps:
             for var in vars:
-                rows.append({
-                    "key": f"step_{step}/{var}/sfc/0/0",
-                    "value": json.dumps([
-                        f"s3://ecmwf-forecasts/fake/{step}.grib2",
-                        step * 100,
-                        500,
-                    ]),
-                })
-        rows.append({
-            "key": "2m_temperature/heightAboveGround/2/.zarray",
-            "value": json.dumps({
-                "chunks": [1, self.NLAT, self.NLON],
-                "compressor": None,
-                "dtype": "<f4",
-                "fill_value": "NaN",
-                "filters": None,
-                "order": "C",
-                "shape": [len(steps), self.NLAT, self.NLON],
-                "zarr_format": 2,
-            }),
-        })
+                rows.append(
+                    {
+                        "key": f"step_{step}/{var}/sfc/0/0",
+                        "value": json.dumps(
+                            [
+                                f"s3://ecmwf-forecasts/fake/{step}.grib2",
+                                step * 100,
+                                500,
+                            ]
+                        ),
+                    }
+                )
+        rows.append(
+            {
+                "key": "2m_temperature/heightAboveGround/2/.zarray",
+                "value": json.dumps(
+                    {
+                        "chunks": [1, self.NLAT, self.NLON],
+                        "compressor": None,
+                        "dtype": "<f4",
+                        "fill_value": "NaN",
+                        "filters": None,
+                        "order": "C",
+                        "shape": [len(steps), self.NLAT, self.NLON],
+                        "zarr_format": 2,
+                    }
+                ),
+            }
+        )
         path = tmp_path / "test.parquet"
-        pd.DataFrame(rows).to_parquet(path)
+        table = pa.Table.from_pandas(pd.DataFrame(rows))
+        with pa.OSFile(str(path), "wb") as f:
+            pq.write_table(table, f)
         return str(path)
 
     def test_step_hours_extracted(self, tmp_path):
@@ -77,6 +89,7 @@ class TestGIKFlatParquetParser:
         df = _pd.read_parquet(path)
         df["key"] = df["key"].astype(str)
         from gik_icechain.conversion.virtualizer import _SFC_STEP_RE
+
         extracted = df["key"].str.extract(_SFC_STEP_RE, expand=True)
         sfc_mask = extracted[0].notna()
         assert sfc_mask.any(), "No SFC chunk refs found"
@@ -85,7 +98,9 @@ class TestGIKFlatParquetParser:
 
     def test_no_sfc_refs_returns_empty_store(self, tmp_path):
         path = tmp_path / "empty.parquet"
-        pd.DataFrame([{"key": "some/other/key", "value": "{}"}]).to_parquet(path)
+        table = pa.Table.from_pandas(pd.DataFrame([{"key": "some/other/key", "value": "{}"}]))
+        with pa.OSFile(str(path), "wb") as f:
+            pq.write_table(table, f)
         parser = GIKFlatParquetParser()
         assert parser.step_hours == []
 
@@ -94,10 +109,12 @@ class TestGIKFlatParquetParser:
 
         rows = []
         for var in ["tp", "2t", "ro"]:
-            rows.append({
-                "key": f"step_0/{var}/sfc/0/0",
-                "value": json.dumps(["s3://ecmwf-forecasts/fake.grib2", 0, 100]),
-            })
+            rows.append(
+                {
+                    "key": f"step_0/{var}/sfc/0/0",
+                    "value": json.dumps(["s3://ecmwf-forecasts/fake.grib2", 0, 100]),
+                }
+            )
         df = pd.DataFrame(rows)
         extracted = df["key"].str.extract(_SFC_STEP_RE, expand=True)
         vars_found = set(extracted[1].dropna().tolist())
@@ -108,7 +125,7 @@ class TestGIKFlatParquetParser:
         from gik_icechain.conversion.virtualizer import _SFC_STEP_RE
 
         rows = [
-            {"key": "step_0/z/pl/0/0",  "value": "{}"},
+            {"key": "step_0/z/pl/0/0", "value": "{}"},
             {"key": "step_0/tp/sfc/0/0", "value": "{}"},
         ]
         df = pd.DataFrame(rows)

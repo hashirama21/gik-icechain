@@ -9,6 +9,13 @@ import pytest
 import xarray as xr
 
 
+def pytest_configure(config):
+    # Pre-register pyarrow's 'file' filesystem scheme before torch/obstore can
+    # register it first; on macOS the dyld load order causes ArrowKeyError otherwise.
+    import pyarrow.fs
+    import pyarrow.parquet  # noqa: F401
+
+
 @pytest.fixture(scope="session")
 def synthetic_cmorph_ds():
     """Minimal CMORPH-like precipitation dataset for threshold tests."""
