@@ -602,13 +602,19 @@ def _run_risk(
     from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
     from gik_icechain.risk.risk_engine import run_risk_batch
 
+    use_refined = bool(cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path)
     crma_models: dict[EastAfricaCluster, CRMAModel] = {}
     for cluster in EastAfricaCluster:
         m = CRMAModel(cluster=cluster, crma_cfg=cfg.component3.crma_model)
         m.build()
-        if cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path:
+        if use_refined:
             m.load_cpts(Path(cfg.component3.crma.cpt_path))
         crma_models[cluster] = m
+
+    # EM-DAT flood events tag each day × unit (emdat_flood_match) for validation
+    # overlays. run_risk_batch reads the file only if it exists, so passing the
+    # configured path unconditionally is safe.
+    emdat_path = Path(cfg.sources.emdat_path) if cfg.sources.emdat_path else None
 
     crma_cfg = cfg.component3.crma_model
     return run_risk_batch(
@@ -627,6 +633,8 @@ def _run_risk(
         hazard_stat=cfg.component3.aggregation.method,
         min_coverage=cfg.component3.aggregation.min_coverage_fraction,
         endpoint_url=cfg.outputs.endpoint_url or None,
+        emdat_path=emdat_path,
+        cpt_source="refined" if use_refined else "default",
     )
 
 
