@@ -205,7 +205,9 @@ class Component2Config(BaseModel):
     # Flood-relevance floor (mm) per window: raises the effective GEV threshold
     # so arid cells with near-zero thresholds don't false-alarm.
     flood_floor_mm: dict[int, float] = Field(
-        default_factory=lambda: {3: 15, 6: 20, 12: 25, 24: 30, 48: 40, 72: 50, 168: 75}
+        default_factory=lambda: {
+            3: 15.0, 6: 20.0, 12: 25.0, 24: 30.0, 48: 40.0, 72: 50.0, 168: 75.0,
+        }
     )
 
     # --- Dimension 2: Steps ---
@@ -377,6 +379,21 @@ class CRMAModelConfig(BaseModel):
     # Return periods the risk engine evaluates (risk_state produced per RP so the
     # dashboard can switch 2yr↔5yr). rp_signal is the primary/default one.
     rp_signal_options: list[int] = Field(default_factory=lambda: [2, 5])
+    # Per-RP Forecast_Hazard boundaries (medium, high) — a 2yr threshold is
+    # exceeded more often, so its boundaries sit higher than the 5yr ones.
+    hazard_thresholds_by_rp: dict[int, tuple[float, float]] = Field(
+        default_factory=lambda: {2: (0.30, 0.60), 5: (0.15, 0.40)}
+    )
+
+    @model_validator(mode="after")
+    def _hazard_rp_thresholds_ordered(self) -> CRMAModelConfig:
+        for rp, (medium, high) in self.hazard_thresholds_by_rp.items():
+            if not (0.0 < medium < high <= 1.0):
+                raise ValueError(
+                    f"hazard_thresholds_by_rp[{rp}]=({medium}, {high}) must satisfy "
+                    f"0 < medium < high <= 1"
+                )
+        return self
 
     # Data_Confidence dampening applied to the compound risk score, indexed by
     # confidence state [Low, Medium, High]. Precip ensembles are typically

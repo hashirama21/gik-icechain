@@ -101,15 +101,14 @@ def build_score(
         "p_yellow": round(result["p_yellow"], 4),
         "p_orange": round(result["p_orange"], 4),
         "p_red": round(result["p_red"], 4),
-        "exceedance_24h_5y": round(evidence.exceedance_prob_24h_5y, 4),
-        "exceedance_72h_5y": round(evidence.exceedance_prob_72h_5y, 4),
+        "exceedance_24h": round(evidence.exceedance_prob_24h, 4),
+        "exceedance_72h": round(evidence.exceedance_prob_72h, 4),
+        "rp_years": getattr(evidence, "rp_years", 5),
         "api_mm": round(evidence.api_mm, 2),
         "spatial_coverage": round(evidence.spatial_coverage_fraction, 4),
         "emdat_flood_match": emdat_flood_match,
     }
     if risk_by_rp:
-        # Per-return-period risk_state/probabilities so the dashboard can switch
-        # 2yr↔5yr. Top-level fields stay the primary RP for backward-compat.
         score["risk_by_rp"] = {
             rp: {k: (round(v[k], 4) if k.startswith("p_") else v[k])
                  for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")}
@@ -157,8 +156,8 @@ def export_eahw_format(
                     "risk_level": risk + 1,
                     "risk_label": _EAHW_RISK_LABELS.get(risk, "Unknown"),
                     "probability": probability,
-                    "exceedance_24h_5y": src.get("exceedance_24h_5y", 0.0),
-                    "exceedance_72h_5y": src.get("exceedance_72h_5y", 0.0),
+                    "exceedance_24h": src.get("exceedance_24h", src.get("exceedance_24h_5y", 0.0)),
+                    "exceedance_72h": src.get("exceedance_72h", src.get("exceedance_72h_5y", 0.0)),
                     "api_mm": src.get("api_mm", 0.0),
                 },
             }

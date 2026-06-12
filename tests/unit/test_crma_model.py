@@ -16,15 +16,15 @@ from gik_icechain.risk.crma_model import (
 
 class TestCRMAEvidenceDiscretisation:
     def test_low_forecast_hazard(self, make_evidence):
-        e = make_evidence(exceedance_prob_24h_5y=0.05)
+        e = make_evidence(exceedance_prob_24h=0.05)
         assert e.forecast_hazard_state == 0
 
     def test_medium_forecast_hazard(self, make_evidence):
-        e = make_evidence(exceedance_prob_24h_5y=0.20)
+        e = make_evidence(exceedance_prob_24h=0.20)
         assert e.forecast_hazard_state == 1
 
     def test_high_forecast_hazard(self, make_evidence):
-        e = make_evidence(exceedance_prob_24h_5y=0.50)
+        e = make_evidence(exceedance_prob_24h=0.50)
         assert e.forecast_hazard_state == 2
 
     def test_below_normal_obs(self, make_evidence):
@@ -106,8 +106,8 @@ class TestCRMAModelInference:
     def test_high_risk_scenario(self, built_model, make_evidence):
         """Severe signal across all nodes → should return Orange or Red."""
         evidence = make_evidence(
-            exceedance_prob_24h_5y=0.80,
-            exceedance_prob_72h_5y=0.75,
+            exceedance_prob_24h=0.80,
+            exceedance_prob_72h=0.75,
             gpm_obs_24h=50.0,
             api_mm=120.0,
             spatial_coverage_fraction=0.90,
@@ -123,8 +123,8 @@ class TestCRMAModelInference:
         [0.5, 0.8, 1.0] damping vetoed it, producing a structural all-Green run.
         """
         evidence = make_evidence(
-            exceedance_prob_24h_5y=1.0,
-            exceedance_prob_72h_5y=1.0,
+            exceedance_prob_24h=1.0,
+            exceedance_prob_72h=1.0,
             spatial_coverage_fraction=0.36,  # Regional
             gpm_quality=1,                    # Medium confidence
         )
@@ -135,15 +135,15 @@ class TestCRMAModelInference:
         )
 
     def test_probabilities_sum_to_one(self, built_model, make_evidence):
-        evidence = make_evidence(exceedance_prob_24h_5y=0.3, gpm_obs_24h=15.0)
+        evidence = make_evidence(exceedance_prob_24h=0.3, gpm_obs_24h=15.0)
         result = built_model.infer(evidence)
         total = result["p_green"] + result["p_yellow"] + result["p_orange"] + result["p_red"]
         assert abs(total - 1.0) < 1e-6, f"Probabilities don't sum to 1: {total}"
 
     def test_risk_monotonic_with_hazard(self, built_model, make_evidence):
         """Higher forecast hazard → higher expected risk state."""
-        low = make_evidence(exceedance_prob_24h_5y=0.05)
-        high = make_evidence(exceedance_prob_24h_5y=0.80)
+        low = make_evidence(exceedance_prob_24h=0.05)
+        high = make_evidence(exceedance_prob_24h=0.80)
 
         result_low = built_model.infer(low)
         result_high = built_model.infer(high)
@@ -155,8 +155,8 @@ class TestCRMAModelInference:
 
     def test_api_increases_risk(self, built_model, make_evidence):
         """Saturated soil (API=120) should increase risk vs dry soil (API=10)."""
-        dry = make_evidence(exceedance_prob_24h_5y=0.25, api_mm=10.0)
-        sat = make_evidence(exceedance_prob_24h_5y=0.25, api_mm=120.0)
+        dry = make_evidence(exceedance_prob_24h=0.25, api_mm=10.0)
+        sat = make_evidence(exceedance_prob_24h=0.25, api_mm=120.0)
 
         result_dry = built_model.infer(dry)
         result_sat = built_model.infer(sat)
@@ -186,9 +186,9 @@ class TestCRMAModelInference:
         from gik_icechain.risk.dynamic_bn import step as bn_step
 
         shared_kwargs = dict(
-            exceedance_prob_24h_5y=0.25,
-            exceedance_prob_72h_5y=0.20,
-            exceedance_prob_7d_5y=0.15,
+            exceedance_prob_24h=0.25,
+            exceedance_prob_72h=0.20,
+            exceedance_prob_7d=0.15,
             gpm_obs_24h=15.0,
             spatial_coverage_fraction=0.5,
             consecutive_signal_days=1,
@@ -212,9 +212,9 @@ class TestCRMAModelInference:
         higher P(Red) than dry soil + 50mm (same forecast hazard)."""
 
         shared = dict(
-            exceedance_prob_24h_5y=0.30,
-            exceedance_prob_72h_5y=0.25,
-            exceedance_prob_7d_5y=0.20,
+            exceedance_prob_24h=0.30,
+            exceedance_prob_72h=0.25,
+            exceedance_prob_7d=0.20,
             gpm_obs_24h=50.0,
             spatial_coverage_fraction=0.5,
             consecutive_signal_days=1,
@@ -246,7 +246,7 @@ class TestCRMAModelInference:
 
         state = init_state(initial_api_mm=120.0)  # start saturated
         ev = make_evidence(
-            exceedance_prob_24h_5y=0.20, gpm_obs_24h=10.0, api_mm=120.0
+            exceedance_prob_24h=0.20, gpm_obs_24h=10.0, api_mm=120.0
         )
 
         for day in range(1, 9):

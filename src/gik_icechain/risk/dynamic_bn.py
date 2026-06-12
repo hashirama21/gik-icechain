@@ -105,7 +105,7 @@ def step(
     new_api = gpm_obs_mm + api_decay * state.api_mm
 
     # Track consecutive rainfall-signal days (for Temporal_Persist node)
-    has_signal = evidence.exceedance_prob_24h_5y >= signal_threshold
+    has_signal = evidence.exceedance_prob_24h >= signal_threshold
     new_consecutive = state.consecutive_days + 1 if has_signal else 0
 
     # Track consecutive saturated days (for Soil_Memory node)

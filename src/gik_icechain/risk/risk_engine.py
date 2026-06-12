@@ -12,6 +12,11 @@ hardcoded constants.
 NaN values from aggregation are detected and produce risk_state=-1 /
 risk_label="No_Data" rather than silently mapping to 0.0.
 
+Per-return-period inference: each RP in ``rp_signal_options`` carries its own
+DynamicBNState and its own Forecast_Hazard calibration
+(``hazard_thresholds_by_rp``). Top-level output fields mirror the primary
+``rp_signal``.
+
 Checkpointing: ``bn_states`` are serialised to ``_checkpoint.json`` every
 *checkpoint_interval* days so that a crashed run can resume from the last
 checkpoint.
@@ -110,15 +115,17 @@ def run_risk_batch(
     pcode_cluster = _build_pcode_cluster_map(admin)
     # Pre-build once — avoids iterrows() on each of the N forecast days.
     unit_by_pcode: dict[str, Any] = {str(row["admin1_pcode"]): row for _, row in admin.iterrows()}
-    bn_states: dict[str, DynamicBNState] = {p: init_state(initial_api_mm) for p in pcode_cluster}
+
+    rp_options = list(dict.fromkeys([rp_signal, *(rp_signal_options or [])]))
+
+    # One state per (pcode, rp) so signal streaks don't leak across RPs.
+    bn_states: dict[str, dict[int, DynamicBNState]] = {
+        p: {rp: init_state(initial_api_mm) for rp in rp_options} for p in pcode_cluster
+    }
 
     # Resume from checkpoint if available
     checkpoint_path = output_dir / _CHECKPOINT_FILE
-    bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start)
-
-    # Risk is produced for each of these RPs (primary first); the dashboard
-    # toggles between them. Always include the primary rp_signal.
-    rp_options = list(dict.fromkeys([rp_signal, *(rp_signal_options or [])]))
+    bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start, rp_options)
 
     written: list[Path] = []
     current = resume_date
@@ -172,7 +179,7 @@ def _process_day(
     pcode_cluster: dict[str, EastAfricaCluster],
     unit_by_pcode: dict[str, Any],
     output_dir: Path,
-    bn_states: dict[str, DynamicBNState],
+    bn_states: dict[str, dict[int, DynamicBNState]],
     api_decay: float,
     signal_threshold: float,
     rp_signal: int,
@@ -187,24 +194,22 @@ def _process_day(
         log.warning("exceedance_date_missing", date=day)
         return None
 
-    # Aggregate hazard exceedance per RP (24h/72h/7d) so risk_state can be
-    # produced for each return period (dashboard toggles 2yr↔5yr).
+    # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
     agg: dict[int, dict[str, pd.Series]] = {}
     for rp in rp_options:
         try:
-            e = {w: exc_day["exceedance_prob"].sel(window=wh, return_period=rp)
-                 for w, wh in (("24h", 24), ("72h", 72), ("7d", 168))}
+            grids = {w: exc_day["exceedance_prob"].sel(window=wh, return_period=rp)
+                     for w, wh in (("24h", 24), ("72h", 72), ("7d", 168))}
         except KeyError as exc:
             log.warning("exceedance_window_missing", date=day, rp=rp, error=str(exc))
             continue
         agg[rp] = {w: aggregate_to_admin1(da, admin, stat=hazard_stat, min_coverage=min_coverage)
-                   for w, da in e.items()}
+                   for w, da in grids.items()}
+        agg[rp]["cov"] = coverage_fraction(grids["24h"], admin, signal_threshold)
     if rp_signal not in agg:
         log.warning("primary_rp_missing", date=day, rp=rp_signal)
         return None
 
-    cov_s = coverage_fraction(
-        exc_day["exceedance_prob"].sel(window=24, return_period=rp_signal), admin, signal_threshold)
     gpm_da = load_gpm_daily(gpm_dir, day)
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
@@ -214,17 +219,9 @@ def _process_day(
     else:
         conf_s = pd.Series(dtype="int8")
 
-    def _exc(rp: int) -> tuple[float, float, float]:
-        return tuple(float(agg[rp][w].get(pcode, float("nan"))) for w in ("24h", "72h", "7d"))
-
-    def _evidence(exc: tuple[float, float, float], state: DynamicBNState,
-                  gpm24: float, cov: float, quality: int) -> Any:
-        return CRMAEvidence(
-            exceedance_prob_24h_5y=exc[0], exceedance_prob_72h_5y=exc[1],
-            exceedance_prob_7d_5y=exc[2], gpm_obs_24h=gpm24, api_mm=state.api_mm,
-            spatial_coverage_fraction=cov, consecutive_signal_days=state.consecutive_days,
-            sat_consecutive_days=state.sat_consecutive_days, gpm_quality=quality,
-        )
+    def _finite(series: pd.Series, pcode: str, default: float = 0.0) -> float:
+        val = float(series.get(pcode, float("nan")))
+        return val if math.isfinite(val) else default
 
     def _slim(result: dict) -> dict:
         return {k: result[k] for k in
@@ -233,57 +230,75 @@ def _process_day(
     scores: dict[str, dict] = {}
     for pcode, cluster in pcode_cluster.items():
         unit = unit_by_pcode[pcode]
-        state = bn_states[pcode]
-        exc_primary = _exc(rp_signal)
-
-        if any(not math.isfinite(v) for v in exc_primary):
-            bn_states[pcode] = replace(state, api_mm=state.api_mm * api_decay)
-            nd_ev = _evidence((0.0, 0.0, 0.0), bn_states[pcode], 0.0, 0.0, 2)
-            _, scores[pcode] = build_score(unit, _NO_DATA_RESULT, nd_ev,
-                                           risk_by_rp={str(rp): _NO_DATA_RESULT for rp in agg})
-            continue
-
-        gpm_24h = gpm_s.get(pcode, float("nan"))
-        gpm_24h = float(gpm_24h) if math.isfinite(gpm_24h) else 0.0
-        cov_val = cov_s.get(pcode, float("nan"))
-        cov_val = float(cov_val) if math.isfinite(cov_val) else 0.0
+        model = crma_models[cluster]
+        gpm_24h = _finite(gpm_s, pcode)
         quality = int(conf_s.get(pcode, 2.0))
 
-        # Non-primary RPs: infer with the current (pre-advance) state.
         risk_by_rp: dict[str, dict] = {}
-        for rp in agg:
-            if rp == rp_signal:
-                continue
-            exc = _exc(rp)
-            if any(not math.isfinite(v) for v in exc):
+        primary_result: dict | None = None
+        primary_ev: CRMAEvidence | None = None
+
+        for rp in rp_options:
+            state = bn_states[pcode].setdefault(rp, init_state())
+            if rp not in agg:
                 risk_by_rp[str(rp)] = _NO_DATA_RESULT
-            else:
-                ev_rp = _evidence(exc, state, gpm_24h, cov_val, quality)
-                risk_by_rp[str(rp)] = _slim(crma_models[cluster].infer(ev_rp))
+                continue
 
-        # Primary RP: bn_step advances the persistent state.
-        ev = _evidence(exc_primary, state, gpm_24h, cov_val, quality)
-        result, bn_states[pcode] = bn_step(
-            state, ev, crma_models[cluster], api_decay=api_decay,
-            gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold)
-        risk_by_rp[str(rp_signal)] = _slim(result)
+            p24, p72, p7d = (
+                float(agg[rp][w].get(pcode, float("nan"))) for w in ("24h", "72h", "7d"))
+            if not all(math.isfinite(v) for v in (p24, p72, p7d)):
+                bn_states[pcode][rp] = replace(state, api_mm=state.api_mm * api_decay)
+                risk_by_rp[str(rp)] = _NO_DATA_RESULT
+                continue
 
-        _, scores[pcode] = build_score(unit, result, ev, risk_by_rp=risk_by_rp)
+            ev = CRMAEvidence(
+                exceedance_prob_24h=p24, exceedance_prob_72h=p72,
+                exceedance_prob_7d=p7d, gpm_obs_24h=gpm_24h, api_mm=state.api_mm,
+                spatial_coverage_fraction=_finite(agg[rp]["cov"], pcode),
+                consecutive_signal_days=state.consecutive_days,
+                sat_consecutive_days=state.sat_consecutive_days,
+                gpm_quality=quality, rp_years=rp,
+                thresholds=model.evidence_thresholds(rp),
+            )
+            result, bn_states[pcode][rp] = bn_step(
+                state, ev, model, api_decay=api_decay,
+                gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold)
+            risk_by_rp[str(rp)] = _slim(result)
+            if rp == rp_signal:
+                primary_result, primary_ev = result, ev
+
+        if primary_ev is None:
+            primary_ev = CRMAEvidence(
+                exceedance_prob_24h=0.0, exceedance_prob_72h=0.0, exceedance_prob_7d=0.0,
+                gpm_obs_24h=0.0, api_mm=bn_states[pcode][rp_signal].api_mm,
+                spatial_coverage_fraction=0.0, consecutive_signal_days=0,
+                sat_consecutive_days=bn_states[pcode][rp_signal].sat_consecutive_days,
+                gpm_quality=quality, rp_years=rp_signal,
+            )
+        _, scores[pcode] = build_score(
+            unit, primary_result or _NO_DATA_RESULT, primary_ev, risk_by_rp=risk_by_rp)
 
     out_path = write_risk_scores(day, scores, output_dir)
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
 
 
+_CHECKPOINT_VERSION = 2
+
+
 def _save_checkpoint(
     path: Path,
-    bn_states: dict[str, DynamicBNState],
+    bn_states: dict[str, dict[int, DynamicBNState]],
     next_date: date,
 ) -> None:
-    """Serialise ``bn_states`` to JSON for crash recovery."""
+    """Serialise per-RP ``bn_states`` to JSON for crash recovery."""
     payload = {
+        "version": _CHECKPOINT_VERSION,
         "next_date": next_date.isoformat(),
-        "bn_states": {pcode: asdict(state) for pcode, state in bn_states.items()},
+        "bn_states": {
+            pcode: {str(rp): asdict(state) for rp, state in by_rp.items()}
+            for pcode, by_rp in bn_states.items()
+        },
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload))
@@ -291,15 +306,25 @@ def _save_checkpoint(
     log.debug("checkpoint_saved", path=str(path), next_date=next_date.isoformat())
 
 
+def _state_from_dict(s: dict) -> DynamicBNState:
+    return DynamicBNState(
+        api_mm=float(s["api_mm"]),
+        consecutive_days=int(s["consecutive_days"]),
+        sat_consecutive_days=int(s["sat_consecutive_days"]),
+        last_risk_state=int(s["last_risk_state"]),
+    )
+
+
 def _load_checkpoint(
     path: Path,
-    default_states: dict[str, DynamicBNState],
+    default_states: dict[str, dict[int, DynamicBNState]],
     default_start: date,
-) -> tuple[dict[str, DynamicBNState], date]:
+    rp_options: list[int],
+) -> tuple[dict[str, dict[int, DynamicBNState]], date]:
     """Load checkpoint if present and return (bn_states, resume_date).
 
-    If no checkpoint exists or it's older than default_start, returns the
-    original defaults.
+    Version-1 checkpoints (one flat state per pcode, pre-dating per-RP states)
+    are migrated by seeding every RP with the same state.
     """
     if not path.exists():
         return default_states, default_start
@@ -310,19 +335,21 @@ def _load_checkpoint(
         if resume_date <= default_start:
             return default_states, default_start
 
-        states: dict[str, DynamicBNState] = {}
-        for pcode, s in data["bn_states"].items():
-            states[pcode] = DynamicBNState(
-                api_mm=float(s["api_mm"]),
-                consecutive_days=int(s["consecutive_days"]),
-                sat_consecutive_days=int(s["sat_consecutive_days"]),
-                last_risk_state=int(s["last_risk_state"]),
-            )
+        version = int(data.get("version", 1))
+        states: dict[str, dict[int, DynamicBNState]] = {}
+        for pcode, entry in data["bn_states"].items():
+            if version >= 2:
+                states[pcode] = {int(rp): _state_from_dict(s) for rp, s in entry.items()}
+            else:
+                shared = _state_from_dict(entry)
+                states[pcode] = {rp: replace(shared) for rp in rp_options}
+        if version < 2:
+            log.warning("checkpoint_v1_migrated", msg="flat state seeded into every RP")
 
-        # Ensure all pcodes exist (new units added since checkpoint)
-        for pcode in default_states:
-            if pcode not in states:
-                states[pcode] = default_states[pcode]
+        for pcode, by_rp in default_states.items():
+            states.setdefault(pcode, by_rp)
+            for rp in rp_options:
+                states[pcode].setdefault(rp, by_rp[rp])
 
         log.info(
             "checkpoint_loaded",

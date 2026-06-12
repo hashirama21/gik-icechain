@@ -137,27 +137,35 @@ class EvidenceThresholds:
 class CRMAEvidence:
     """Evidence observed on a given day for one admin-1 unit.
 
+    Exceedance probabilities are RP-agnostic: they refer to whatever return
+    period the caller selected (``rp_years``). Discretization into the
+    Forecast_Hazard node is calibrated per return period via
+    ``thresholds.hazard_medium_threshold`` / ``hazard_high_threshold``
+    (see CRMAModelConfig.hazard_thresholds_by_rp) — a 2yr exceedance is
+    structurally higher than a 5yr one, so each RP gets its own boundaries.
+
     All discretization thresholds are grouped in ``thresholds``
     (:class:`EvidenceThresholds`).  Defaults match configs/default.yaml
     (component3.crma_model).
     """
 
-    exceedance_prob_24h_5y: float
-    exceedance_prob_72h_5y: float
-    exceedance_prob_7d_5y: float
+    exceedance_prob_24h: float
+    exceedance_prob_72h: float
+    exceedance_prob_7d: float
     gpm_obs_24h: float
     api_mm: float
     spatial_coverage_fraction: float
     consecutive_signal_days: int
     sat_consecutive_days: int = 0
     gpm_quality: int = 2
+    rp_years: int = 5
     thresholds: EvidenceThresholds = field(default_factory=EvidenceThresholds)
 
     def __post_init__(self) -> None:
         for fld, val in (
-            ("exceedance_prob_24h_5y", self.exceedance_prob_24h_5y),
-            ("exceedance_prob_72h_5y", self.exceedance_prob_72h_5y),
-            ("exceedance_prob_7d_5y", self.exceedance_prob_7d_5y),
+            ("exceedance_prob_24h", self.exceedance_prob_24h),
+            ("exceedance_prob_72h", self.exceedance_prob_72h),
+            ("exceedance_prob_7d", self.exceedance_prob_7d),
         ):
             if not (0.0 <= val <= 1.0):
                 raise ValueError(f"{fld}={val!r} must be in [0, 1]")
@@ -171,7 +179,7 @@ class CRMAEvidence:
     @property
     def forecast_hazard_state(self) -> int:
         """0=Low, 1=Medium, 2=High."""
-        p = max(self.exceedance_prob_24h_5y, self.exceedance_prob_72h_5y)
+        p = max(self.exceedance_prob_24h, self.exceedance_prob_72h)
         if p >= self.thresholds.hazard_high_threshold:
             return 2
         if p >= self.thresholds.hazard_medium_threshold:
@@ -268,15 +276,20 @@ class CRMAModel:
         from gik_icechain.shared.config import CRMAModelConfig
         return CRMAModelConfig()
 
-    def make_evidence(self, **kwargs: object) -> CRMAEvidence:
-        """Create a CRMAEvidence pre-loaded with this model's config thresholds.
+    def evidence_thresholds(self, rp: int | None = None) -> EvidenceThresholds:
+        """Build EvidenceThresholds from the live config, calibrated for *rp*.
 
-        Keyword arguments are forwarded directly to CRMAEvidence, which still
-        requires the mandatory positional fields.  Use this factory in production
-        code to guarantee that threshold values always match the live config.
+        The Forecast_Hazard boundaries come from ``hazard_thresholds_by_rp``
+        when the return period is listed there; otherwise the global
+        ``hazard_medium_threshold`` / ``hazard_high_threshold`` apply. This is
+        what makes the 2yr risk view calibrated rather than a re-use of the
+        5yr boundaries on structurally higher 2yr exceedances.
         """
         cfg = self._cfg
-        thresholds = EvidenceThresholds(
+        medium, high = cfg.hazard_medium_threshold, cfg.hazard_high_threshold
+        if rp is not None and rp in cfg.hazard_thresholds_by_rp:
+            medium, high = cfg.hazard_thresholds_by_rp[rp]
+        return EvidenceThresholds(
             gpm_normal_mmday=cfg.gpm_obs_normal_mmday,
             gpm_above_mmday=cfg.gpm_obs_above_mmday,
             api_normal_mm=cfg.api_threshold_normal_mm,
@@ -285,11 +298,21 @@ class CRMAModel:
             spatial_extensive=cfg.spatial_threshold_extensive,
             persist_threshold=cfg.consecutive_signal_threshold,
             soil_memory_days=cfg.soil_memory_days,
-            hazard_medium_threshold=cfg.hazard_medium_threshold,
-            hazard_high_threshold=cfg.hazard_high_threshold,
+            hazard_medium_threshold=medium,
+            hazard_high_threshold=high,
         )
+
+    def make_evidence(self, rp: int | None = None, **kwargs: object) -> CRMAEvidence:
+        """Create a CRMAEvidence pre-loaded with this model's config thresholds.
+
+        Keyword arguments are forwarded directly to CRMAEvidence, which still
+        requires the mandatory positional fields.  Use this factory in production
+        code to guarantee that threshold values always match the live config.
+        """
+        if rp is not None:
+            kwargs.setdefault("rp_years", rp)
         return CRMAEvidence(
-            thresholds=thresholds,
+            thresholds=self.evidence_thresholds(rp),
             **kwargs,  # type: ignore[arg-type]
         )
 
