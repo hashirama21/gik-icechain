@@ -89,12 +89,15 @@ def load_emdat_east_africa(csv_path: Path, start_date: str | None = None) -> lis
         & (df["Start Date"] >= (start_date or "2015-01-01"))
     ].copy()
 
+    def _str_or_empty(val: object) -> str:
+        return "" if pd.isna(val) else str(val)  # type: ignore[arg-type]
+
     records = [
         EMDATFloodRecord(
-            event_id=str(row.get("DisNo.", "")),
-            country=str(row.get("Country", "")),
-            admin1_name=str(row.get("Admin1", "")),
-            admin1_pcode=str(row.get("Admin1 Code", "")),
+            event_id=_str_or_empty(row.get("DisNo.")),
+            country=_str_or_empty(row.get("Country")),
+            admin1_name=_str_or_empty(row.get("Admin1")),
+            admin1_pcode=_str_or_empty(row.get("Admin1 Code")),
             start_date=pd.Timestamp(row["Start Date"]),
             end_date=pd.Timestamp(row.get("End Date", row["Start Date"])),
             deaths=int(row["Total Deaths"]) if pd.notna(row.get("Total Deaths")) else None,
