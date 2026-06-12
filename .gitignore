@@ -11,7 +11,10 @@ build/
 .coverage
 coverage.xml
 results/
-data/
+data/*
+!data/emdat/
+!data/emdat/east_africa_floods.csv
+!data/emdat/pcode_mapping.csv
 .DS_Store
 .idea/
 *.ipynb_checkpoints/
