@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import scipy
 import structlog
 import xarray as xr
 from scipy.optimize import minimize
@@ -131,6 +132,8 @@ class AdaptiveGEVThresholds:
         enso_iod_index: pd.DataFrame,
         windows_h: list[int] = ACCUMULATION_WINDOWS_H,
         return_periods: list[int] = RETURN_PERIODS,
+        xi_bounds: tuple[float, float] = (-0.5, 0.5),
+        xi_penalty: float = 0.1,
     ) -> AdaptiveGEVThresholds:
         """Fit GEV distributions to CMORPH climatology, stratified by climate mode.
 
@@ -144,6 +147,10 @@ class AdaptiveGEVThresholds:
             enso_iod_index: DataFrame with columns [date, nino34, dmi].
             windows_h:      Accumulation windows in hours.
             return_periods: Return periods in years.
+            xi_bounds:      Optimiser bounds on the GEV shape ξ. The (-0.5, 0.5)
+                            default follows Coles (2001); widen for regions with
+                            heavier-tailed extremes (e.g. monsoon highlands).
+            xi_penalty:     L2 penalty coefficient on ξ (stabilises short records).
         """
         import dask
 
@@ -172,7 +179,8 @@ class AdaptiveGEVThresholds:
                     .sum()
                     .sel(time=time_mask)
                 )
-                pending.append((mode.key, window_h, cls._fit_gev_lazy(accumulated, return_periods)))
+                pending.append((mode.key, window_h, cls._fit_gev_lazy(
+                    accumulated, return_periods, xi_bounds=xi_bounds, xi_penalty=xi_penalty)))
 
         if not pending:
             log.warning("no_valid_climate_modes", msg="All modes had insufficient samples (<30)")
@@ -209,6 +217,9 @@ class AdaptiveGEVThresholds:
                     "mode_key": mode_key,
                     "distribution": "GEV (free xi, L-BFGS-B; Gumbel fallback)",
                     "source": "CMORPH v1.0 climatology",
+                    "scipy_version": scipy.__version__,
+                    "xi_bounds": list(xi_bounds),
+                    "xi_l2_penalty": xi_penalty,
                 }
                 rp_dict[rp] = da
             instance._thresholds.setdefault(mode_key, {})[window_h] = rp_dict
@@ -421,12 +432,13 @@ class AdaptiveGEVThresholds:
         for m in _SEASON_MONTHS[season]:
             month_mask |= time_pd.month == m
 
+        nino_col = "nino34_anom" if "nino34_anom" in enso_iod_daily.columns else "nino34"
         climate_mask = np.zeros(len(time_pd), dtype=bool)
         for i, t in enumerate(time_pd):
             try:
                 row = enso_iod_daily.loc[t.date()]
                 climate_mask[i] = (
-                    classify_enso(float(row["nino34"])) == enso_phase
+                    classify_enso(float(row[nino_col])) == enso_phase
                     and classify_iod(float(row["dmi"])) == iod_phase
                 )
             except (KeyError, IndexError):
@@ -438,6 +450,8 @@ class AdaptiveGEVThresholds:
     def _fit_gev_lazy(
         accumulated: xr.DataArray,
         return_periods: list[int],
+        xi_bounds: tuple[float, float] = (-0.5, 0.5),
+        xi_penalty: float = 0.1,
     ) -> xr.DataArray:
         """Return a lazy Dask-backed DataArray of GEV quantiles per grid cell.
 
@@ -451,8 +465,7 @@ class AdaptiveGEVThresholds:
                 return np.full(len(return_periods), np.nan)
 
             # Attempt 1: GEV with free ξ, L2 regularisation to prevent divergence
-            # on short records. Bounded ξ ∈ [−0.5, 0.5] covers all practical
-            # precipitation extreme value shapes (Coles, 2001).
+            # on short records. Default ξ bounds follow Coles (2001).
             try:
 
                 def _neg_ll(params: np.ndarray) -> float:
@@ -460,13 +473,13 @@ class AdaptiveGEVThresholds:
                     if scale <= 0:
                         return 1e10
                     ll = float(genextreme.logpdf(valid, c, loc=loc, scale=scale).sum())
-                    return -(ll - 0.1 * c**2)  # L2 penalty on ξ
+                    return -(ll - xi_penalty * c**2)
 
                 opt = minimize(
                     _neg_ll,
                     x0=[0.1, float(np.mean(valid)), float(np.std(valid))],
                     method="L-BFGS-B",
-                    bounds=[(-0.5, 0.5), (None, None), (1e-6, None)],
+                    bounds=[xi_bounds, (None, None), (1e-6, None)],
                 )
                 if opt.success:
                     c, loc, scale = opt.x

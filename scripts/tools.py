@@ -32,6 +32,20 @@ app = typer.Typer(
 )
 
 
+def _urlopen(url: str, timeout: int):
+    """urlopen with the certifi CA bundle (macOS Python lacks system roots)."""
+    import ssl
+    import urllib.request
+
+    ctx = None
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    return urllib.request.urlopen(url, timeout=timeout, context=ctx)
+
+
 @app.command()
 def benchmark(
     gik_store: Annotated[str, typer.Option("--gik-store", help="URI of the GIK IceChunk store.")],
@@ -157,19 +171,17 @@ def _download_admin_boundaries(output_dir: Path) -> None:
         "MWI",
         "ZMB",
     ]
-    import urllib.request as _urlreq
-
     all_features: list[dict] = []
     for iso in _ea_countries:
         api_url = f"https://www.geoboundaries.org/api/current/gbOpen/{iso}/ADM1/"
         try:
-            with _urlreq.urlopen(api_url, timeout=15) as r:
+            with _urlopen(api_url, timeout=15) as r:
                 meta = json.loads(r.read())
             dl_url = meta.get("gjDownloadURL", "")
             if not dl_url:
                 typer.echo(f"    {iso}: no download URL", err=True)
                 continue
-            with _urlreq.urlopen(dl_url, timeout=30) as r:
+            with _urlopen(dl_url, timeout=30) as r:
                 fc = json.loads(r.read())
             for feat in fc.get("features", []):
                 feat["properties"]["admin1_pcode"] = (
@@ -232,7 +244,6 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
     """
     import gzip
     import tempfile
-    import urllib.request as _urlreq
 
     import numpy as np
     import xarray as xr
@@ -258,7 +269,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
         # Remove ".gz" to get ".tif" — avoid double-extension on Windows
         tmp_tif = tmp_gz_path.parent / tmp_gz_path.name[:-3]
         try:
-            with _urlreq.urlopen(url, timeout=60) as resp:
+            with _urlopen(url, timeout=60) as resp:
                 tmp_gz_path.write_bytes(resp.read())
 
             with gzip.open(tmp_gz_path, "rb") as gz_in:
@@ -308,8 +319,6 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
 
 def _download_enso_iod(output_dir: Path) -> None:
     """Download ENSO/IOD indices: Niño 3.4 (NOAA CPC) + DMI (NOAA PSL)."""
-    import urllib.request as _urlreq
-
     output_dir.mkdir(parents=True, exist_ok=True)
     dest = output_dir / "enso_iod_index.csv"
     if dest.exists():
@@ -318,7 +327,7 @@ def _download_enso_iod(output_dir: Path) -> None:
 
     nino34_url = "https://www.cpc.ncep.noaa.gov/data/indices/sstoi.indices"
     typer.echo(f"  Downloading Niño 3.4 anomaly from {nino34_url} ...")
-    with _urlreq.urlopen(nino34_url, timeout=30) as r:
+    with _urlopen(nino34_url, timeout=30) as r:
         nino34_raw = r.read().decode("utf-8")
 
     nino34: dict[tuple[int, int], float] = {}
@@ -334,7 +343,7 @@ def _download_enso_iod(output_dir: Path) -> None:
 
     dmi_url = "https://psl.noaa.gov/gcos_wgsp/Timeseries/Data/dmi.had.long.data"
     typer.echo(f"  Downloading DMI from {dmi_url} ...")
-    with _urlreq.urlopen(dmi_url, timeout=30) as r:
+    with _urlopen(dmi_url, timeout=30) as r:
         dmi_raw = r.read().decode("utf-8")
 
     dmi: dict[tuple[int, int], float] = {}

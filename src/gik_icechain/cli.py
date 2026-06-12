@@ -236,13 +236,20 @@ def _resolve_climate_mode(
 
     season = get_season(day.month)
     try:
-        row = enso_iod.loc[pd.Timestamp(day)]  # type: ignore[attr-defined]
+        # Monthly index → take the latest entry at or before the forecast day
+        # (an exact .loc[day] match only ever hits on the 1st of the month).
+        idx = enso_iod.index.asof(pd.Timestamp(day))  # type: ignore[attr-defined]
+        if pd.isna(idx):
+            raise KeyError(day)
+        row = enso_iod.loc[idx]  # type: ignore[attr-defined]
+        nino = row["nino34_anom"] if "nino34_anom" in row else row["nino34"]
         return ClimateMode(
             season,
-            classify_enso(float(row["nino34"]), threshold=enso_thr),
+            classify_enso(float(nino), threshold=enso_thr),
             classify_iod(float(row["dmi"]), threshold=iod_thr),
         )
     except KeyError:
+        log.warning("climate_mode_fallback_neutral", date=day.isoformat())
         return ClimateMode(season, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
 
@@ -362,7 +369,7 @@ def _process_exceedance_day(args: dict) -> dict:
     thresholds = AdaptiveGEVThresholds.load(Path(args["thresholds_path"]))
     enso_iod = pd.read_csv(
         args["enso_iod_path"], parse_dates=["date"]
-    ).set_index("date")
+    ).set_index("date").sort_index()
     mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
 
     # IFS tp is decoded in metres; CMORPH thresholds are in mm. Scale the precip
