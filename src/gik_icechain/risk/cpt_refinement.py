@@ -74,17 +74,19 @@ class EMDATFloodRecord:
     disaster_type: str = "Flood"
 
 
-def load_emdat_east_africa(csv_path: Path) -> list[EMDATFloodRecord]:
-    """Load and filter EM-DAT flood records for East Africa (from May 2023).
+def load_emdat_east_africa(csv_path: Path, start_date: str | None = None) -> list[EMDATFloodRecord]:
+    """Load and filter EM-DAT flood records for East Africa.
 
-    Expects a CSV export from emdat.be filtered for Disaster Type=Flood,
-    Continent=Africa. Returns records with admin-1 attribution.
+    Args:
+        csv_path:   CSV export from emdat.be (Disaster Type=Flood, Africa).
+        start_date: Earliest event start date (ISO format). Defaults to
+                    "2015-01-01" to capture a decade of ground truth.
     """
     df = pd.read_csv(csv_path, parse_dates=["Start Date", "End Date"])
     df = df[
         (df["Disaster Type"] == "Flood")
         & (df["ISO"].isin(EAST_AFRICA_COUNTRIES_ISO3))
-        & (df["Start Date"] >= "2023-05-01")
+        & (df["Start Date"] >= (start_date or "2015-01-01"))
     ].copy()
 
     records = [
@@ -160,8 +162,12 @@ def build_training_dataset(
     for record in emdat_records:
         if not record.admin1_pcode:
             n_dropped_no_pcode += 1
-            log.warning("emdat_record_no_pcode", event_id=record.event_id,
-                        country=record.country, admin1=record.admin1_name)
+            log.warning(
+                "emdat_record_no_pcode",
+                event_id=record.event_id,
+                country=record.country,
+                admin1=record.admin1_name,
+            )
             continue
         for offset in range(3):
             event_date = record.start_date + pd.Timedelta(days=offset)
@@ -194,16 +200,19 @@ def build_training_dataset(
                 consecutive_signal_days=int(
                     _col_or_default(exc_row, "consecutive_signal_days", 1.0)
                 ),
-                sat_consecutive_days=int(
-                    _col_or_default(api_row, "sat_consecutive_days", 0.0)
-                ),
+                sat_consecutive_days=int(_col_or_default(api_row, "sat_consecutive_days", 0.0)),
                 thresholds=thresholds or EvidenceThresholds(),
             )
-            rows.append(_evidence_row(
-                evidence, 3,
-                source="emdat_positive", event_id=record.event_id,
-                date=event_date.date(), admin1_pcode=pcode,
-            ))
+            rows.append(
+                _evidence_row(
+                    evidence,
+                    3,
+                    source="emdat_positive",
+                    event_id=record.event_id,
+                    date=event_date.date(),
+                    admin1_pcode=pcode,
+                )
+            )
 
     n_positive = len(rows)
     log.info(
@@ -242,19 +251,29 @@ def build_training_dataset(
             api_mm=float(api_row["api_mm"].iloc[0]) if not api_row.empty else 15.0,
             spatial_coverage_fraction=float(row.get("spatial_coverage_fraction", 0.1)),
             consecutive_signal_days=int(row.get("consecutive_signal_days", 0)),
-            sat_consecutive_days=int(
-                _col_or_default(api_row, "sat_consecutive_days", 0.0)
-            ),
+            sat_consecutive_days=int(_col_or_default(api_row, "sat_consecutive_days", 0.0)),
             thresholds=thresholds or EvidenceThresholds(),
         )
-        # Label = alert level implied by the hazard (0..2, never Red): a
-        # high-hazard non-event day is a legitimate Orange, keeping the
-        # Orange boundary learnable (was min(.,1) → Orange never seen).
-        rows.append(_evidence_row(
-            evidence, evidence.forecast_hazard_state,
-            source="negative_sample", event_id=None,
-            date=row["date"], admin1_pcode=row["admin1_pcode"],
-        ))
+        # Negative label: Green (0) by default. No EM-DAT record means no
+        # documented flood — the model should learn to predict low risk for
+        # these inputs. Using forecast_hazard_state as a label was circular
+        # (input reflected back as output) and prevented learning the true
+        # Orange/Red boundary from flood occurrence data.
+        risk_label = 0
+        if evidence.forecast_hazard_state == 2 and evidence.gpm_obs_24h >= (
+            evidence.thresholds.gpm_normal_mmday
+        ):
+            risk_label = 1  # Yellow — high hazard signal but no flood
+        rows.append(
+            _evidence_row(
+                evidence,
+                risk_label,
+                source="negative_sample",
+                event_id=None,
+                date=row["date"],
+                admin1_pcode=row["admin1_pcode"],
+            )
+        )
 
     df = pd.DataFrame(rows)
     dist = df["Risk_State"].value_counts().to_dict() if not df.empty else {}
@@ -306,11 +325,13 @@ def refine_cpts_with_emdat(
         raise ValueError("Refined model failed validation")
 
     # Rebuild the O(1) lookup table to pick up the updated CPD
-    crma.load_cpts({
-        node: model.get_cpds(node).values.tolist()
-        for node in model.nodes()
-        if model.get_cpds(node) is not None
-    })
+    crma.load_cpts(
+        {
+            node: model.get_cpds(node).values.tolist()
+            for node in model.nodes()
+            if model.get_cpds(node) is not None
+        }
+    )
 
     if output_path is not None:
         cpts = {

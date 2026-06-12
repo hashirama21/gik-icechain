@@ -1,29 +1,16 @@
-"""ICPAC CRMA Bayesian Network for admin-1 flood risk in East Africa.
+"""CRMA Bayesian Network for admin-1 daily flood risk.
 
-Static DAG (9 nodes, 8 intra-slice edges):
-  Forecast_Hazard  ──┐
-  Obs_Antecedent   ──┤
-  Temporal_Persist ──┼──► Compound_Risk ──► Risk_State
-  Spatial_Coverage ──┤
-  Data_Confidence  ──┤
-  API_State        ──┤
-  Soil_Memory      ──┘   (new — DBN Innovation 1a)
+DAG: Forecast_Hazard, Obs_Antecedent, Temporal_Persist, Spatial_Coverage,
+Data_Confidence, API_State, Soil_Memory -> Compound_Risk -> Risk_State.
 
-Dynamic extension (DBN): API_State carries over between days via a 3×3
-inter-slice transition edge.  Single-step infer() uses a pre-computed
-lookup table (3×3×2×3×3×3×2×4 ndarray) for O(1) inference.
+Two inference paths:
+  infer()          - O(1) lookup table. Production path (risk_engine.py).
+                     API_State is observed via DynamicBNState.
+  infer_sequence() - 2-slice DBN, stochastic API_State transition.
+                     Built lazily on first call. Used for EM-DAT
+                     retrospective validation (ablation test, AUC-ROC).
 
-Soil_Memory captures the key scientific distinction missed by a static BN:
-saturated soil for 15 days + 50mm additional rainfall is now distinguishable
-from dry soil with the same 50mm event (SoilMemory_State=1 lowers the CPT
-bucket thresholds and shifts probability mass toward Red).
-
-All CPT parameters are driven by configs/default.yaml (component3.crma_model)
-
-CPT structure from expert elicitation described in:
-Kalladath, N. et al. (2026), "CRMA: Continuous Risk Monitoring and
-Assessment for East Africa", EGU General Assembly 2026, EGU26-18323.
-CPTs are optionally refined via EM-DAT MLE (see cpt_refinement.py).
+load_cpts() invalidates the lazy DBN cache so refined CPTs propagate.
 """
 
 from __future__ import annotations
@@ -63,13 +50,12 @@ _CLUSTER_WEIGHTS: dict[str, dict[str, float]] = {
 
 try:
     from pgmpy.factors.discrete import TabularCPD
-    from pgmpy.inference import DBNInference, VariableElimination
+    from pgmpy.inference import DBNInference
     from pgmpy.models import DiscreteBayesianNetwork, DynamicBayesianNetwork
 
     PGMPY_AVAILABLE = True
 except ImportError:
     PGMPY_AVAILABLE = False
-    VariableElimination = None  # type: ignore[assignment,misc]
     DBNInference = None  # type: ignore[assignment,misc]
     log.warning("pgmpy_not_installed", msg="pip install pgmpy")
 
@@ -78,15 +64,15 @@ RISK_LEVELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red"}
 N_RISK_LEVELS = len(RISK_LEVELS)
 
 NODE_CARDS: dict[str, int] = {
-    "Forecast_Hazard": 3,   # Low / Medium / High
-    "Obs_Antecedent": 3,    # Below normal / Normal / Above normal
+    "Forecast_Hazard": 3,  # Low / Medium / High
+    "Obs_Antecedent": 3,  # Below normal / Normal / Above normal
     "Temporal_Persist": 2,  # No / Yes
     "Spatial_Coverage": 3,  # Local / Regional / Extensive
-    "Data_Confidence": 3,   # Low / Medium / High
-    "API_State": 3,         # Dry / Normal / Saturated
-    "Soil_Memory": 2,       # Recent (<N days sat) / Prolonged (≥N days sat)
-    "Compound_Risk": 4,     # None / Low / Moderate / High
-    "Risk_State": 4,        # Green / Yellow / Orange / Red
+    "Data_Confidence": 3,  # Low / Medium / High
+    "API_State": 3,  # Dry / Normal / Saturated
+    "Soil_Memory": 2,  # Recent (<N days sat) / Prolonged (≥N days sat)
+    "Compound_Risk": 4,  # None / Low / Moderate / High
+    "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
 
 # Ordered parent dimensions of Compound_Risk — defines the lookup table axis order
@@ -130,7 +116,7 @@ class EvidenceThresholds:
     persist_threshold: int = 3
     soil_memory_days: int = 7
     hazard_medium_threshold: float = 0.15  # Low → Medium boundary for Forecast_Hazard
-    hazard_high_threshold: float = 0.40    # Medium → High boundary for Forecast_Hazard
+    hazard_high_threshold: float = 0.40  # Medium → High boundary for Forecast_Hazard
 
 
 @dataclass
@@ -261,9 +247,6 @@ class CRMAModel:
     Single-step inference uses a pre-computed lookup table (O(1) per call).
     Shape: (3, 3, 2, 3, 3, 3, 2, 4) → 972 parent combos × 4 risk states.
 
-    Multi-step sequence inference uses a DynamicBayesianNetwork + DBNInference
-    with an inter-slice API_State transition capturing soil moisture persistence.
-
     All CPT parameters are driven by CRMAModelConfig (no hardcoded numerics).
     """
 
@@ -277,9 +260,9 @@ class CRMAModel:
             raise ImportError("pgmpy is required: pip install pgmpy")
 
         self.cluster = cluster
-        self._model: Any = None   # DiscreteBayesianNetwork
-        self._dbn: Any = None     # DynamicBayesianNetwork
-        self._dbn_inference: Any = None
+        self._model: Any = None  # DiscreteBayesianNetwork
+        self._dbn: Any = None  # DynamicBayesianNetwork — built lazily
+        self._dbn_inference: Any = None  # DBNInference — built lazily
         # Shape: (3, 3, 2, 3, 3, 3, 2, 4) — O(1) single-step inference
         self._lookup_table: np.ndarray | None = None
         self._cpt_path = cpt_path
@@ -288,6 +271,7 @@ class CRMAModel:
     @staticmethod
     def _default_cfg() -> CRMAModelConfig:
         from gik_icechain.shared.config import CRMAModelConfig
+
         return CRMAModelConfig()
 
     def evidence_thresholds(self, rp: int | None = None) -> EvidenceThresholds:
@@ -340,25 +324,39 @@ class CRMAModel:
         return self._model
 
     def build(self) -> None:
-        """Construct the static BN, the 2-slice DBN, and the inference lookup table."""
-        cpds = self._build_cpds()
-        cpd_compound = next((c for c in cpds if c.variable == "Compound_Risk"), None)
-        cpd_risk = next((c for c in cpds if c.variable == "Risk_State"), None)
-        if cpd_compound is None:
-            raise ValueError("CPD for 'Compound_Risk' missing from _build_cpds()")
-        if cpd_risk is None:
-            raise ValueError("CPD for 'Risk_State' missing from _build_cpds()")
+        """Build the static BN and pre-compute the O(1) lookup table.
 
+        The DBN for infer_sequence() is NOT built here — it is constructed
+        lazily on first call via _ensure_dbn(), since infer() (lookup table)
+        is the only path used in production batch processing.
+        """
+        cpds = self._build_cpds()
         self._model = DiscreteBayesianNetwork(_INTRA_EDGES)
         self._model.add_cpds(*cpds)
         if not self._model.check_model():
-            raise ValueError("DiscreteBayesianNetwork failed validation")
+            raise ValueError("CRMA BayesianNetwork failed validation")
 
-        # Pre-compute lookup table: 972 parent combinations → Risk_State probs
+        cpd_compound = self._model.get_cpds("Compound_Risk")
+        cpd_risk = self._model.get_cpds("Risk_State")
         self._lookup_table = self._build_lookup_table(cpd_compound, cpd_risk)
+        self._dbn = None
+        self._dbn_inference = None
 
-        # Build DBN with explicit intra + inter slice edges to avoid pgmpy
-        # initialize_initial_state() bug (hardcoded reshape to (2, -1)).
+        log.info("crma_model_built", cluster=self.cluster, nodes=len(self._model.nodes()))
+
+    def _ensure_dbn(self) -> None:
+        """Lazily build the DynamicBayesianNetwork for infer_sequence().
+
+        Builds once and caches. Invalidated by load_cpts() so refined CPTs
+        propagate to subsequent infer_sequence() calls.
+        """
+        if self._dbn_inference is not None:
+            return
+        if self._model is None:
+            raise RuntimeError("Model not built. Call build() first.")
+
+        cpds = self._model.get_cpds()
+
         dbn_all_edges = (
             [((u, 0), (v, 0)) for u, v in _INTRA_EDGES]
             + [((u, 1), (v, 1)) for u, v in _INTRA_EDGES]
@@ -376,16 +374,15 @@ class CRMAModel:
         )
         dbn_cpds_0 = [self._to_dbn_cpd(cpd, time_slice=0) for cpd in cpds]
         dbn_cpds_1 = [
-            self._to_dbn_cpd(cpd, time_slice=1)
-            for cpd in cpds
-            if cpd.variable != "API_State"
+            self._to_dbn_cpd(cpd, time_slice=1) for cpd in cpds if cpd.variable != "API_State"
         ]
         self._dbn.add_cpds(*dbn_cpds_0, *dbn_cpds_1, api_transition_cpd)
+
         if not self._dbn.check_model():
             raise ValueError("DynamicBayesianNetwork failed validation")
-        self._dbn_inference = DBNInference(self._dbn)
 
-        log.info("crma_model_built", cluster=self.cluster, nodes=len(self._model.nodes()))
+        self._dbn_inference = DBNInference(self._dbn)
+        log.debug("dbn_built_lazily", cluster=self.cluster)
 
     def infer(self, evidence: CRMAEvidence) -> dict[str, Any]:
         """Single-step flood risk inference via O(1) lookup table."""
@@ -410,19 +407,12 @@ class CRMAModel:
         evidence_sequence: list[CRMAEvidence],
         initial_api_state: int = 0,
     ) -> list[dict[str, Any]]:
-        """Multi-step inference over a temporal sequence via DBNInference.
+        """Multi-step inference via DBNInference. Used for retrospective validation.
 
-        API_State is treated as a latent variable propagated through the
-        inter-slice transition matrix; all other evidence is fully observed.
-        Soil_Memory is derived from evidence.sat_consecutive_days at each step
-        and is passed as observed evidence (not latent).
-
-        Args:
-            evidence_sequence:  Ordered list of CRMAEvidence (one per day).
-            initial_api_state:  Discretised API_State at day 0 (0/1/2).
+        API_State is latent and propagated via the api_transition matrix.
+        The DBN is built lazily on first call and cached.
         """
-        if self._dbn_inference is None:
-            raise RuntimeError("Model not built. Call build() first.")
+        self._ensure_dbn()
 
         n_steps = len(evidence_sequence)
         if n_steps == 0:
@@ -461,7 +451,7 @@ class CRMAModel:
          spatial_coverage, data_confidence, api_state, soil_memory] → risk_probs.
         """
         compound_cpt = cpd_compound.get_values()  # shape (4, 972)
-        risk_cpt = cpd_risk.get_values()           # shape (4, 4)
+        risk_cpt = cpd_risk.get_values()  # shape (4, 4)
 
         table = np.zeros((3, 3, 2, 3, 3, 3, 2, 4))
         for idx in range(compound_cpt.shape[1]):
@@ -522,8 +512,15 @@ class CRMAModel:
             evidence_card=[4],
         )
         return [
-            cpd_forecast, cpd_obs, cpd_persist, cpd_spatial,
-            cpd_confidence, cpd_api, cpd_soil_memory, cpd_compound, cpd_risk,
+            cpd_forecast,
+            cpd_obs,
+            cpd_persist,
+            cpd_spatial,
+            cpd_confidence,
+            cpd_api,
+            cpd_soil_memory,
+            cpd_compound,
+            cpd_risk,
         ]
 
     def _build_compound_risk_cpd(self, cfg: CRMAModelConfig) -> Any:
@@ -541,11 +538,13 @@ class CRMAModel:
         for c in _PARENT_CARDS:
             n_combinations *= c
 
-        w_map = {k: {"forecast": v.forecast, "obs": v.obs, "api": v.api}
-                 for k, v in cfg.cluster_weights.items()}
+        w_map = {
+            k: {"forecast": v.forecast, "obs": v.obs, "api": v.api}
+            for k, v in cfg.cluster_weights.items()
+        }
         w = w_map.get(self.cluster, {"forecast": 2.0, "obs": 1.5, "api": 1.5})
 
-        fresh_thr = cfg.compound_score_thresholds.fresh    # [low, mid, high]
+        fresh_thr = cfg.compound_score_thresholds.fresh  # [low, mid, high]
         prol_thr = cfg.compound_score_thresholds.prolonged
         # Data_Confidence dampening [Low, Medium, High] — config-driven so the
         # common Medium case for precip ensembles does not veto strong signals.
@@ -556,8 +555,8 @@ class CRMAModel:
 
         cpt = np.zeros((4, n_combinations))
         for idx in range(n_combinations):
-            f_haz, obs_ant, t_persist, spatial, confidence, api, soil_mem = (
-                self._idx_to_states(idx, _PARENT_CARDS)
+            f_haz, obs_ant, t_persist, spatial, confidence, api, soil_mem = self._idx_to_states(
+                idx, _PARENT_CARDS
             )
 
             score = (
@@ -619,7 +618,11 @@ class CRMAModel:
         log.info("cpts_saved", path=str(path))
 
     def load_cpts(self, path_or_dict: Path | dict) -> None:
-        """Load CPTs from a JSON file (or pre-parsed dict) produced by save_cpts()."""
+        """Load CPTs from a JSON file (or pre-parsed dict) produced by save_cpts().
+
+        Rebuilds the lookup table and invalidates the DBN cache so the next
+        call to infer_sequence() picks up the updated CPDs.
+        """
         if self._model is None:
             raise RuntimeError("Model not built first.")
         if isinstance(path_or_dict, dict):
@@ -633,4 +636,6 @@ class CRMAModel:
         cpd_compound = self._model.get_cpds("Compound_Risk")
         cpd_risk = self._model.get_cpds("Risk_State")
         self._lookup_table = self._build_lookup_table(cpd_compound, cpd_risk)
+        self._dbn = None
+        self._dbn_inference = None
         log.info("cpts_loaded")
