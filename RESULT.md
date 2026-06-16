@@ -186,6 +186,86 @@ Design decisions:
 
 ---
 
+## Validation case study — April 2024 East Africa floods (compound flood)
+
+A retrospective validation against EM-DAT (524 curated East-Africa flood events,
+2015–2026) on the catastrophic **April 2024** Kenya/Tanzania/Burundi/Somalia
+floods (41 admin-1 units flagged on 2024-04-24). This case drove a full
+root-cause investigation of the model's flood-detection skill.
+
+### Initial result — no demonstrated skill
+`scripts/tools.py validate-emdat` over the available risk dates:
+**precision = recall = F1 = 0**, **AUC-ROC = 0.565** (≈ random). On 2024-04-24 the
+41 flooding units were **all Green/No_Data** — the model signalled "no risk"
+during a catastrophe.
+
+### Root-cause chain
+1. **Exceedance is structurally blind to compound floods.** At the epicentre the
+   forecast exceedance was 0: the GEV return levels are very high (Nairobi 24h
+   RP5 = 120 mm, RP2 = 94 mm), while the April 2024 floods were *sustained
+   sub-return-period rain on saturated soil*, not a single >RP event. `flood_floor_mm`
+   is irrelevant here (far below the GEV level); lowering the return period (5→2)
+   does not help.
+2. **Primary cause — GPM data gap.** GPM IMERG on disk was near-complete for
+   2001–2023 (~365 files/yr) but had **only 14 files for 2024 and 44 for 2025**.
+   The antecedent/observation pathway (API + `Obs_Antecedent`) — the mechanism
+   *designed* to catch compound floods — was therefore **data-starved across every
+   validation run**. The all-Green / recall-0 was substantially a missing-data
+   artefact, not only a method limitation.
+3. **Fix.** Downloaded the lead-in GPM (NASA IMERG, `scripts/tools.py download-gpm`)
+   and added `_spinup_api_from_gpm` (commit `2f96dda`) so the API / soil-moisture
+   state advances from GPM observations on days without forecast exceedance —
+   decoupling the antecedent spin-up (GPM-only, local) from the heavy C2 path.
+4. **Window length.** A pure-antecedent flood (no forecast signal) can only reach
+   Orange/Red via `Soil_Memory = "prolonged"` (≥ 7 consecutive saturated days).
+   The soil only saturated ~04-21, so that pathway engages ~04-28 — just past a
+   window that stops at 04-27.
+
+### Decisive test — compound pathway works
+Re-running C3 over a full GPM lead-in window (2024-03-21 → **04-30**), Nairobi
+escalates exactly as designed:
+
+| date | API (mm) | label |
+|---|---|---|
+| 2024-04-24 | 115 | Yellow |
+| 2024-04-27 | 108 | Yellow |
+| **2024-04-28** | 137 | **Orange** |
+| 2024-04-30 | 156 | Orange |
+
+| date | flood units ≥ Orange | flood units ≥ Yellow | non-flood ≥ Orange (false alarm) |
+|---|---|---|---|
+| 2024-04-24 | 0 | 6 | 5 |
+| **2024-04-28** | **4** | 9 | 2 |
+| 2024-04-29 | 4 | 7 | 0 |
+| 2024-04-30 | 4 | 7 | 2 |
+
+The flip to Orange on 04-28 coincides with `Soil_Memory` crossing to "prolonged".
+**4/41 flood units reach Orange** once the window covers the saturation buildup,
+while false alarms stay low (5 → 0–2). A weight-tuning experiment
+(`gpm_obs_above_mmday` 25→12, `prolonged` thresholds 6.0→5.0) was **rejected** —
+it raised false-alarm Reds without lifting any flood unit to Orange, confirming
+the `default.yaml` compound pathway is well-calibrated.
+
+### Conclusions
+- The initial all-Green / recall-0 was driven by **(a) the GPM data gap** and
+  **(b) too-short windows** that did not cover the saturation buildup — **not** by
+  miscalibrated config. The model's compound-flood physics are sound: slow-onset
+  floods escalate Green → Yellow → Orange as soil saturates.
+- **Remaining honest limits:** only 4/41 units reach Orange (fluvial/urban floods
+  — Tana River, Nairobi urban — stay invisible to a pixel-local precip-exceedance
+  method); detection lags onset by ~4 days (physically expected for soil-saturation
+  buildup, but a lead-time concern operationally); a single event is not a skill
+  claim — real metrics require multi-event AUC over a continuous window with
+  complete GPM coverage.
+
+### Related commits
+| Commit | Change |
+|---|---|
+| `b56d2ea` | `cli.py`: wire EM-DAT into `run-all` risk path (`emdat_flood_match` tagging) |
+| `2f96dda` | `risk_engine.py`: spin up API from GPM on days without forecast exceedance |
+
+---
+
 ## CI/CD overhaul
 
 | Commit | File | Change |
