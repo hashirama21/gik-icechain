@@ -216,6 +216,54 @@ _NO_DATA_RESULT = {
 }
 
 
+def _spinup_api_from_gpm(
+    day: date,
+    gpm_dir: Path,
+    admin: gpd.GeoDataFrame,
+    pcode_cluster: dict[str, EastAfricaCluster],
+    crma_models: dict[EastAfricaCluster, CRMAModel],
+    bn_states: dict[str, dict[int, DynamicBNState]],
+    api_decay: float,
+    signal_threshold: float,
+    rp_options: list[int],
+) -> None:
+    """Advance API / soil-moisture state from GPM observations for a day with no
+    forecast exceedance (spin-up / lead-in).
+
+    ``API(t) = gpm_obs(t) + decay * API(t-1)`` depends only on observed rainfall,
+    so the antecedent pathway can be primed over a lead-in window without any
+    C2 exceedance. Mutates ``bn_states`` in place; writes no output.
+    """
+    gpm_da = load_gpm_daily(gpm_dir, day)
+    gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+
+    for pcode, cluster in pcode_cluster.items():
+        model = crma_models[cluster]
+        gpm_raw = float(gpm_s.get(pcode, float("nan")))
+        gpm_missing = not math.isfinite(gpm_raw)
+        gpm_24h = 0.0 if gpm_missing else gpm_raw
+        for rp in rp_options:
+            state = bn_states[pcode].setdefault(rp, init_state())
+            ev = CRMAEvidence(
+                exceedance_prob_24h=0.0,
+                exceedance_prob_72h=0.0,
+                exceedance_prob_7d=0.0,
+                gpm_obs_24h=gpm_24h,
+                api_mm=state.api_mm,
+                spatial_coverage_fraction=0.0,
+                consecutive_signal_days=state.consecutive_days,
+                sat_consecutive_days=state.sat_consecutive_days,
+                gpm_quality=2,
+                gpm_missing=gpm_missing,
+                rp_years=rp,
+                thresholds=model.evidence_thresholds(rp),
+            )
+            _, bn_states[pcode][rp] = bn_step(
+                state, ev, model,
+                api_decay=api_decay, gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold,
+            )
+
+
 def _process_day(
     day: date,
     exc_ds: xr.Dataset,
@@ -240,7 +288,16 @@ def _process_day(
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
     except KeyError:
-        log.warning("exceedance_date_missing", date=day)
+        # No forecast exceedance for this day. Rather than skipping it entirely
+        # (which freezes the antecedent state), advance the API / soil-moisture
+        # persistence from GPM observations alone so the compound-flood pathway
+        # is correctly primed for later days that do have exceedance. This
+        # decouples API spin-up (GPM-only, local) from the heavy C2 exceedance.
+        _spinup_api_from_gpm(
+            day, gpm_dir, admin, pcode_cluster, crma_models, bn_states,
+            api_decay, signal_threshold, rp_options,
+        )
+        log.info("exceedance_date_missing_apispinup", date=day)
         return None
 
     # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
