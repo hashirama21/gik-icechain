@@ -6,6 +6,7 @@ with contextlib.suppress(ImportError):
 from gik_icechain.risk.cpt_refinement import (
     EMDATFloodRecord,
     build_training_dataset,
+    build_training_dataset_from_gpm,
     load_emdat_east_africa,
     refine_cpts_with_emdat,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "aggregate_to_admin1",
     "build_score",
     "build_training_dataset",
+    "build_training_dataset_from_gpm",
     "compute_api_series",
     "coverage_fraction",
     "export_eahw_format",

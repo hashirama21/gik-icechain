@@ -17,21 +17,28 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import structlog
 
-from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel, EvidenceThresholds
+from gik_icechain.risk.crma_model import (
+    _COMPOUND_PARENTS,
+    _PARENT_CARDS,
+    CRMAEvidence,
+    CRMAModel,
+    EvidenceThresholds,
+)
 from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
 
 log = structlog.get_logger(__name__)
 
 try:
-    from pgmpy.estimators import MaximumLikelihoodEstimator
+    from pgmpy.estimators import BayesianEstimator
     from pgmpy.inference import VariableElimination
 
     PGMPY_AVAILABLE = True
 except ImportError:
-    MaximumLikelihoodEstimator = None  # type: ignore[assignment,misc]
+    BayesianEstimator = None  # type: ignore[assignment,misc]
     VariableElimination = None  # type: ignore[assignment,misc]
     PGMPY_AVAILABLE = False
 
@@ -134,6 +141,22 @@ def _evidence_row(evidence: CRMAEvidence, risk_state: int, **extra: object) -> d
         "Risk_State": risk_state,
         **extra,
     }
+
+
+def _derive_compound_risk(model: object, df: pd.DataFrame) -> pd.Series:
+    """Most-likely Compound_Risk state per row, via the model's Compound_Risk CPD.
+
+    Risk_State's only parent is Compound_Risk, so the raw evidence columns are
+    mapped to their deterministic Compound_Risk argmax before MLE.
+    """
+    cpt = model.get_cpds("Compound_Risk").get_values()  # type: ignore[attr-defined]
+    states = []
+    for _, row in df.iterrows():
+        idx = 0
+        for parent, card in zip(_COMPOUND_PARENTS, _PARENT_CARDS, strict=True):
+            idx = idx * card + int(row[parent])
+        states.append(int(np.argmax(cpt[:, idx])))
+    return pd.Series(states, index=df.index, dtype=int)
 
 
 def build_training_dataset(
@@ -289,6 +312,159 @@ def build_training_dataset(
     return df
 
 
+def emdat_severity_label(
+    record: EMDATFloodRecord,
+    *,
+    red_deaths: int = 20,
+    red_affected: int = 100_000,
+    orange_deaths: int = 5,
+    orange_affected: int = 10_000,
+) -> int:
+    """Map an EM-DAT event to a graded Risk_State label from its impact.
+
+    Red (3) for major disasters, Orange (2) for moderate, Yellow (1) otherwise —
+    so positives populate the intermediate Risk_State rows instead of collapsing
+    every flood to Red. Missing impact counts are treated as 0 (-> Yellow).
+    """
+    deaths = record.deaths or 0
+    affected = record.affected or 0
+    if deaths >= red_deaths or affected >= red_affected:
+        return 3
+    if deaths >= orange_deaths or affected >= orange_affected:
+        return 2
+    return 1
+
+
+def build_training_dataset_from_gpm(
+    emdat_records: list[EMDATFloodRecord],
+    admin_gdf: "object",
+    gpm_dir: Path,
+    crma: CRMAModel,
+    *,
+    api_decay: float = 0.8,
+    spinup_days: int = 30,
+    negative_sample_ratio: float = 3.0,
+    rp: int = 5,
+    event_offsets: int = 3,
+    signal_threshold: float = 0.15,
+    graded_labels: bool = True,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Build a labeled training set from observed GPM, decoupled from C2.
+
+    For each EM-DAT event the API / soil-memory state is spun up day by day from
+    observed GPM IMERG over a ``spinup_days`` lead-in (exceedance=0), reproducing
+    the production Dynamic-BN evolution. The discretised evidence on the event
+    days yields Red positives; every other day x unit is a Green negative. Frees
+    the training set from the handful of risk_scores dates and the ECMWF archive,
+    so positives scale from a handful to hundreds.
+
+    Args:
+        admin_gdf: Admin-1 GeoDataFrame with an ``admin1_pcode`` column.
+        gpm_dir:   Directory of GPM IMERG daily files (data-complete window).
+        crma:      Built CRMAModel — supplies thresholds and O(1) inference.
+    """
+    import math
+    from datetime import timedelta
+
+    from gik_icechain.risk.aggregator import aggregate_to_admin1
+    from gik_icechain.risk.dynamic_bn import init_state, step
+    from gik_icechain.risk.gpm_loader import load_gpm_daily
+
+    thresholds = crma.evidence_thresholds(rp)
+    valid_pcodes = set(admin_gdf["admin1_pcode"].astype(str))
+    pos_records = [r for r in emdat_records if r.admin1_pcode in valid_pcodes]
+    pcodes = sorted({r.admin1_pcode for r in pos_records})
+    if not pcodes:
+        log.warning("no_emdat_pcode_in_admin", n_records=len(emdat_records))
+        return pd.DataFrame()
+    admin = admin_gdf[admin_gdf["admin1_pcode"].astype(str).isin(pcodes)].copy()
+
+    # event_days[pcode][date] = graded Risk_State label (max severity on overlap).
+    event_days: dict[str, dict] = {}
+    windows: list[list] = []
+    for r in pos_records:
+        start = r.start_date.date()
+        label = emdat_severity_label(r) if graded_labels else 3
+        day_labels = event_days.setdefault(r.admin1_pcode, {})
+        for o in range(event_offsets):
+            d = start + timedelta(days=o)
+            day_labels[d] = max(day_labels.get(d, 0), label)
+        windows.append(
+            [start - timedelta(days=spinup_days), start + timedelta(days=event_offsets - 1)]
+        )
+
+    # Merge overlapping lead-in windows into contiguous ranges (state resets per range).
+    windows.sort()
+    merged: list[list] = []
+    for w in windows:
+        if merged and w[0] <= merged[-1][1] + timedelta(days=1):
+            merged[-1][1] = max(merged[-1][1], w[1])
+        else:
+            merged.append(w)
+
+    positives: list[dict] = []
+    neg_pool: list[dict] = []
+    for rng_start, rng_end in merged:
+        state = {pc: init_state() for pc in pcodes}
+        day = rng_start
+        while day <= rng_end:
+            da = load_gpm_daily(gpm_dir, day)
+            gpm_s = aggregate_to_admin1(da, admin) if da is not None else pd.Series(dtype=float)
+            for pc in pcodes:
+                st = state[pc]
+                raw = float(gpm_s.get(pc, float("nan")))
+                missing = not math.isfinite(raw)
+                gpm24 = 0.0 if missing else raw
+                event_label = event_days.get(pc, {}).get(day)
+                ev = CRMAEvidence(
+                    exceedance_prob_24h=0.0,
+                    exceedance_prob_72h=0.0,
+                    exceedance_prob_7d=0.0,
+                    gpm_obs_24h=gpm24,
+                    api_mm=st.api_mm,
+                    spatial_coverage_fraction=0.5 if event_label is not None else 0.1,
+                    consecutive_signal_days=st.consecutive_days,
+                    sat_consecutive_days=st.sat_consecutive_days,
+                    gpm_quality=2,
+                    gpm_missing=missing,
+                    rp_years=rp,
+                    thresholds=thresholds,
+                )
+                # ev already carries the pre-advance state, matching step()'s discretisation.
+                _, state[pc] = step(
+                    st, ev, crma, api_decay=api_decay, gpm_obs_mm=gpm24,
+                    signal_threshold=signal_threshold,
+                )
+                if event_label is not None:
+                    positives.append(
+                        _evidence_row(
+                            ev, event_label, source="emdat_positive_gpm", date=day, admin1_pcode=pc
+                        )
+                    )
+                elif not missing:
+                    neg_pool.append(
+                        _evidence_row(ev, 0, source="negative_sample", date=day, admin1_pcode=pc)
+                    )
+            day += timedelta(days=1)
+
+    n_pos = len(positives)
+    neg_df = pd.DataFrame(neg_pool)
+    n_neg = int(n_pos * negative_sample_ratio)
+    if not neg_df.empty and n_neg < len(neg_df):
+        neg_df = neg_df.sample(n_neg, random_state=seed)
+    df = pd.concat([pd.DataFrame(positives), neg_df], ignore_index=True)
+    log.info(
+        "training_dataset_from_gpm_built",
+        n_positive=n_pos,
+        n_negative=len(df) - n_pos,
+        n_events=len(pos_records),
+        n_pcodes=len(pcodes),
+        risk_state_distribution=df["Risk_State"].value_counts().to_dict() if not df.empty else {},
+    )
+    return df
+
+
 def refine_cpts_with_emdat(
     crma: CRMAModel,
     training_df: pd.DataFrame,
@@ -310,9 +486,14 @@ def refine_cpts_with_emdat(
     if not PGMPY_AVAILABLE:
         raise ImportError("pgmpy is required: pip install pgmpy")
     model = crma.get_pgmpy_model()  # public API; raises RuntimeError if not built
-    estimator = MaximumLikelihoodEstimator(  # type: ignore[operator]
+
+    # MLE needs every model node present; derive Compound_Risk (Risk_State's parent).
+    mle_df = training_df[_EVIDENCE_COLS].copy()
+    mle_df["Compound_Risk"] = _derive_compound_risk(model, mle_df)
+
+    estimator = BayesianEstimator(  # type: ignore[operator]
         model,
-        training_df[_EVIDENCE_COLS].copy(),
+        mle_df,
         state_names=_STATE_NAMES,
     )
 
