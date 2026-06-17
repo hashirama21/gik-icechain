@@ -72,7 +72,7 @@ jobs:
           python -m gik_icechain run-all \
             --start "${{ steps.range.outputs.start }}" \
             --end   "${{ steps.range.outputs.end }}" \
-            --config configs/default.yaml \
+            --config configs/ci_e2e.yaml \
             --output results/
 
       - name: EM-DAT validation (event-level early detection)
