@@ -568,8 +568,8 @@ class CRMAModel:
             score_forecast = f_haz * w["forecast"]
             score_obs = (
                 obs_ant * w["obs"]
-                + t_persist * 1.5
-                + spatial * 1.0
+                + t_persist * cfg.weight_temporal_persist
+                + spatial * cfg.weight_spatial_coverage
                 + api * w["api"]
             )
             if self._cfg.confidence_damps_forecast:

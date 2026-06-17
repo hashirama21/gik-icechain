@@ -27,6 +27,15 @@ class TestCRMAEvidenceDiscretisation:
         e = make_evidence(exceedance_prob_24h=0.50)
         assert e.forecast_hazard_state == 2
 
+    def test_extreme_forecast_hazard(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h=0.80)
+        assert e.forecast_hazard_state == 3
+
+    def test_extreme_threshold_boundary(self, make_evidence):
+        # Exactly at 0.70 → Extreme; just below → High.
+        assert make_evidence(exceedance_prob_24h=0.70).forecast_hazard_state == 3
+        assert make_evidence(exceedance_prob_24h=0.699).forecast_hazard_state == 2
+
     def test_below_normal_obs(self, make_evidence):
         e = make_evidence(gpm_obs_24h=1.0)
         assert e.obs_antecedent_state == 0
@@ -99,6 +108,7 @@ class TestCRMAEvidenceDiscretisation:
         assert isinstance(e.thresholds, EvidenceThresholds)
         assert e.thresholds.hazard_medium_threshold == 0.15
         assert e.thresholds.hazard_high_threshold == 0.40
+        assert e.thresholds.hazard_extreme_threshold == 0.70
 
 
 @pytest.fixture(scope="module")
@@ -281,3 +291,41 @@ class TestCRMAModelInference:
         model = built_model.get_pgmpy_model()
         assert model is not None
         assert hasattr(model, "check_model")
+
+
+class TestEscalationLevers:
+    """Lever #1 (Extreme hazard state) + #3 (confidence/forecast decoupling)."""
+
+    def test_lookup_table_shape_4states(self, built_model):
+        """Forecast_Hazard axis of the O(1) lookup table is 4 states (Extreme)."""
+        assert built_model._lookup_table.shape[0] == 4
+        assert built_model._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 4)
+
+    def test_decoupling_boundary_diverges(self, make_evidence):
+        """At a bucket boundary, a strong forecast under missing GPM (Low
+        confidence) must survive when decoupled but is damped down under the
+        legacy whole-score coupling — the only case where #3 is observable."""
+        from gik_icechain.shared.config import CRMAModelConfig
+
+        kwargs = dict(
+            exceedance_prob_72h=0.71,           # Extreme hazard
+            gpm_missing=True,                   # → Data_Confidence Low
+            api_mm=6.0,                         # dry soil
+            spatial_coverage_fraction=0.10,     # Local
+        )
+
+        def infer(damps_forecast: bool):
+            model = CRMAModel(
+                cluster=EastAfricaCluster.HORN_ARID,
+                crma_cfg=CRMAModelConfig(confidence_damps_forecast=damps_forecast),
+            )
+            model.build()
+            ev = make_evidence(thresholds=model.evidence_thresholds(5), **kwargs)
+            return model.infer(ev)
+
+        legacy = infer(True)
+        decoupled = infer(False)
+        assert decoupled["risk_state"] > legacy["risk_state"], (
+            f"Decoupling must preserve the forecast: legacy={legacy['risk_label']} "
+            f"decoupled={decoupled['risk_label']}"
+        )
