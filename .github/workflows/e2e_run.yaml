@@ -12,19 +12,23 @@ name: E2E Pipeline Run (MinIO store)
 on:
   workflow_dispatch:
     inputs:
-      target_date:
-        description: "Forecast date YYYY-MM-DD (in GIK catalog & < ~15 months old)"
+      start_date:
+        description: "First forecast date YYYY-MM-DD (in GIK catalog & < ~15 months old)"
         required: true
         default: "2025-10-24"
+      end_date:
+        description: "Last forecast date YYYY-MM-DD (>= start; runtime scales with span)"
+        required: false
+        default: ""
 
 env:
   PYTHONIOENCODING: utf-8
 
 jobs:
   e2e:
-    name: "run-all (C1 -> C2 -> C3, MinIO)"
+    name: "run-all (C1 -> C2 -> C3 -> validation, MinIO)"
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -43,13 +47,22 @@ jobs:
       - name: Download pre-fitted GEV thresholds
         run: python scripts/tools.py download-thresholds
 
+      - name: Resolve date range
+        id: range
+        run: |
+          START="${{ inputs.start_date }}"
+          END="${{ inputs.end_date }}"
+          [ -z "$END" ] && END="$START"
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "Pipeline range: $START -> $END"
+
       - name: Download observed rainfall for C3 (CHIRPS, no auth)
         run: |
-          D="${{ inputs.target_date }}"
-          START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('$D')-timedelta(14))")
-          python scripts/tools.py download-gpm --source chirps --start "$START" --end "$D"
+          START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('${{ steps.range.outputs.start }}')-timedelta(14))")
+          python scripts/tools.py download-gpm --source chirps --start "$START" --end "${{ steps.range.outputs.end }}"
 
-      - name: Run full pipeline
+      - name: Run full pipeline (C1 -> C2 -> C3)
         env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
@@ -57,17 +70,27 @@ jobs:
           AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
         run: |
           python -m gik_icechain run-all \
-            --start "${{ inputs.target_date }}" \
-            --end   "${{ inputs.target_date }}" \
-            --config configs/e2e_test.yaml \
-            --output results/e2e_test/
+            --start "${{ steps.range.outputs.start }}" \
+            --end   "${{ steps.range.outputs.end }}" \
+            --config configs/default.yaml \
+            --output results/
+
+      - name: EM-DAT validation (event-level early detection)
+        if: always()
+        run: |
+          python scripts/tools.py validate-emdat \
+            --risk-dir results/admin1_risk \
+            --start "${{ steps.range.outputs.start }}" \
+            --end   "${{ steps.range.outputs.end }}" \
+            --event-level --lead-days 1 \
+          || echo "validate-emdat produced no metrics (no EM-DAT match in range?)"
 
       - name: Risk score summary
         if: always()
         run: |
           python - <<'EOF'
           import glob, json
-          files = sorted(glob.glob("results/e2e_test/admin1_risk/*_risk_scores.json"))
+          files = sorted(glob.glob("results/admin1_risk/*_risk_scores.json"))
           if not files:
               print("No risk score files produced.")
               raise SystemExit(0)
@@ -85,8 +108,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-results-${{ inputs.target_date }}
+          name: e2e-results-${{ steps.range.outputs.start }}
           path: |
-            results/e2e_test/
+            results/admin1_risk/
+            results/validation/
           retention-days: 14
           if-no-files-found: warn
