@@ -384,6 +384,10 @@ class CRMAModelConfig(BaseModel):
     hazard_thresholds_by_rp: dict[int, tuple[float, float]] = Field(
         default_factory=lambda: {2: (0.30, 0.60), 5: (0.15, 0.40)}
     )
+    hazard_extreme_threshold: float = 0.70  # High → Extreme boundary
+    hazard_extreme_by_rp: dict[int, float] = Field(
+        default_factory=lambda: {2: 0.85, 5: 0.70}
+    )
 
     @model_validator(mode="after")
     def _hazard_rp_thresholds_ordered(self) -> CRMAModelConfig:
@@ -400,6 +404,8 @@ class CRMAModelConfig(BaseModel):
     # Medium (IQR/median ~0.3-1.0), so Medium must stay near-neutral — otherwise
     # it structurally vetoes strong forecast signals (all-Green failure mode).
     confidence_damping: list[float] = Field(default_factory=lambda: [0.8, 0.95, 1.0])
+    # False (default): confidence dampens only the obs branch. True: legacy whole-score.
+    confidence_damps_forecast: bool = False
 
     # CPT parameters
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(

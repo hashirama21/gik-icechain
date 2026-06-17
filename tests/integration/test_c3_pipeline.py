@@ -71,6 +71,43 @@ def fake_exceedance_store(tmp_path):
 
 
 @pytest.fixture
+def dual_rp_exceedance_store(tmp_path):
+    """Exceedance store with RP5 saturated and RP20 ~zero, so risk_by_rp must differ."""
+    p_data = np.zeros((1, NLAT, NLON, len(WINDOWS_H), len(RETURN_PERIODS)), dtype=np.float32)
+    p_data[..., RETURN_PERIODS.index(5)] = 0.85   # Extreme hazard
+    p_data[..., RETURN_PERIODS.index(20)] = 0.05   # Low hazard
+    conf_data = np.full((1, NLAT, NLON), 2, dtype=np.int8)
+
+    ds = xr.Dataset(
+        {
+            "exceedance_prob": xr.DataArray(
+                p_data,
+                dims=["date", "latitude", "longitude", "window", "return_period"],
+                coords={
+                    "date": [pd.Timestamp(TEST_DATE)],
+                    "latitude": LAT,
+                    "longitude": LON,
+                    "window": np.array(WINDOWS_H, dtype=np.int16),
+                    "return_period": np.array(RETURN_PERIODS, dtype=np.int16),
+                },
+            ),
+            "ensemble_confidence": xr.DataArray(
+                conf_data,
+                dims=["date", "latitude", "longitude"],
+                coords={
+                    "date": [pd.Timestamp(TEST_DATE)],
+                    "latitude": LAT,
+                    "longitude": LON,
+                },
+            ),
+        }
+    )
+    out = str(tmp_path / "exceedance_dual_rp.zarr")
+    ds.to_zarr(out, mode="w", consolidated=True)
+    return out
+
+
+@pytest.fixture
 def fake_admin_boundaries(tmp_path):
     pytest.importorskip("geopandas")
     import geopandas as gpd
@@ -175,13 +212,13 @@ class TestRiskBatch:
             assert abs(total - 1.0) < 1e-4 or p["risk_label"] == "No_Data"
 
     def test_dual_rp_risk_by_rp(
-        self, built_crma, fake_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
+        self, built_crma, dual_rp_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
     ):
         pytest.importorskip("regionmask", reason="regionmask not installed")
         from gik_icechain.risk.risk_engine import run_risk_batch
 
         written = run_risk_batch(
-            exceedance_store_uri=fake_exceedance_store,
+            exceedance_store_uri=dual_rp_exceedance_store,
             gpm_dir=fake_gpm_dir,
             admin_boundaries_path=fake_admin_boundaries,
             crma_models=built_crma,

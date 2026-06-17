@@ -64,7 +64,7 @@ RISK_LEVELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red"}
 N_RISK_LEVELS = len(RISK_LEVELS)
 
 NODE_CARDS: dict[str, int] = {
-    "Forecast_Hazard": 3,  # Low / Medium / High
+    "Forecast_Hazard": 4,  # Low / Medium / High / Extreme
     "Obs_Antecedent": 3,  # Below normal / Normal / Above normal
     "Temporal_Persist": 2,  # No / Yes
     "Spatial_Coverage": 3,  # Local / Regional / Extensive
@@ -117,6 +117,7 @@ class EvidenceThresholds:
     soil_memory_days: int = 7
     hazard_medium_threshold: float = 0.15  # Low → Medium boundary for Forecast_Hazard
     hazard_high_threshold: float = 0.40  # Medium → High boundary for Forecast_Hazard
+    hazard_extreme_threshold: float = 0.70  # High → Extreme boundary for Forecast_Hazard
 
 
 @dataclass
@@ -165,8 +166,10 @@ class CRMAEvidence:
 
     @property
     def forecast_hazard_state(self) -> int:
-        """0=Low, 1=Medium, 2=High."""
+        """0=Low, 1=Medium, 2=High, 3=Extreme."""
         p = max(self.exceedance_prob_24h, self.exceedance_prob_72h)
+        if p >= self.thresholds.hazard_extreme_threshold:
+            return 3
         if p >= self.thresholds.hazard_high_threshold:
             return 2
         if p >= self.thresholds.hazard_medium_threshold:
@@ -287,6 +290,7 @@ class CRMAModel:
         medium, high = cfg.hazard_medium_threshold, cfg.hazard_high_threshold
         if rp is not None and rp in cfg.hazard_thresholds_by_rp:
             medium, high = cfg.hazard_thresholds_by_rp[rp]
+        extreme = cfg.hazard_extreme_by_rp.get(rp, cfg.hazard_extreme_threshold)
         return EvidenceThresholds(
             gpm_normal_mmday=cfg.gpm_obs_normal_mmday,
             gpm_above_mmday=cfg.gpm_obs_above_mmday,
@@ -298,6 +302,7 @@ class CRMAModel:
             soil_memory_days=cfg.soil_memory_days,
             hazard_medium_threshold=medium,
             hazard_high_threshold=high,
+            hazard_extreme_threshold=extreme,
         )
 
     def make_evidence(self, rp: int | None = None, **kwargs: object) -> CRMAEvidence:
@@ -453,7 +458,7 @@ class CRMAModel:
         compound_cpt = cpd_compound.get_values()  # shape (4, 972)
         risk_cpt = cpd_risk.get_values()  # shape (4, 4)
 
-        table = np.zeros((3, 3, 2, 3, 3, 3, 2, 4))
+        table = np.zeros((*_PARENT_CARDS, N_RISK_LEVELS))
         for idx in range(compound_cpt.shape[1]):
             compound_probs = compound_cpt[:, idx]
             risk_probs = risk_cpt @ compound_probs
@@ -490,7 +495,7 @@ class CRMAModel:
         """Return TabularCPD objects for the static BN, all values from config."""
         cfg = self._cfg
 
-        cpd_forecast = TabularCPD("Forecast_Hazard", 3, [[0.50], [0.30], [0.20]])
+        cpd_forecast = TabularCPD("Forecast_Hazard", 4, [[0.50], [0.28], [0.15], [0.07]])
         cpd_obs = TabularCPD("Obs_Antecedent", 3, [[0.40], [0.35], [0.25]])
         cpd_persist = TabularCPD("Temporal_Persist", 2, [[0.75], [0.25]])
         cpd_spatial = TabularCPD("Spatial_Coverage", 3, [[0.50], [0.30], [0.20]])
@@ -559,13 +564,18 @@ class CRMAModel:
                 idx, _PARENT_CARDS
             )
 
-            score = (
-                f_haz * w["forecast"]
-                + obs_ant * w["obs"]
+            # Data_Confidence dampens only the observation branch, not forecast.
+            score_forecast = f_haz * w["forecast"]
+            score_obs = (
+                obs_ant * w["obs"]
                 + t_persist * 1.5
                 + spatial * 1.0
                 + api * w["api"]
-            ) * damping[confidence]
+            )
+            if self._cfg.confidence_damps_forecast:
+                score = (score_forecast + score_obs) * damping[confidence]
+            else:
+                score = score_forecast + score_obs * damping[confidence]
 
             if soil_mem == 0:
                 lo, mi, hi = fresh_thr
