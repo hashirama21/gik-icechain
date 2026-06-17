@@ -21,10 +21,76 @@ import argparse
 import csv
 import json
 import math
+from collections import defaultdict
+from datetime import date as _date
+from datetime import timedelta
 from pathlib import Path
 
 # risk_state thresholds for each decision level.
 _LEVELS = {"Yellow": 1, "Orange": 2, "Red": 3}
+
+
+def _contiguous_runs(days: list[str], flag: list[bool]) -> list[tuple[int, int]]:
+    """Index spans of maximal True runs over calendar-adjacent days."""
+    runs: list[tuple[int, int]] = []
+    i, n = 0, len(days)
+    while i < n:
+        if not flag[i]:
+            i += 1
+            continue
+        j = i
+        while (
+            j + 1 < n
+            and flag[j + 1]
+            and (_date.fromisoformat(days[j + 1]) - _date.fromisoformat(days[j])).days == 1
+        ):
+            j += 1
+        runs.append((i, j))
+        i = j + 1
+    return runs
+
+
+def _event_level(rows: list[dict], threshold: int, lead_days: int) -> dict[str, float]:
+    """Collapse contiguous EM-DAT flood runs per unit into single events and
+    measure early-warning detection: an event is detected if the model fires
+    >= threshold on any day in [onset - lead_days, end]. False alarms are
+    counted at the level of contiguous model-fired runs that overlap no event.
+    """
+    by_pc: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_pc[r["pcode"]].append(r)
+
+    n_events = detected = n_fired = fp = 0
+    for rs in by_pc.values():
+        rs.sort(key=lambda r: r["date"])
+        days = [r["date"] for r in rs]
+        ev_runs = _contiguous_runs(days, [r["label"] == 1 for r in rs])
+        fired_runs = _contiguous_runs(days, [r["risk_state"] >= threshold for r in rs])
+
+        windows = [
+            (_date.fromisoformat(days[a]) - timedelta(days=lead_days), _date.fromisoformat(days[b]))
+            for a, b in ev_runs
+        ]
+        n_events += len(ev_runs)
+        for w0, w1 in windows:
+            detected += int(any(
+                w0 <= _date.fromisoformat(r["date"]) <= w1 and r["risk_state"] >= threshold
+                for r in rs
+            ))
+        n_fired += len(fired_runs)
+        for a, b in fired_runs:
+            fr0, fr1 = _date.fromisoformat(days[a]), _date.fromisoformat(days[b])
+            if not any(not (fr1 < w0 or fr0 > w1) for w0, w1 in windows):
+                fp += 1
+
+    return {
+        "n_events": n_events,
+        "detected": detected,
+        "recall": round(detected / n_events, 4) if n_events else 0.0,
+        "n_fired_runs": n_fired,
+        "false_alarm_runs": fp,
+        "precision": round((n_fired - fp) / n_fired, 4) if n_fired else 0.0,
+    }
 
 
 def _load_rows(risk_dir: Path, start: str | None, end: str | None) -> list[dict]:
@@ -96,6 +162,8 @@ def validate(
     start: str | None = None,
     end: str | None = None,
     score_field: str = "p_red",
+    event_level: bool = False,
+    lead_days: int = 0,
 ) -> dict:
     rows = _load_rows(risk_dir, start, end)
     if not rows:
@@ -115,6 +183,11 @@ def validate(
         "recall_at_red": per_level["Red"]["recall"],
         "by_threshold": per_level,
     }
+    if event_level:
+        metrics["lead_days"] = lead_days
+        metrics["event_level"] = {
+            name: _event_level(rows, thr, lead_days) for name, thr in _LEVELS.items()
+        }
 
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "emdat_validation_metrics.json").write_text(json.dumps(metrics, indent=2))
@@ -140,6 +213,14 @@ def _print_report(m: dict) -> None:
         b = m["by_threshold"][name]
         print(f"{name:8} {b['recall']:>8.3f} {b['precision']:>8.3f} {b['false_alarm_rate']:>8.4f} "
               f"{b['tp']:>5} {b['fp']:>6} {b['fn']:>5}")
+    if "event_level" in m:
+        print(f"\nEvent-level (early detection, lead={m['lead_days']}d) — "
+              "contiguous EM-DAT runs per unit collapsed to one event:")
+        print(f"{'level':8} {'recall':>8} {'precis.':>8} {'detect':>8} {'events':>7} {'falseAl':>8}")
+        for name in _LEVELS:
+            e = m["event_level"][name]
+            print(f"{name:8} {e['recall']:>8.3f} {e['precision']:>8.3f} "
+                  f"{e['detected']:>5}/{e['n_events']:<3} {e['n_events']:>7} {e['false_alarm_runs']:>8}")
     if m["n_positives"] == 0:
         print("\nWARNING: 0 EM-DAT positives in range — ground truth empty "
               "(check date range / pcode join).")
@@ -152,8 +233,15 @@ def main() -> None:
     p.add_argument("--start", help="First date YYYY-MM-DD (inclusive).")
     p.add_argument("--end", help="Last date YYYY-MM-DD (inclusive).")
     p.add_argument("--score-field", default="p_red", help="Continuous field for AUC (default p_red).")
+    p.add_argument("--event-level", action="store_true",
+                   help="Also score early-warning detection per collapsed EM-DAT event.")
+    p.add_argument("--lead-days", type=int, default=0,
+                   help="Credit a hit up to N days before event onset (event-level only).")
     args = p.parse_args()
-    metrics = validate(args.risk_dir, args.output, args.start, args.end, args.score_field)
+    metrics = validate(
+        args.risk_dir, args.output, args.start, args.end, args.score_field,
+        event_level=args.event_level, lead_days=args.lead_days,
+    )
     _print_report(metrics)
     print(f"\nWrote {args.output / 'emdat_validation_metrics.json'} "
           f"and {args.output / 'emdat_validation_events.csv'}")
