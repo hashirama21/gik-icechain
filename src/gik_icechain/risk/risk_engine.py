@@ -351,6 +351,7 @@ def _process_day(
         quality = int(conf_s.get(pcode, 2.0))
 
         risk_by_rp: dict[str, dict] = {}
+        results_by_rp: dict[int, tuple[dict, CRMAEvidence]] = {}
         primary_result: dict | None = None
         primary_ev: CRMAEvidence | None = None
 
@@ -391,8 +392,19 @@ def _process_day(
                 signal_threshold=signal_threshold,
             )
             risk_by_rp[str(rp)] = _slim(result)
+            results_by_rp[rp] = (result, ev)
             if rp == rp_signal:
                 primary_result, primary_ev = result, ev
+
+        # Soil-conditioned threshold: on saturated soil, surface the lower-RP
+        # exceedance (a lower effective rainfall bar) instead of rp_signal.
+        if (
+            model._cfg.soil_conditioned_rp
+            and primary_ev is not None
+            and primary_ev.api_state >= 2
+            and model._cfg.saturated_rp in results_by_rp
+        ):
+            primary_result, primary_ev = results_by_rp[model._cfg.saturated_rp]
 
         if primary_ev is None:
             primary_ev = CRMAEvidence(

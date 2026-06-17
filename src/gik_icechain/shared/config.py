@@ -406,6 +406,10 @@ class CRMAModelConfig(BaseModel):
     confidence_damping: list[float] = Field(default_factory=lambda: [0.8, 0.95, 1.0])
     # False (default): confidence dampens only the obs branch. True: legacy whole-score.
     confidence_damps_forecast: bool = False
+    # Soil-conditioned threshold: on saturated soil a flood needs less rain, so
+    # surface the lower-return-period exceedance (lower effective rainfall bar).
+    soil_conditioned_rp: bool = True
+    saturated_rp: int = 2
     # Additive Compound_Risk score weights for the two non-cluster evidence axes.
     weight_temporal_persist: float = 1.5
     weight_spatial_coverage: float = 1.0
