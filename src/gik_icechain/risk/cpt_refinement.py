@@ -98,7 +98,7 @@ def load_emdat_east_africa(csv_path: Path, start_date: str | None = None) -> lis
     ].copy()
 
     def _str_or_empty(val: object) -> str:
-        return "" if pd.isna(val) else str(val)  # type: ignore[arg-type]
+        return "" if pd.isna(val) else str(val)  # type: ignore[call-overload]
 
     records = [
         EMDATFloodRecord(
