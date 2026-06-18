@@ -6,6 +6,49 @@
 
 ---
 
+## AUDIT 2026-06-18 — Dashboard publish path was broken; now served from S3
+
+### ISSUE-24 · Dashboard never received pipeline results — FIXED (serve-from-S3)
+
+The deployed dashboard showed nothing because the publish path was broken at
+three points:
+1. `dashboard/web/.gitignore` ignores `public/data/` → the daily `git add
+   dashboard/web/public/data/` was a silent no-op (nothing ever committed).
+2. `daily_update` `update-dashboard` ran `data_pipeline contract --results
+   results/admin1_risk` but that dir does not exist after a fresh checkout (the
+   risk output lives in S3 / a different job's /tmp) → contract would fail.
+3. `deploy-web` builds a static export from the committed tree, so even if (1)
+   worked it bundled an empty `public/data`.
+
+**Fix (chosen: serve the contract from S3, like `COG_BASE`; never commit it):**
+- `web/src/lib/config.ts`: `DATA_BASE` is now env-overridable
+  (`NEXT_PUBLIC_DATA_BASE`), defaulting to the bundled `${BASE_PATH}/data` for
+  local dev.
+- `deploy-web.yaml`: passes `NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}` at
+  build (mirrors `COG_BASE`); no data step.
+- `daily_update.yaml` `update-dashboard`: pulls the existing contract from
+  `s3://$GIK_BUCKET/dashboard-data/` (so `index.json` MERGES date history) +
+  the day's risk from `s3://$GIK_BUCKET/admin1_risk/`, runs `data_pipeline
+  contract` + the new `data_pipeline geojson` (boundary splits only), then
+  `aws s3 sync` the result back to `s3://$GIK_BUCKET/dashboard-data/`. The git
+  commit/push of `public/data` is removed.
+- New `data_pipeline geojson` subcommand renders the large static boundary
+  splits without needing risk data, so they stay out of git.
+
+**REQUIRED manual infra (maintainer, one-time):**
+- Set repo Variable `DATA_BASE` to the public bucket URL, e.g.
+  `https://<bucket>.s3.eu-west-1.amazonaws.com/dashboard-data`.
+- Make `s3://$GIK_BUCKET/dashboard-data/` public-read + a CORS rule allowing
+  `GET` from the GitHub Pages origin (same as the COGs bucket).
+
+**To publish the April-2024 case study (incl. the 2 Red):** it was generated
+locally into `dashboard/web/public/data` (gitignored, local-dev preview only).
+For the deployed site, `aws s3 sync dashboard/web/public/data/
+s3://$GIK_BUCKET/dashboard-data/` with the production AWS creds (not the dev
+MinIO creds in `.env`) — run by the maintainer or a one-off workflow.
+
+---
+
 ## AUDIT 2026-06-17 — Recall ceiling root-cause (BN escalation levers + EM-DAT validation)
 
 Investigation of *why* the CRMA risk output misses most EM-DAT floods. Started

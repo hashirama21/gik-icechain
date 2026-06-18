@@ -142,20 +142,24 @@ jobs:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            eu-west-1
-      - run: |
+      - name: Build dashboard contract and publish to S3 (no commit)
+        run: |
+          PROC="${{ needs.ingest-daily-gik.outputs.processed_date }}"
+          BUCKET="${{ secrets.GIK_BUCKET }}"
+          # Pull the existing contract so index.json MERGES (keeps date history),
+          # and the risk output for this day (synced by update-risk) + boundaries.
+          aws s3 sync "s3://$BUCKET/dashboard-data/" dashboard/web/public/data/ || true
+          aws s3 sync "s3://$BUCKET/admin1_risk/" results/admin1_risk/
           python -m dashboard.data_pipeline.pipeline contract \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
             --results results/admin1_risk \
             --out dashboard/web/public \
-            --date ${{ needs.ingest-daily-gik.outputs.processed_date }}
-      - name: Commit dashboard data
-        run: |
-          git config user.name  "gik-icechain-bot"
-          git config user.email "bot@gik-icechain.earth"
-          git add dashboard/web/public/data/
-          git diff --staged --quiet || { \
-            git commit -m "data: update calendar for ${{ needs.ingest-daily-gik.outputs.processed_date }} [skip ci]" && \
-            git push origin HEAD:${{ github.ref_name }}; }
+            --date "$PROC"
+          python -m dashboard.data_pipeline.pipeline geojson \
+            --boundaries results/admin1_risk/admin1_boundaries.geojson \
+            --out dashboard/web/public
+          # Served by the web via NEXT_PUBLIC_DATA_BASE (like COG_BASE); never committed.
+          aws s3 sync dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
 
   notify-failure:
     name: Notify on failure

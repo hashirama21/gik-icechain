@@ -4,7 +4,9 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 .env*.local
-# Generated data contract (rebuilt by data_pipeline/)
+# Generated at build time from the pipeline outputs (never committed):
+# deploy-web syncs the risk results from S3 + downloads boundaries, then runs
+# dashboard.data_pipeline to render the contract under public/data.
 public/data/
 public/cogs/
 public/stac/
