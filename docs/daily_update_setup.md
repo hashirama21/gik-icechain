@@ -2,6 +2,10 @@
 
 Everything required for the daily pipeline workflow to execute end-to-end.
 
+> For the **full production deployment** (storage, dashboard → GitHub Pages,
+> validation, local dev), see **[`deploy.md`](deploy.md)**. This file focuses on the
+> daily workflow's secrets + per-component CLI flags.
+
 ---
 
 ## 1. GitHub Secrets
@@ -73,9 +77,12 @@ and pass it downstream via `$GITHUB_OUTPUT`.
 
 ## 4. Dashboard Job
 
-`dashboard/storymaps/generate_storymaps.py` does not exist yet.  
-The Dashboard job is **commented out** in `daily_update.yaml` until the script is implemented.  
-`notify-failure` has been updated to only depend on C1, C2, C3.
+`update-dashboard` is **active**: it rebuilds the web data contract and publishes it to
+S3 (never committed). It pulls the existing contract + the day's risk from
+`s3://$GIK_BUCKET/`, runs `dashboard.data_pipeline.pipeline contract` + `geojson`, then
+`aws s3 sync`s the result to `s3://$GIK_BUCKET/dashboard-data/`. The web app reads it via
+`NEXT_PUBLIC_DATA_BASE` and `deploy-web.yaml` serves the static site on GitHub Pages —
+see [`deploy.md` §6](deploy.md). `notify-failure` depends on C1, C2, C3.
 
 ---
 
