@@ -337,7 +337,7 @@ def emdat_severity_label(
 
 def build_training_dataset_from_gpm(
     emdat_records: list[EMDATFloodRecord],
-    admin_gdf: "object",
+    admin_gdf: object,
     gpm_dir: Path,
     crma: CRMAModel,
     *,

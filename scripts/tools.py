@@ -949,7 +949,10 @@ def _event_level_metrics(
             ev_runs = _contiguous_runs(days, [r["label"] == 1 for r in rs])
             fired_runs = _contiguous_runs(days, [r["state"] >= thr for r in rs])
             windows = [
-                (date.fromisoformat(days[a]) - timedelta(days=lead_days), date.fromisoformat(days[b]))
+                (
+                    date.fromisoformat(days[a]) - timedelta(days=lead_days),
+                    date.fromisoformat(days[b]),
+                )
                 for a, b in ev_runs
             ]
             n_events += len(ev_runs)
@@ -1035,7 +1038,9 @@ def validate_emdat(
         ev = _event_level_metrics(risk_dir, lead_days, start, end)
         typer.echo(f"\nEvent-level early detection (lead={lead_days}d) — "
                    "contiguous EM-DAT runs per unit collapsed to one event:")
-        typer.echo(f"{'level':<8} {'recall':>8} {'precision':>10} {'detected':>10} {'falseAlarm':>11}")
+        typer.echo(
+            f"{'level':<8} {'recall':>8} {'precision':>10} {'detected':>10} {'falseAlarm':>11}"
+        )
         for name, m in ev.items():
             typer.echo(
                 f"{name:<8} {m['recall']:>8.3f} {m['precision']:>10.3f} "
