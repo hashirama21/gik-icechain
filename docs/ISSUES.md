@@ -1,8 +1,53 @@
 # GIK-IceChain — Remaining Issues (Whole-Project Audit)
 
-> Updated: 2026-06-17 (now tracked in git)
+> Updated: 2026-06-18 (now tracked in git)
 > Scope: full-project critique after the manifest-aware / non-uniform-step /
 > CI-workflow work. Items marked FIXED were resolved during this session.
+
+---
+
+## Status summary (solved / not solved)
+
+Classification as of 2026-06-18. Details per issue in the sections below.
+
+### ✅ Solved
+
+| # | Issue | Evidence |
+|---|-------|----------|
+| 1 | No E2E run validated | full C1→C2→C3 on Apr 2024 → 2 Red; stress 20 dates / 4760 unit-days |
+| 2 | Exceedance schema collision | `_align_append_schema()` + tests |
+| 4 | Byte-range coalescing ineffective | per-file `get_ranges` → ~30 req/day |
+| 5 | No fetch-failure tolerance | per-file try/except + `n_failed_files` |
+| 14 | Null signal (tp→mm) | non-zero exceedance, correct RP gradient |
+| 15 / 11 | API/GPM never fed to C3 | `api_mm` now varies (CHIRPS/GPM wired) |
+| 16 | EM-DAT validation impossible | EM-DAT data tracked + `validate-emdat` (+ event-level) |
+| 17 | AIFS S3 prefix bug | discovery fixed (10/10 URIs) — *kerchunk→VirtualiZarr migration pending* |
+| 24 | Dashboard received nothing | serve-from-S3 code/pipeline fixed — *manual infra pending* |
+| 13 | Notebooks not in CI | single notebook, CI offline job (blocking) |
+| 7 | Dashboard data dir empty | `data_pipeline` contract/geojson mechanism in place |
+| 21 | Windows WinError 5 (run-all) | no longer blocking — run-all completed to MinIO ⚠️ *not re-verified as a code fix* |
+
+Plus the historical **FIXED THIS SESSION** table (CRMA dispatch, 155→196 units,
+IceChunk 2.x, manifest splitting, etc.).
+
+### ❌ Not solved
+
+| # | Issue | Why |
+|---|-------|-----|
+| 3 | README over-promises | numbers never corrected (~300 units, ~1200 days, 48 000×) |
+| 6 | ECMWF S3 ~15-month retention | architectural constraint (document, not fixable) |
+| 18 / 8 | Benchmark never measured | still hardcoded reference numbers |
+| 19 | Deployment deliverables | partial: dashboard deploy OK; public AWS Open Data store + gap_filler not done |
+| 20 | OND excludes December | `thresholds.py Season.OND=[10,11]` unchanged |
+| 22 | Recall ceiling (~37 %) | DIAGNOSED structural (riverine floods) — needs hydrological routing |
+| 23 | Trigger calibrated to rare rainfall | #1-light shipped but inert; #1-full (C2 recompute) deferred |
+| 9 | Gap-fill Cloud Run/Lithops | never run (needs GCP) |
+| 10 | CPT refinement | proof-of-mechanism only |
+| 12 | Coverage 46 % vs 80 % target | CI threshold lowered to 45 %, target unmet |
+
+**Tally:** 12 solved (3 with caveats: 21 unverified, 24/19 have residual manual/infra
+work) · 10 not solved — of which 2 are constraints/diagnoses not cheaply fixable
+(6 architectural, 22 structural) and the rest is real debt (3, 18, 20, 23, 9, 10, 12).
 
 ---
 
