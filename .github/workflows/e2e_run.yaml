@@ -85,6 +85,29 @@ jobs:
             --event-level --lead-days 1 \
           || echo "validate-emdat produced no metrics (no EM-DAT match in range?)"
 
+      - name: Generate dashboard contract (artifact preview only — NOT committed)
+        if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+        run: |
+          # Render the web data contract into a throwaway dir so the test run is
+          # visually inspectable in the artifact without touching the committed
+          # dashboard/web/public/data (the daily workflow owns that). Reads the
+          # isolated e2e-test-exceedance store for dependency.json.
+          d="${{ steps.range.outputs.start }}"
+          while :; do
+            python -m dashboard.data_pipeline.pipeline contract \
+              --results results/admin1_risk \
+              --out results/dashboard_preview \
+              --date "$d" \
+              --exceedance-store s3://gik-icechain/e2e-test-exceedance \
+            || echo "dashboard contract skipped for $d"
+            [ "$d" = "${{ steps.range.outputs.end }}" ] && break
+            d=$(date -I -d "$d + 1 day")
+          done
+
       - name: Risk score summary
         if: always()
         run: |
@@ -112,5 +135,6 @@ jobs:
           path: |
             results/admin1_risk/
             results/validation/
+            results/dashboard_preview/
           retention-days: 14
           if-no-files-found: warn
