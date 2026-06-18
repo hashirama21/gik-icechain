@@ -68,7 +68,7 @@ see §6).
 | `GIK_ICECHUNK_STORE_URI` | C1/C2 | e.g. `s3://gik-icechain/gik-icechain-store` |
 | `GIK_EXCEEDANCE_STORE_URI` | C2/C3 | e.g. `s3://gik-icechain/exceedance-zarr` |
 | `GIK_BUCKET` | C3, dashboard | bucket name only, e.g. `gik-icechain` |
-| `MINIO_ENDPOINT_URL` | all | MinIO endpoint, e.g. `http://20.116.218.195:9000` (leave unset for real AWS) |
+| `MINIO_ENDPOINT_URL` | all | MinIO endpoint, e.g. `` (leave unset for real AWS) |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `e2e_run.yaml` | MinIO credentials (mapped to `AWS_*` in the workflow) |
 | `EARTHDATA_USER` / `EARTHDATA_PASSWORD` | GPM IMERG (NASA) download | optional; without them C3 falls back to CHIRPS |
 
@@ -189,7 +189,7 @@ Credentials for a local MinIO run: the code reads the standard `AWS_*` env vars 
 ```bash
 export AWS_ACCESS_KEY_ID=$MINIO_ACCESS_KEY
 export AWS_SECRET_ACCESS_KEY=$MINIO_SECRET_KEY
-export AWS_ENDPOINT_URL="http://$MINIO"        # e.g. http://20.116.218.195:9000
+export AWS_ENDPOINT_URL="http://$MINIO"        # e.g. 
 export ECCODES_PYTHON_USE_FINDLIBS=1
 ```
 
