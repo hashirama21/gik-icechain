@@ -367,9 +367,9 @@ python scripts/tools.py validate-emdat --risk-dir results/admin1_risk/
 **Dashboard (GitHub Pages):** <https://hashirama21.github.io/gik-icechain/>
 Static Next.js export, deployed by `.github/workflows/deploy-web.yaml` on push to
 `main`. The per-day risk contract is served from S3 (`NEXT_PUBLIC_DATA_BASE`),
-rebuilt by the `daily_update` workflow — never committed.
+rebuilt by the `daily_update` workflow  never committed.
 
-**End-to-end walkthrough** — a single notebook,
+**End-to-end walkthrough**  a single notebook,
 [`notebooks/gik_icechain_walkthrough.ipynb`](notebooks/gik_icechain_walkthrough.ipynb),
 runs C1 → C2 → C3 → the full pipeline → benchmarks (synthetic offline, or live with
 credentials). Open it in one click:
@@ -377,7 +377,7 @@ credentials). Open it in one click:
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/hashirama21/gik-icechain/blob/main/notebooks/gik_icechain_walkthrough.ipynb)
 [![Render in nbviewer](https://img.shields.io/badge/render-nbviewer-orange.svg)](https://nbviewer.org/github/hashirama21/gik-icechain/blob/main/notebooks/gik_icechain_walkthrough.ipynb)
 
-**EM-DAT retrospective validation** — April 2024 compound-flood case (7 days,
+**EM-DAT retrospective validation**  April 2024 compound-flood case (7 days,
 238 admin-1 units), via `python scripts/tools.py validate-emdat --event-level`:
 
 | Metric | Value |
@@ -388,8 +388,8 @@ credentials). Open it in one click:
 
 Event-level recall (collapsing each EM-DAT event to a single early-detection
 target) is the operational metric. The remaining ceiling is a documented
-*structural* limit — most missed events are riverine / non-local floods that a
-local-rainfall trigger plus ECMWF skill cannot capture — analysed in
+*structural* limit  most missed events are riverine / non-local floods that a
+local-rainfall trigger plus ECMWF skill cannot capture  analysed in
 [`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 … ISSUE-24).
 
 ---
@@ -433,3 +433,5 @@ Apache License 2.0  -  see [LICENSE](LICENSE)
 This project was developed as part of the
 [ECMWF Code for Earth 2026](https://codeforearth.ecmwf.int/) programme,
 Africa Stream, funded by the EU ArcX programme.
+
+---
