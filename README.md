@@ -401,3 +401,32 @@ Apache License 2.0  -  see [LICENSE](LICENSE)
 This project was developed as part of the
 [ECMWF Code for Earth 2026](https://codeforearth.ecmwf.int/) programme,
 Africa Stream, funded by the EU ArcX programme.
+
+---
+
+## Live dashboard & validation
+
+**Dashboard (GitHub Pages):** <https://hashirama21.github.io/gik-icechain/>
+Static Next.js export, deployed by `.github/workflows/deploy-web.yaml` on push to
+`main`. The per-day risk contract is served from S3 (`NEXT_PUBLIC_DATA_BASE`),
+rebuilt by the `daily_update` workflow — never committed.
+
+**End-to-end walkthrough:** a single notebook,
+[`notebooks/gik_icechain_walkthrough.ipynb`](notebooks/gik_icechain_walkthrough.ipynb),
+exercises C1 → C2 → C3 → the full pipeline → benchmarks (synthetic offline, or
+live with credentials).
+
+**EM-DAT retrospective validation** — April 2024 compound-flood case (7 days,
+238 admin-1 units), via `python scripts/tools.py validate-emdat --event-level`:
+
+| Metric | Value |
+|--------|-------|
+| AUC-ROC (`p_red`, unit-day) | 0.66 |
+| Event-level recall @ Yellow (lead 1 d) | 0.375 (15/40 events) |
+| Event-level recall @ Orange / Red | 0.025 (1/40 events) |
+
+Event-level recall (collapsing each EM-DAT event to a single early-detection
+target) is the operational metric. The remaining ceiling is a documented
+*structural* limit — most missed events are riverine / non-local floods that a
+local-rainfall trigger plus ECMWF skill cannot capture — analysed in
+[`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 … ISSUE-24).
