@@ -374,6 +374,17 @@ def contract(results: Results, out: Out, date: Date,
     _do_contract(results, out, date, exceedance_store, endpoint_url)
 
 
+@app.command("geojson")
+def geojson_split(
+    boundaries: Annotated[Path, typer.Option("--boundaries", help="admin-1 boundaries GeoJSON")],
+    out: Out,
+) -> None:
+    """Per-country boundary splits only (no risk data). Run at deploy-build time
+    so the large geojson/ stays out of git (the per-date contract is committed)."""
+    counts = split_geojson(boundaries, _data(out))
+    log.info("geojson_split_done", countries=len(counts), units=sum(counts.values()))
+
+
 @app.command()
 def cogs(results: Results, out: Out, date: Date,
          exceedance_store: Store = None, endpoint_url: Endpoint = None,

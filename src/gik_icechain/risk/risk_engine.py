@@ -24,6 +24,8 @@ checkpoint.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.metadata
 import json
 import math
 import os
@@ -49,6 +51,19 @@ log = structlog.get_logger(__name__)
 
 _CHECKPOINT_FILE = "_checkpoint.json"
 _DEFAULT_CHECKPOINT_INTERVAL = 7  # days
+
+
+def _config_fingerprint(cfg_path: Path | None) -> str:
+    if cfg_path and cfg_path.exists():
+        return "sha256:" + hashlib.sha256(cfg_path.read_bytes()).hexdigest()[:12]
+    return "default"
+
+
+def _pipeline_version() -> str:
+    try:
+        return importlib.metadata.version("gik-icechain")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def _build_pcode_cluster_map(admin: gpd.GeoDataFrame) -> dict[str, EastAfricaCluster]:
@@ -78,6 +93,9 @@ def run_risk_batch(
     min_coverage: float = 0.5,
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
     endpoint_url: str | None = None,
+    emdat_path: Path | None = None,
+    cpt_source: str = "default",
+    config_path: Path | None = None,
 ) -> list[Path]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -111,21 +129,43 @@ def run_risk_batch(
 
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
+    n_members: int = int(exc_ds.attrs.get("n_members", 51))
 
     pcode_cluster = _build_pcode_cluster_map(admin)
-    # Pre-build once — avoids iterrows() on each of the N forecast days.
     unit_by_pcode: dict[str, Any] = {str(row["admin1_pcode"]): row for _, row in admin.iterrows()}
 
     rp_options = list(dict.fromkeys([rp_signal, *(rp_signal_options or [])]))
 
-    # One state per (pcode, rp) so signal streaks don't leak across RPs.
     bn_states: dict[str, dict[int, DynamicBNState]] = {
         p: {rp: init_state(initial_api_mm) for rp in rp_options} for p in pcode_cluster
     }
 
-    # Resume from checkpoint if available
     checkpoint_path = output_dir / _CHECKPOINT_FILE
     bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start, rp_options)
+
+    # Build run-level metadata written into every daily scores file.
+    meta: dict[str, Any] = {
+        "pipeline_version": _pipeline_version(),
+        "config_hash": _config_fingerprint(config_path),
+        "cpt_source": cpt_source,
+        "rp_signal": rp_signal,
+        "hazard_stat": hazard_stat,
+    }
+
+    # Pre-compute set of (date_str, pcode) flood days from EM-DAT for tagging.
+    flood_event_days: frozenset[tuple[str, str]] = frozenset()
+    if emdat_path and emdat_path.exists():
+        from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+
+        records = load_emdat_east_africa(emdat_path)
+        days: set[tuple[str, str]] = set()
+        for rec in records:
+            current_ev = rec.start_date.date()
+            while current_ev <= rec.end_date.date():
+                days.add((str(current_ev), rec.admin1_pcode))
+                current_ev += timedelta(days=1)
+        flood_event_days = frozenset(days)
+        log.info("emdat_flood_days_loaded", n_days=len(flood_event_days))
 
     written: list[Path] = []
     current = resume_date
@@ -147,6 +187,9 @@ def run_risk_batch(
             hazard_stat,
             min_coverage,
             rp_options,
+            flood_event_days=flood_event_days,
+            meta=meta,
+            n_members=n_members,
         )
         if path is not None:
             written.append(path)
@@ -156,7 +199,6 @@ def run_risk_batch(
         if checkpoint_interval > 0 and day_count % checkpoint_interval == 0:
             _save_checkpoint(checkpoint_path, bn_states, current)
 
-    # Successful completion — remove checkpoint so re-runs start from scratch
     if checkpoint_interval > 0 and checkpoint_path.exists():
         checkpoint_path.unlink()
 
@@ -165,9 +207,61 @@ def run_risk_batch(
 
 
 _NO_DATA_RESULT = {
-    "risk_state": -1, "risk_label": "No_Data",
-    "p_green": 0.0, "p_yellow": 0.0, "p_orange": 0.0, "p_red": 0.0,
+    "risk_state": -1,
+    "risk_label": "No_Data",
+    "p_green": 0.0,
+    "p_yellow": 0.0,
+    "p_orange": 0.0,
+    "p_red": 0.0,
 }
+
+
+def _spinup_api_from_gpm(
+    day: date,
+    gpm_dir: Path,
+    admin: gpd.GeoDataFrame,
+    pcode_cluster: dict[str, EastAfricaCluster],
+    crma_models: dict[EastAfricaCluster, CRMAModel],
+    bn_states: dict[str, dict[int, DynamicBNState]],
+    api_decay: float,
+    signal_threshold: float,
+    rp_options: list[int],
+) -> None:
+    """Advance API / soil-moisture state from GPM observations for a day with no
+    forecast exceedance (spin-up / lead-in).
+
+    ``API(t) = gpm_obs(t) + decay * API(t-1)`` depends only on observed rainfall,
+    so the antecedent pathway can be primed over a lead-in window without any
+    C2 exceedance. Mutates ``bn_states`` in place; writes no output.
+    """
+    gpm_da = load_gpm_daily(gpm_dir, day)
+    gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
+
+    for pcode, cluster in pcode_cluster.items():
+        model = crma_models[cluster]
+        gpm_raw = float(gpm_s.get(pcode, float("nan")))
+        gpm_missing = not math.isfinite(gpm_raw)
+        gpm_24h = 0.0 if gpm_missing else gpm_raw
+        for rp in rp_options:
+            state = bn_states[pcode].setdefault(rp, init_state())
+            ev = CRMAEvidence(
+                exceedance_prob_24h=0.0,
+                exceedance_prob_72h=0.0,
+                exceedance_prob_7d=0.0,
+                gpm_obs_24h=gpm_24h,
+                api_mm=state.api_mm,
+                spatial_coverage_fraction=0.0,
+                consecutive_signal_days=state.consecutive_days,
+                sat_consecutive_days=state.sat_consecutive_days,
+                gpm_quality=2,
+                gpm_missing=gpm_missing,
+                rp_years=rp,
+                thresholds=model.evidence_thresholds(rp),
+            )
+            _, bn_states[pcode][rp] = bn_step(
+                state, ev, model,
+                api_decay=api_decay, gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold,
+            )
 
 
 def _process_day(
@@ -186,25 +280,41 @@ def _process_day(
     hazard_stat: str = "max",
     min_coverage: float = 0.5,
     rp_options: list[int] | None = None,
+    flood_event_days: frozenset[tuple[str, str]] = frozenset(),
+    meta: dict | None = None,
+    n_members: int = 51,
 ) -> Path | None:
     rp_options = rp_options or [rp_signal]
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
     except KeyError:
-        log.warning("exceedance_date_missing", date=day)
+        # No forecast exceedance for this day. Rather than skipping it entirely
+        # (which freezes the antecedent state), advance the API / soil-moisture
+        # persistence from GPM observations alone so the compound-flood pathway
+        # is correctly primed for later days that do have exceedance. This
+        # decouples API spin-up (GPM-only, local) from the heavy C2 exceedance.
+        _spinup_api_from_gpm(
+            day, gpm_dir, admin, pcode_cluster, crma_models, bn_states,
+            api_decay, signal_threshold, rp_options,
+        )
+        log.info("exceedance_date_missing_apispinup", date=day)
         return None
 
     # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
     agg: dict[int, dict[str, pd.Series]] = {}
     for rp in rp_options:
         try:
-            grids = {w: exc_day["exceedance_prob"].sel(window=wh, return_period=rp)
-                     for w, wh in (("24h", 24), ("72h", 72), ("7d", 168))}
+            grids = {
+                w: exc_day["exceedance_prob"].sel(window=wh, return_period=rp)
+                for w, wh in (("24h", 24), ("72h", 72), ("7d", 168))
+            }
         except KeyError as exc:
             log.warning("exceedance_window_missing", date=day, rp=rp, error=str(exc))
             continue
-        agg[rp] = {w: aggregate_to_admin1(da, admin, stat=hazard_stat, min_coverage=min_coverage)
-                   for w, da in grids.items()}
+        agg[rp] = {
+            w: aggregate_to_admin1(da, admin, stat=hazard_stat, min_coverage=min_coverage)
+            for w, da in grids.items()
+        }
         agg[rp]["cov"] = coverage_fraction(grids["24h"], admin, signal_threshold)
     if rp_signal not in agg:
         log.warning("primary_rp_missing", date=day, rp=rp_signal)
@@ -224,8 +334,10 @@ def _process_day(
         return val if math.isfinite(val) else default
 
     def _slim(result: dict) -> dict:
-        return {k: result[k] for k in
-                ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")}
+        return {
+            k: result[k]
+            for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")
+        }
 
     scores: dict[str, dict] = {}
     for pcode, cluster in pcode_cluster.items():
@@ -239,6 +351,7 @@ def _process_day(
         quality = int(conf_s.get(pcode, 2.0))
 
         risk_by_rp: dict[str, dict] = {}
+        results_by_rp: dict[int, tuple[dict, CRMAEvidence]] = {}
         primary_result: dict | None = None
         primary_ev: CRMAEvidence | None = None
 
@@ -249,40 +362,76 @@ def _process_day(
                 continue
 
             p24, p72, p7d = (
-                float(agg[rp][w].get(pcode, float("nan"))) for w in ("24h", "72h", "7d"))
+                float(agg[rp][w].get(pcode, float("nan"))) for w in ("24h", "72h", "7d")
+            )
             if not all(math.isfinite(v) for v in (p24, p72, p7d)):
                 bn_states[pcode][rp] = replace(state, api_mm=state.api_mm * api_decay)
                 risk_by_rp[str(rp)] = _NO_DATA_RESULT
                 continue
 
             ev = CRMAEvidence(
-                exceedance_prob_24h=p24, exceedance_prob_72h=p72,
-                exceedance_prob_7d=p7d, gpm_obs_24h=gpm_24h, api_mm=state.api_mm,
+                exceedance_prob_24h=p24,
+                exceedance_prob_72h=p72,
+                exceedance_prob_7d=p7d,
+                gpm_obs_24h=gpm_24h,
+                api_mm=state.api_mm,
                 spatial_coverage_fraction=_finite(agg[rp]["cov"], pcode),
                 consecutive_signal_days=state.consecutive_days,
                 sat_consecutive_days=state.sat_consecutive_days,
-                gpm_quality=quality, gpm_missing=gpm_missing, rp_years=rp,
+                gpm_quality=quality,
+                gpm_missing=gpm_missing,
+                rp_years=rp,
                 thresholds=model.evidence_thresholds(rp),
             )
             result, bn_states[pcode][rp] = bn_step(
-                state, ev, model, api_decay=api_decay,
-                gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold)
+                state,
+                ev,
+                model,
+                api_decay=api_decay,
+                gpm_obs_mm=gpm_24h,
+                signal_threshold=signal_threshold,
+            )
             risk_by_rp[str(rp)] = _slim(result)
+            results_by_rp[rp] = (result, ev)
             if rp == rp_signal:
                 primary_result, primary_ev = result, ev
 
+        # Soil-conditioned threshold: on saturated soil, surface the lower-RP
+        # exceedance (a lower effective rainfall bar) instead of rp_signal.
+        if (
+            model._cfg.soil_conditioned_rp
+            and primary_ev is not None
+            and primary_ev.api_state >= 2
+            and model._cfg.saturated_rp in results_by_rp
+        ):
+            primary_result, primary_ev = results_by_rp[model._cfg.saturated_rp]
+
         if primary_ev is None:
             primary_ev = CRMAEvidence(
-                exceedance_prob_24h=0.0, exceedance_prob_72h=0.0, exceedance_prob_7d=0.0,
-                gpm_obs_24h=0.0, api_mm=bn_states[pcode][rp_signal].api_mm,
-                spatial_coverage_fraction=0.0, consecutive_signal_days=0,
+                exceedance_prob_24h=0.0,
+                exceedance_prob_72h=0.0,
+                exceedance_prob_7d=0.0,
+                gpm_obs_24h=0.0,
+                api_mm=bn_states[pcode][rp_signal].api_mm,
+                spatial_coverage_fraction=0.0,
+                consecutive_signal_days=0,
                 sat_consecutive_days=bn_states[pcode][rp_signal].sat_consecutive_days,
-                gpm_quality=quality, gpm_missing=gpm_missing, rp_years=rp_signal,
+                gpm_quality=quality,
+                gpm_missing=gpm_missing,
+                rp_years=rp_signal,
             )
+        emdat_match = (str(day), pcode) in flood_event_days
         _, scores[pcode] = build_score(
-            unit, primary_result or _NO_DATA_RESULT, primary_ev, risk_by_rp=risk_by_rp)
+            unit,
+            primary_result or _NO_DATA_RESULT,
+            primary_ev,
+            emdat_flood_match=emdat_match,
+            risk_by_rp=risk_by_rp,
+        )
+        p24 = primary_ev.exceedance_prob_24h
+        scores[pcode]["ensemble_spread_24h"] = round(math.sqrt(p24 * (1.0 - p24) / n_members), 4)
 
-    out_path = write_risk_scores(day, scores, output_dir)
+    out_path = write_risk_scores(day, scores, output_dir, meta=meta)
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
 

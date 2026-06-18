@@ -58,19 +58,28 @@ def write_boundaries(admin: Any, output_dir: Path) -> Path:
     return out_path
 
 
-def write_risk_scores(day: date, scores: dict[str, dict], output_dir: Path) -> Path:
+def write_risk_scores(
+    day: date,
+    scores: dict[str, dict],
+    output_dir: Path,
+    meta: dict | None = None,
+) -> Path:
     """Write lightweight per-day risk scores (no geometry).
 
     Args:
         day:        Forecast date.
         scores:     Mapping pcode → score dict from :func:`build_score`.
         output_dir: Output directory.
+        meta:       Optional pipeline metadata (version, config hash, etc.).
 
     Returns:
         Path to the written scores file.
     """
     out_path = output_dir / f"{day.isoformat()}_risk_scores.json"
-    out_path.write_text(json.dumps({"date": day.isoformat(), "units": scores}))
+    payload: dict = {"date": day.isoformat(), "units": scores}
+    if meta:
+        payload["meta"] = meta
+    out_path.write_text(json.dumps(payload))
     log.info("risk_scores_written", date=day, n_units=len(scores), path=str(out_path))
     return out_path
 
@@ -110,8 +119,10 @@ def build_score(
     }
     if risk_by_rp:
         score["risk_by_rp"] = {
-            rp: {k: (round(v[k], 4) if k.startswith("p_") else v[k])
-                 for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")}
+            rp: {
+                k: (round(v[k], 4) if k.startswith("p_") else v[k])
+                for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")
+            }
             for rp, v in risk_by_rp.items()
         }
     return pcode, score
@@ -164,5 +175,8 @@ def export_eahw_format(
         )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps({"type": "FeatureCollection", "features": eahw_features}))
+    fc: dict[str, Any] = {"type": "FeatureCollection", "features": eahw_features}
+    if scores_data.get("meta"):
+        fc["meta"] = scores_data["meta"]
+    output_path.write_text(json.dumps(fc))
     log.info("eahw_export_written", source=str(scores_path), output=str(output_path))

@@ -40,7 +40,12 @@ jobs:
           NEXT_PUBLIC_BASE_PATH: /gik-icechain
           NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
           NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
+          # Data contract served from S3 (built + synced by daily_update), never
+          # committed. Falls back to the bundled /data if the var is unset.
+          NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}
         run: npm run build
+      - name: Disable Jekyll (serve _next/ underscore dirs verbatim)
+        run: touch out/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard/web/out

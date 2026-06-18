@@ -11,7 +11,10 @@ build/
 .coverage
 coverage.xml
 results/
-data/
+data/*
+!data/emdat/
+!data/emdat/east_africa_floods.csv
+!data/emdat/pcode_mapping.csv
 .DS_Store
 .idea/
 *.ipynb_checkpoints/
@@ -19,9 +22,7 @@ data/
 # Earthdata credentials — NEVER commit (real file at repo root or under data/)
 /earthdata_credentials.py
 test_aifs_vps.sh
-docs/ISSUES.md
 a.txt
 notebooks/05_aifs_vs_ifs_comparison.ipynb
 notebooks/06_validation_emdat.ipynb
 notebooks/07_e2e_pipeline_test.ipynb
-test_aifs_vps.shdocs/ISSUES.md

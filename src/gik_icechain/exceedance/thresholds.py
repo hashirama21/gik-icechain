@@ -438,8 +438,8 @@ class AdaptiveGEVThresholds:
             try:
                 row = enso_iod_daily.loc[t.date()]
                 climate_mask[i] = (
-                    classify_enso(float(row[nino_col])) == enso_phase
-                    and classify_iod(float(row["dmi"])) == iod_phase
+                    classify_enso(float(row[nino_col])) == enso_phase  # type: ignore[arg-type]
+                    and classify_iod(float(row["dmi"])) == iod_phase  # type: ignore[arg-type]
                 )
             except (KeyError, IndexError):
                 pass

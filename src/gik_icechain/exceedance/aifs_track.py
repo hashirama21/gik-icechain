@@ -266,8 +266,8 @@ def seasonal_comparison(
                 ts = pd.Timestamp(d)
                 try:
                     row = enso_iod.loc[ts]
-                    enso = classify_enso(float(row["nino34"]))
-                    iod = classify_iod(float(row["dmi"]))
+                    enso = classify_enso(float(row["nino34"]))  # type: ignore[arg-type]
+                    iod = classify_iod(float(row["dmi"]))  # type: ignore[arg-type]
                 except (KeyError, TypeError):
                     enso = ENSOPhase.NEUTRAL
                     iod = IODPhase.NEUTRAL

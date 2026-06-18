@@ -121,7 +121,8 @@ dev = [
   "pytest-mock>=3.12",
   "hypothesis>=6.100",        # property-based tests
   "ruff>=0.4",
-  "mypy>=1.10",
+  "mypy==2.1.0",                # pinned so local == CI
+  "pandas-stubs==3.0.3.260530", # typed pandas: local mypy matches CI strictness
   "pre-commit>=3.7",
   "ipykernel>=6.29",
   "nbmake>=1.5",              # notebook tests

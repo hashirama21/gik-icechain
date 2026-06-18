@@ -867,14 +867,20 @@ def export_eahw(
 #  validate-emdat
 
 
-def _load_risk_results(risk_dir: Path):
-    """Load all per-day risk score files into a flat DataFrame."""
+def _in_range(date_str: str, start: str | None, end: str | None) -> bool:
+    return not ((start and date_str < start) or (end and date_str > end))
+
+
+def _load_risk_results(risk_dir: Path, start: str | None = None, end: str | None = None):
+    """Load per-day risk score files (optionally date-filtered) into a DataFrame."""
     import pandas as pd
 
     rows: list[dict] = []
     for scores_path in sorted(risk_dir.glob("*_risk_scores.json")):
         data = json.loads(scores_path.read_text())
         date_str = data.get("date", scores_path.stem[:10])
+        if not _in_range(date_str, start, end):
+            continue
         for pcode, score in data.get("units", {}).items():
             rows.append(
                 {
@@ -887,6 +893,86 @@ def _load_risk_results(risk_dir: Path):
     if not rows:
         raise ValueError(f"No *_risk_scores.json files found in {risk_dir}")
     return pd.DataFrame(rows)
+
+
+def _contiguous_runs(days: list[str], flag: list[bool]) -> list[tuple[int, int]]:
+    """Index spans of maximal True runs over calendar-adjacent days."""
+    runs: list[tuple[int, int]] = []
+    i, n = 0, len(days)
+    while i < n:
+        if not flag[i]:
+            i += 1
+            continue
+        j = i
+        while (
+            j + 1 < n
+            and flag[j + 1]
+            and (date.fromisoformat(days[j + 1]) - date.fromisoformat(days[j])).days == 1
+        ):
+            j += 1
+        runs.append((i, j))
+        i = j + 1
+    return runs
+
+
+def _event_level_metrics(
+    risk_dir: Path, lead_days: int, start: str | None = None, end: str | None = None
+) -> dict[str, dict]:
+    """Event-level early detection: collapse contiguous emdat_flood_match runs
+    per unit into ONE event, detected if the model fires >=threshold on any day
+    in [onset - lead_days, end]. Uses the pre-joined emdat_flood_match label
+    (avoids the EM-DAT-pcode-namespace mismatch). FAR at model-fired-run level.
+    """
+    levels = {"Yellow": 1, "Orange": 2, "Red": 3}
+    by_pc: dict[str, list[dict]] = {}
+    for scores_path in sorted(risk_dir.glob("*_risk_scores.json")):
+        data = json.loads(scores_path.read_text())
+        date_str = data.get("date", scores_path.stem[:10])
+        if not _in_range(date_str, start, end):
+            continue
+        for pcode, score in data.get("units", {}).items():
+            if score.get("risk_label") == "No_Data" or int(score.get("risk_state", -1)) < 0:
+                continue
+            by_pc.setdefault(pcode, []).append(
+                {
+                    "date": date_str,
+                    "state": int(score.get("risk_state", 0)),
+                    "label": 1 if score.get("emdat_flood_match") else 0,
+                }
+            )
+    out: dict[str, dict] = {}
+    for name, thr in levels.items():
+        n_events = detected = n_fired = fp = 0
+        for rs in by_pc.values():
+            rs.sort(key=lambda r: r["date"])
+            days = [r["date"] for r in rs]
+            ev_runs = _contiguous_runs(days, [r["label"] == 1 for r in rs])
+            fired_runs = _contiguous_runs(days, [r["state"] >= thr for r in rs])
+            windows = [
+                (
+                    date.fromisoformat(days[a]) - timedelta(days=lead_days),
+                    date.fromisoformat(days[b]),
+                )
+                for a, b in ev_runs
+            ]
+            n_events += len(ev_runs)
+            for w0, w1 in windows:
+                detected += int(
+                    any(w0 <= date.fromisoformat(r["date"]) <= w1 and r["state"] >= thr for r in rs)
+                )
+            n_fired += len(fired_runs)
+            for a, b in fired_runs:
+                fr0, fr1 = date.fromisoformat(days[a]), date.fromisoformat(days[b])
+                if not any(not (fr1 < w0 or fr0 > w1) for w0, w1 in windows):
+                    fp += 1
+        out[name] = {
+            "n_events": n_events,
+            "detected": detected,
+            "recall": round(detected / n_events, 4) if n_events else 0.0,
+            "false_alarm_runs": fp,
+            "precision": round((n_fired - fp) / n_fired, 4) if n_fired else 0.0,
+        }
+    return out
 
 
 @app.command("validate-emdat")
@@ -904,6 +990,16 @@ def validate_emdat(
         int,
         typer.Option(help="Min risk_state for prediction (default 2=Orange)."),
     ] = 2,
+    event_level: Annotated[
+        bool,
+        typer.Option("--event-level", help="Also score early-warning detection per EM-DAT event."),
+    ] = False,
+    lead_days: Annotated[
+        int,
+        typer.Option(help="Credit a hit up to N days before event onset (event-level only)."),
+    ] = 1,
+    start: Annotated[str | None, typer.Option(help="First date YYYY-MM-DD (inclusive).")] = None,
+    end: Annotated[str | None, typer.Option(help="Last date YYYY-MM-DD (inclusive).")] = None,
 ) -> None:
     """Validate CRMA risk outputs against EM-DAT historical flood events."""
     from gik_icechain.risk.cpt_refinement import (
@@ -920,7 +1016,7 @@ def validate_emdat(
     typer.echo(f"  {len(emdat_records)} flood events loaded.")
 
     typer.echo(f"Loading CRMA risk results from {risk_dir} ...")
-    risk_df = _load_risk_results(risk_dir)
+    risk_df = _load_risk_results(risk_dir, start, end)
     typer.echo(f"  {len(risk_df)} day x unit records loaded.")
 
     typer.echo("Running validation ...")
@@ -937,6 +1033,19 @@ def validate_emdat(
         typer.echo(f"  {k:<20} {v:>8.4f}")
 
     typer.echo(f"\nPer-event table saved to {output}")
+
+    if event_level:
+        ev = _event_level_metrics(risk_dir, lead_days, start, end)
+        typer.echo(f"\nEvent-level early detection (lead={lead_days}d) — "
+                   "contiguous EM-DAT runs per unit collapsed to one event:")
+        typer.echo(
+            f"{'level':<8} {'recall':>8} {'precision':>10} {'detected':>10} {'falseAlarm':>11}"
+        )
+        for name, m in ev.items():
+            typer.echo(
+                f"{name:<8} {m['recall']:>8.3f} {m['precision']:>10.3f} "
+                f"{m['detected']:>6}/{m['n_events']:<3} {m['false_alarm_runs']:>11}"
+            )
 
 
 if __name__ == "__main__":

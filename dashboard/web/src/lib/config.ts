@@ -1,7 +1,10 @@
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
-/** Static data contract (GitHub Pages) produced by data_pipeline/. */
-export const DATA_BASE = `${BASE_PATH}/data`;
+/** Data contract produced by data_pipeline/ and served from S3 (like COG_BASE).
+ *  Defaults to the bundled `${BASE_PATH}/data` for local dev; in deploy set
+ *  NEXT_PUBLIC_DATA_BASE to the public bucket URL so nothing is committed. */
+export const DATA_BASE =
+  process.env.NEXT_PUBLIC_DATA_BASE || `${BASE_PATH}/data`;
 
 /** TiTiler endpoint serving COGs (local Docker by default; Lambda in prod). */
 export const TITILER_BASE =
