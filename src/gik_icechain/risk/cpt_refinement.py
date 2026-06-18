@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -337,7 +338,7 @@ def emdat_severity_label(
 
 def build_training_dataset_from_gpm(
     emdat_records: list[EMDATFloodRecord],
-    admin_gdf: object,
+    admin_gdf: Any,
     gpm_dir: Path,
     crma: CRMAModel,
     *,

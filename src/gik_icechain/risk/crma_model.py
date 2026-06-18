@@ -290,7 +290,9 @@ class CRMAModel:
         medium, high = cfg.hazard_medium_threshold, cfg.hazard_high_threshold
         if rp is not None and rp in cfg.hazard_thresholds_by_rp:
             medium, high = cfg.hazard_thresholds_by_rp[rp]
-        extreme = cfg.hazard_extreme_by_rp.get(rp, cfg.hazard_extreme_threshold)
+        extreme = cfg.hazard_extreme_threshold
+        if rp is not None:
+            extreme = cfg.hazard_extreme_by_rp.get(rp, extreme)
         return EvidenceThresholds(
             gpm_normal_mmday=cfg.gpm_obs_normal_mmday,
             gpm_above_mmday=cfg.gpm_obs_above_mmday,

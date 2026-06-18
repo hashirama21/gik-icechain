@@ -602,13 +602,14 @@ def _run_risk(
     from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
     from gik_icechain.risk.risk_engine import run_risk_batch
 
-    use_refined = bool(cfg.component3.crma.use_refined_cpts and cfg.component3.crma.cpt_path)
+    cpt_path = cfg.component3.crma.cpt_path
+    use_refined = bool(cfg.component3.crma.use_refined_cpts and cpt_path)
     crma_models: dict[EastAfricaCluster, CRMAModel] = {}
     for cluster in EastAfricaCluster:
         m = CRMAModel(cluster=cluster, crma_cfg=cfg.component3.crma_model)
         m.build()
-        if use_refined:
-            m.load_cpts(Path(cfg.component3.crma.cpt_path))
+        if use_refined and cpt_path:
+            m.load_cpts(Path(cpt_path))
         crma_models[cluster] = m
 
     # EM-DAT flood events tag each day × unit (emdat_flood_match) for validation
