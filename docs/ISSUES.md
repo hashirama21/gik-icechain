@@ -51,6 +51,29 @@ work) · 10 not solved — of which 2 are constraints/diagnoses not cheaply fixa
 
 ---
 
+## Latent issues / watch-list
+
+Implied or mentioned across the docs but **not** in the tracked open-issue list
+above. Surfaced from the whole-`docs/` review (2026-06-18); source doc in brackets.
+
+| # | Latent issue | Source | Risk |
+|---|--------------|--------|------|
+| L1 | **Southern frontier −14.5°**: everything south (S. Malawi/Zambia, **most of Madagascar — MDG only 3/22 in-domain**, Mozambique, Zimbabwe) is **No_Data by construction**; a southern return-period climatology (CHIRPS GEV) is **not built** | 884 ISSUE-H | README advertises broad coverage but part of it is empty |
+| L2 | **Manifest-splitting API pinned to IceChunk 2.0.5** (`ManifestSplittingConfig`; the older `split_after_n_chunks` does not exist) | 884 Problem 3 | may break on upgrade |
+| L3 | **Silent partial data past ECMWF retention**: dates >15 mo read best-effort, missing members → NaN (guarded by `min_members`) with no hard error | 884 l.193 | silent reduced-ensemble on old dates |
+| L4 | **ISSUE-21 (WinError 5) not re-verified as a code fix**: run-all completed to MinIO, but the local Windows temp-zarr path was not re-fixed | ISSUES.md | may resurface on local/Windows runs |
+| L5 | **`date -u -d yesterday` is GNU-only** in the daily local-run snippet | daily_update_setup §7 | breaks on macOS |
+| L6 | **Two ground-truth label sources in `validate-emdat`**: unit-day (`run_validation`, EM-DAT date-ranges) vs event-level (`emdat_flood_match`) → metrics not directly comparable | ISSUE-22 NB | interpretation confusion |
+| L7 | **Dashboard "deployed but empty"** if the 3 manual infra steps (Pages source, `DATA_BASE` var, S3 CORS) are skipped | deploy.md / ISSUE-24 | false sense of success |
+| L8 | **MAP label reads Green on a severe day** while p_orange/p_red rise → under-warning if only the argmax label is read | 884 ISSUE-G note | decision/UX risk |
+| L9 | **Tag pinned to the first commit + `create_tag` failure swallowed at debug** (tags now non-authoritative) | 884 ISSUE-I | misleading stale tag (cosmetic) |
+| L10 | **`--mode append` accepted but a no-op** | daily_update_setup §7 | misleading flag |
+
+Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L3**
+(silent partial data) — none are in the tracked list above.
+
+---
+
 ## AUDIT 2026-06-18 — Dashboard publish path was broken; now served from S3
 
 ### ISSUE-24 · Dashboard never received pipeline results — FIXED (serve-from-S3)
