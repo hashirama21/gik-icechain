@@ -1,8 +1,76 @@
 # GIK-IceChain — Remaining Issues (Whole-Project Audit)
 
-> Updated: 2026-06-17 (now tracked in git)
+> Updated: 2026-06-18 (now tracked in git)
 > Scope: full-project critique after the manifest-aware / non-uniform-step /
 > CI-workflow work. Items marked FIXED were resolved during this session.
+
+---
+
+## Status summary (solved / not solved)
+
+Classification as of 2026-06-18. Details per issue in the sections below.
+
+### ✅ Solved
+
+| # | Issue | Evidence |
+|---|-------|----------|
+| 1 | No E2E run validated | full C1→C2→C3 on Apr 2024 → 2 Red; stress 20 dates / 4760 unit-days |
+| 2 | Exceedance schema collision | `_align_append_schema()` + tests |
+| 4 | Byte-range coalescing ineffective | per-file `get_ranges` → ~30 req/day |
+| 5 | No fetch-failure tolerance | per-file try/except + `n_failed_files` |
+| 14 | Null signal (tp→mm) | non-zero exceedance, correct RP gradient |
+| 15 / 11 | API/GPM never fed to C3 | `api_mm` now varies (CHIRPS/GPM wired) |
+| 16 | EM-DAT validation impossible | EM-DAT data tracked + `validate-emdat` (+ event-level) |
+| 17 | AIFS S3 prefix bug | discovery fixed (10/10 URIs) — *kerchunk→VirtualiZarr migration pending* |
+| 24 | Dashboard received nothing | serve-from-S3 code/pipeline fixed — *manual infra pending* |
+| 13 | Notebooks not in CI | single notebook, CI offline job (blocking) |
+| 7 | Dashboard data dir empty | `data_pipeline` contract/geojson mechanism in place |
+| 21 | Windows WinError 5 (run-all) | no longer blocking — run-all completed to MinIO ⚠️ *not re-verified as a code fix* |
+
+Plus the historical **FIXED THIS SESSION** table (CRMA dispatch, 155→196 units,
+IceChunk 2.x, manifest splitting, etc.).
+
+### ❌ Not solved
+
+| # | Issue | Why |
+|---|-------|-----|
+| 3 | README over-promises | numbers never corrected (~300 units, ~1200 days, 48 000×) |
+| 6 | ECMWF S3 ~15-month retention | architectural constraint (document, not fixable) |
+| 18 / 8 | Benchmark never measured | still hardcoded reference numbers |
+| 19 | Deployment deliverables | partial: dashboard deploy OK; public AWS Open Data store + gap_filler not done |
+| 20 | OND excludes December | `thresholds.py Season.OND=[10,11]` unchanged |
+| 22 | Recall ceiling (~37 %) | DIAGNOSED structural (riverine floods) — needs hydrological routing |
+| 23 | Trigger calibrated to rare rainfall | #1-light shipped but inert; #1-full (C2 recompute) deferred |
+| 9 | Gap-fill Cloud Run/Lithops | never run (needs GCP) |
+| 10 | CPT refinement | proof-of-mechanism only |
+| 12 | Coverage 46 % vs 80 % target | CI threshold lowered to 45 %, target unmet |
+
+**Tally:** 12 solved (3 with caveats: 21 unverified, 24/19 have residual manual/infra
+work) · 10 not solved — of which 2 are constraints/diagnoses not cheaply fixable
+(6 architectural, 22 structural) and the rest is real debt (3, 18, 20, 23, 9, 10, 12).
+
+---
+
+## Latent issues / watch-list
+
+Implied or mentioned across the docs but **not** in the tracked open-issue list
+above. Surfaced from the whole-`docs/` review (2026-06-18); source doc in brackets.
+
+| # | Latent issue | Source | Risk |
+|---|--------------|--------|------|
+| L1 | **Southern frontier −14.5°**: everything south (S. Malawi/Zambia, **most of Madagascar — MDG only 3/22 in-domain**, Mozambique, Zimbabwe) is **No_Data by construction**; a southern return-period climatology (CHIRPS GEV) is **not built** | 884 ISSUE-H | README advertises broad coverage but part of it is empty |
+| L2 | **Manifest-splitting API pinned to IceChunk 2.0.5** (`ManifestSplittingConfig`; the older `split_after_n_chunks` does not exist) | 884 Problem 3 | may break on upgrade |
+| L3 | **Silent partial data past ECMWF retention**: dates >15 mo read best-effort, missing members → NaN (guarded by `min_members`) with no hard error | 884 l.193 | silent reduced-ensemble on old dates |
+| L4 | **ISSUE-21 (WinError 5) not re-verified as a code fix**: run-all completed to MinIO, but the local Windows temp-zarr path was not re-fixed | ISSUES.md | may resurface on local/Windows runs |
+| L5 | **`date -u -d yesterday` is GNU-only** in the daily local-run snippet | daily_update_setup §7 | breaks on macOS |
+| L6 | **Two ground-truth label sources in `validate-emdat`**: unit-day (`run_validation`, EM-DAT date-ranges) vs event-level (`emdat_flood_match`) → metrics not directly comparable | ISSUE-22 NB | interpretation confusion |
+| L7 | **Dashboard "deployed but empty"** if the 3 manual infra steps (Pages source, `DATA_BASE` var, S3 CORS) are skipped | deploy.md / ISSUE-24 | false sense of success |
+| L8 | **MAP label reads Green on a severe day** while p_orange/p_red rise → under-warning if only the argmax label is read | 884 ISSUE-G note | decision/UX risk |
+| L9 | **Tag pinned to the first commit + `create_tag` failure swallowed at debug** (tags now non-authoritative) | 884 ISSUE-I | misleading stale tag (cosmetic) |
+| L10 | **`--mode append` accepted but a no-op** | daily_update_setup §7 | misleading flag |
+
+Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L3**
+(silent partial data) — none are in the tracked list above.
 
 ---
 
