@@ -301,7 +301,9 @@ def _process_day(
         return None
 
     # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
+    has_tail = "tail_ratio" in exc_day
     agg: dict[int, dict[str, pd.Series]] = {}
+    tail_agg: dict[int, pd.Series] = {}
     for rp in rp_options:
         try:
             grids = {
@@ -316,6 +318,21 @@ def _process_day(
             for w, da in grids.items()
         }
         agg[rp]["cov"] = coverage_fraction(grids["24h"], admin, signal_threshold)
+        # Possible-worlds tail signal: max over the 24h/72h windows of the admin-1
+        # aggregated tail ratio (mirrors forecast_hazard's max(24h,72h)). Feeds
+        # CRMAEvidence.forecast_tail_ratio → tail-aware Forecast_Hazard.
+        if has_tail:
+            try:
+                tail_grids = [
+                    aggregate_to_admin1(
+                        exc_day["tail_ratio"].sel(window=wh, return_period=rp),
+                        admin, stat=hazard_stat, min_coverage=min_coverage,
+                    )
+                    for wh in (24, 72)
+                ]
+                tail_agg[rp] = pd.concat(tail_grids, axis=1).max(axis=1)
+            except KeyError:
+                pass
     if rp_signal not in agg:
         log.warning("primary_rp_missing", date=day, rp=rp_signal)
         return None
@@ -369,6 +386,7 @@ def _process_day(
                 risk_by_rp[str(rp)] = _NO_DATA_RESULT
                 continue
 
+            tail_ratio = _finite(tail_agg[rp], pcode) if rp in tail_agg else 0.0
             ev = CRMAEvidence(
                 exceedance_prob_24h=p24,
                 exceedance_prob_72h=p72,
@@ -378,6 +396,7 @@ def _process_day(
                 spatial_coverage_fraction=_finite(agg[rp]["cov"], pcode),
                 consecutive_signal_days=state.consecutive_days,
                 sat_consecutive_days=state.sat_consecutive_days,
+                forecast_tail_ratio=tail_ratio,
                 gpm_quality=quality,
                 gpm_missing=gpm_missing,
                 rp_years=rp,
@@ -430,6 +449,7 @@ def _process_day(
         )
         p24 = primary_ev.exceedance_prob_24h
         scores[pcode]["ensemble_spread_24h"] = round(math.sqrt(p24 * (1.0 - p24) / n_members), 4)
+        scores[pcode]["forecast_tail_ratio"] = round(primary_ev.forecast_tail_ratio, 3)
 
     out_path = write_risk_scores(day, scores, output_dir, meta=meta)
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))

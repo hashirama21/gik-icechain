@@ -120,6 +120,82 @@ def compute_exceedance_probabilities(
     return exceedance
 
 
+def compute_tail_ratio(
+    acc_ds: xr.Dataset,
+    thresholds_ds: xr.Dataset,
+    window_h: int,
+    return_period: int,
+    member_dim: str = "number",
+    tail_quantile: float = 0.95,
+    flood_floor_mm: float = 0.0,
+) -> xr.DataArray:
+    """Possible-worlds tail signal: the high quantile of member accumulation / threshold.
+
+    Where :func:`compute_exceedance_probabilities` collapses the ensemble to the
+    *fraction* of members above the threshold (an expected-value / mean-based
+    view), this collapses it to the *tail*: the ``tail_quantile`` (default p95)
+    member's worst-case window accumulation expressed as a ratio to the GEV
+    return level.
+
+    A ratio ≥ 1.0 means the p95 ensemble member reaches the return level even
+    when the *mean* fraction is ~0 — the convective "wet tail" that an
+    ensemble-mean trigger is blind to (cf. the Nairobi Mar-2026 flash flood,
+    mean ~18 mm but a tail member at 131 mm). This is the forecast-side input to
+    the tail-aware ``Forecast_Hazard`` node.
+
+    Args:
+        acc_ds:        Dataset from ``compute_rolling_accumulations`` with
+                       ``tp_{window_h}h`` (dims include *member_dim* and step).
+        thresholds_ds: Dataset with GEV variable ``rp_{return_period}y`` (lat×lon).
+        window_h:      Accumulation window in hours.
+        return_period: Return period in years.
+        member_dim:    Ensemble member dimension name.
+        tail_quantile: Upper quantile over members (0.95 = worst plausible world).
+        flood_floor_mm: Flood-relevance floor applied to the threshold (mirrors
+                       :func:`compute_exceedance_probabilities`).
+
+    Returns:
+        xr.DataArray (latitude × longitude) of the tail ratio (≥ 0, unitless).
+        Cells outside the threshold domain are NaN (→ no tail signal downstream).
+    """
+    var_name = f"tp_{window_h}h"
+    if var_name not in acc_ds:
+        raise KeyError(
+            f"Variable '{var_name}' not found in accumulated dataset. "
+            f"Available: {list(acc_ds.data_vars)}"
+        )
+
+    threshold = thresholds_ds[f"rp_{return_period}y"]
+    tp = acc_ds[var_name]
+
+    step_dim = find_step_dim(tp)
+    tp_worst = tp.max(dim=step_dim)
+
+    threshold = _align_threshold_to_forecast(threshold, tp_worst)
+    if flood_floor_mm > 0:
+        threshold = threshold.clip(min=flood_floor_mm)
+
+    # p95 member accumulation, then ratio to the (floored) return level. Divide
+    # by a positive-clipped threshold so dry/NaN cells stay NaN rather than inf.
+    tp_tail = tp_worst.quantile(tail_quantile, dim=member_dim)
+    if "quantile" in tp_tail.coords:
+        tp_tail = tp_tail.drop_vars("quantile")
+    ratio = tp_tail / threshold.where(threshold > 0)
+    ratio.attrs.update(
+        {
+            "long_name": (
+                f"Tail ratio (p{int(tail_quantile * 100)} member / "
+                f"{return_period}-year RP, {window_h}h)"
+            ),
+            "units": "1",
+            "window_h": window_h,
+            "return_period": return_period,
+            "tail_quantile": tail_quantile,
+        }
+    )
+    return ratio
+
+
 def compute_ensemble_confidence(
     acc_ds: xr.Dataset,
     window_h: int,

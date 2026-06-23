@@ -3,6 +3,7 @@ tests/unit/test_crma_model.py
 Unit tests for the CRMA Bayesian Network model.
 """
 
+import numpy as np
 import pytest
 
 from gik_icechain.risk.crma_model import (
@@ -11,7 +12,204 @@ from gik_icechain.risk.crma_model import (
     CRMAModel,
     EastAfricaCluster,
     EvidenceThresholds,
+    _cost_loss_state,
+    _dist_of_max,
+    _gaussian_soft_bin,
 )
+from gik_icechain.shared.config import (
+    CostLossConfig,
+    CRMAModelConfig,
+    SoftEvidenceConfig,
+)
+
+
+class TestSoftBinningHelpers:
+    def test_soft_bin_sums_to_one(self):
+        v = _gaussian_soft_bin(0.16, [0.15, 0.40, 0.70], 0.05)
+        assert v.sum() == pytest.approx(1.0)
+        assert len(v) == 4
+
+    def test_sigma_zero_is_onehot(self):
+        v = _gaussian_soft_bin(0.16, [0.15, 0.40, 0.70], 0.0)
+        assert list(v) == [0.0, 1.0, 0.0, 0.0]  # 0.16 >= 0.15 -> Medium
+
+    def test_near_edge_splits_mass(self):
+        # Just below the Medium cutoff -> mass shared between Low and Medium.
+        v = _gaussian_soft_bin(0.14, [0.15, 0.40, 0.70], 0.05)
+        assert v[0] > 0.0 and v[1] > 0.0
+        assert v[2] == pytest.approx(0.0, abs=1e-6)
+
+    def test_non_finite_is_neutral_middle(self):
+        v = _gaussian_soft_bin(float("nan"), [0.15, 0.40, 0.70], 0.05)
+        assert v[1] == 1.0
+
+    def test_dist_of_max_onehot_equals_hard(self):
+        m = _dist_of_max(np.array([0.0, 1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0, 0.0]))
+        assert list(m) == [0.0, 0.0, 1.0, 0.0]  # max(Medium, High) = High
+
+
+class TestSoftEvidenceInference:
+    @staticmethod
+    def _model(**soft_kw):
+        cfg = CRMAModelConfig(soft_evidence=SoftEvidenceConfig(**soft_kw))
+        m = CRMAModel(EastAfricaCluster.EQUATORIAL_EAST, crma_cfg=cfg)
+        m.build()
+        return m
+
+    def test_soft_sigma_zero_matches_hard(self, make_evidence):
+        soft0 = self._model(enabled=True, sigma_forecast=0, sigma_tail=0, sigma_gpm=0,
+                            sigma_spatial=0, sigma_api=0)
+        hard = self._model(enabled=False)
+        rng = np.random.default_rng(0)
+        for _ in range(50):
+            kw = dict(
+                exceedance_prob_24h=float(rng.random()),
+                exceedance_prob_72h=float(rng.random()),
+                exceedance_prob_7d=float(rng.random()),
+                gpm_obs_24h=float(rng.uniform(0, 60)),
+                api_mm=float(rng.uniform(0, 120)),
+                spatial_coverage_fraction=float(rng.random()),
+                consecutive_signal_days=int(rng.integers(0, 5)),
+                sat_consecutive_days=int(rng.integers(0, 10)),
+                forecast_tail_ratio=float(rng.uniform(0, 2.0)),
+            )
+            rs = soft0.infer(soft0.make_evidence(rp=5, **kw))
+            rh = hard.infer(hard.make_evidence(rp=5, **kw))
+            assert rs["risk_state"] == rh["risk_state"]
+            for k in ("p_green", "p_yellow", "p_orange", "p_red"):
+                assert rs[k] == pytest.approx(rh[k], abs=1e-9)
+
+    def test_soft_posterior_normalised(self):
+        m = self._model(enabled=True)
+        ev = m.make_evidence(
+            rp=5, exceedance_prob_24h=0.38, exceedance_prob_72h=0.0,
+            exceedance_prob_7d=0.0, gpm_obs_24h=24.0, api_mm=79.0,
+            spatial_coverage_fraction=0.26, consecutive_signal_days=0,
+        )
+        r = m.infer(ev)
+        assert sum(r[k] for k in ("p_green", "p_yellow", "p_orange", "p_red")) == pytest.approx(1.0)
+
+    def test_to_soft_obs_vectors_normalised(self):
+        m = self._model(enabled=True)
+        ev = m.make_evidence(
+            rp=5, exceedance_prob_24h=0.2, exceedance_prob_72h=0.1,
+            exceedance_prob_7d=0.0, gpm_obs_24h=10.0, api_mm=40.0,
+            spatial_coverage_fraction=0.3, consecutive_signal_days=1,
+            forecast_tail_ratio=0.9,
+        )
+        for node, vec in ev.to_soft_obs().items():
+            assert vec.sum() == pytest.approx(1.0), node
+
+
+class TestTailAwareHazard:
+    """Possible-worlds tail signal escalates Forecast_Hazard even when the
+    ensemble-mean exceedance fraction is ~0 (the convective wet-tail case)."""
+
+    def test_tail_alone_escalates_hazard(self, make_evidence):
+        # Mean fraction 0 everywhere, but the p95 member reaches the return level.
+        e = make_evidence(exceedance_prob_24h=0.0, forecast_tail_ratio=1.05)
+        assert e.forecast_hazard_state == 2  # High via tail (default tail_high_ratio=1.0)
+
+    def test_extreme_tail_gives_extreme_hazard(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h=0.0, forecast_tail_ratio=1.4)
+        assert e.forecast_hazard_state == 3
+
+    def test_medium_tail_band(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h=0.0, forecast_tail_ratio=0.85)
+        assert e.forecast_hazard_state == 1
+
+    def test_no_tail_signal_keeps_fraction_state(self, make_evidence):
+        e = make_evidence(exceedance_prob_24h=0.0, forecast_tail_ratio=0.5)
+        assert e.forecast_hazard_state == 0
+
+    def test_hazard_is_max_of_fraction_and_tail(self, make_evidence):
+        # Strong fraction (High=2) but only a weak tail → fraction wins.
+        e = make_evidence(exceedance_prob_24h=0.50, forecast_tail_ratio=0.0)
+        assert e.forecast_hazard_state == 2
+
+    def test_tail_disabled_ignores_ratio(self, make_evidence):
+        thr = EvidenceThresholds(tail_aware_hazard=False)
+        e = make_evidence(
+            exceedance_prob_24h=0.0, forecast_tail_ratio=1.4, thresholds=thr
+        )
+        assert e.forecast_hazard_state == 0
+
+
+class TestCostLossDecision:
+    """Cost-loss trigger: highest tier whose cumulative posterior ≥ its C/L."""
+
+    def test_pure_rule_escalates_below_argmax(self):
+        # argmax is Green, but the cumulative Yellow mass clears tau_yellow.
+        probs = np.array([0.60, 0.20, 0.12, 0.08])
+        assert int(np.argmax(probs)) == 0
+        # defaults: tau_yellow=0.15, tau_orange=0.25, tau_red=0.35
+        assert _cost_loss_state(probs, 0.15, 0.25, 0.35) == 1  # Yellow
+
+    def test_pure_rule_most_severe_first(self):
+        probs = np.array([0.10, 0.20, 0.30, 0.40])
+        assert _cost_loss_state(probs, 0.15, 0.25, 0.35) == 3  # P(≥Red)=0.40
+
+    def test_pure_rule_orange_band(self):
+        probs = np.array([0.30, 0.40, 0.20, 0.10])
+        # P(≥Red)=0.10<0.35; P(≥Orange)=0.30≥0.25 → Orange
+        assert _cost_loss_state(probs, 0.15, 0.25, 0.35) == 2
+
+    def test_pure_rule_stays_green(self):
+        probs = np.array([0.95, 0.03, 0.015, 0.005])
+        assert _cost_loss_state(probs, 0.15, 0.25, 0.35) == 0
+
+    def test_boundary_and_conservative_high_taus(self):
+        probs = np.array([0.05, 0.05, 0.10, 0.80])
+        # tau exactly at the red mass fires Red (>= boundary, inclusive).
+        assert _cost_loss_state(probs, 0.80, 0.80, 0.80) == 3
+        # taus above every cumulative mass → nothing fires → Green (conservative).
+        assert _cost_loss_state(probs, 0.99, 0.99, 0.99) == 0
+
+    @staticmethod
+    def _model(cost_loss: CostLossConfig | None = None) -> CRMAModel:
+        cfg = CRMAModelConfig(cost_loss=cost_loss or CostLossConfig())
+        m = CRMAModel(EastAfricaCluster.EQUATORIAL_EAST, crma_cfg=cfg)
+        m.build()
+        return m
+
+    def test_default_disabled_is_argmax(self, make_evidence):
+        m = self._model()  # cost_loss default OFF
+        assert m._cfg.cost_loss.enabled is False
+        rng = np.random.default_rng(1)
+        for _ in range(40):
+            ev = m.make_evidence(
+                rp=5,
+                exceedance_prob_24h=float(rng.random()),
+                exceedance_prob_72h=float(rng.random()),
+                exceedance_prob_7d=float(rng.random()),
+                gpm_obs_24h=float(rng.uniform(0, 60)),
+                api_mm=float(rng.uniform(0, 120)),
+                spatial_coverage_fraction=float(rng.random()),
+                consecutive_signal_days=int(rng.integers(0, 5)),
+            )
+            r = m.infer(ev)
+            p = np.array([r["p_green"], r["p_yellow"], r["p_orange"], r["p_red"]])
+            assert r["risk_state"] == int(np.argmax(p))
+
+    def test_enabled_label_matches_rule(self, make_evidence):
+        cl = CostLossConfig(enabled=True)
+        m = self._model(cl)
+        rng = np.random.default_rng(2)
+        for _ in range(40):
+            ev = m.make_evidence(
+                rp=5,
+                exceedance_prob_24h=float(rng.random()),
+                exceedance_prob_72h=float(rng.random()),
+                exceedance_prob_7d=float(rng.random()),
+                gpm_obs_24h=float(rng.uniform(0, 60)),
+                api_mm=float(rng.uniform(0, 120)),
+                spatial_coverage_fraction=float(rng.random()),
+                consecutive_signal_days=int(rng.integers(0, 5)),
+            )
+            r = m.infer(ev)
+            p = np.array([r["p_green"], r["p_yellow"], r["p_orange"], r["p_red"]])
+            expected = _cost_loss_state(p, cl.tau_yellow, cl.tau_orange, cl.tau_red)
+            assert r["risk_state"] == expected
 
 
 class TestCRMAEvidenceDiscretisation:

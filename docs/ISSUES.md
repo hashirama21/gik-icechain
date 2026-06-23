@@ -74,6 +74,75 @@ Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L
 
 ---
 
+## AUDIT 2026-06-23 — Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)
+
+Closing the two methodological gaps vs the mentor's `bn-ibf` (jua-bnet): the
+ensemble was collapsed to a *mean* exceedance fraction (blind to a wet tail) and
+evidence was hard-discretized at bin edges. Engine stays pgmpy + lookup
+marginalization (no RxInfer/Julia).
+
+### A1 · Tail-risk (possible-worlds) — SHIPPED (config-gated, default ON)
+`exceedance.compute_tail_ratio` = pXX (default p95) member accumulation / GEV
+return level, persisted as the `tail_ratio` variable in the C2 zarr
+(backward-compatible: absent → tail neutral). `Forecast_Hazard` is now
+`max(fraction_state, tail_state)` (`CRMAModelConfig.tail_aware_hazard`,
+ratios 0.80/1.00/1.30). Escalates hazard 0→High→Extreme even when the mean
+fraction is ~0 (the Nairobi-Mar-2026 wet-tail case the mentor catches).
+**Honest limit:** recovers events with an ensemble wet tail, NOT pure ECMWF
+misses (Apr-2024 Nairobi forecast ~2.5 mm, whole ensemble dry) — those stay
+structural (ISSUE-22).
+
+### A2 · Soft-evidence (Gaussian soft-binning / virtual evidence) — SHIPPED, default OFF
+`SoftEvidenceConfig` (per-node σ) + `_gaussian_soft_bin`/`_dist_of_max`;
+`CRMAModel._infer_soft` marginalizes the lookup table under per-parent soft
+vectors. σ→0 == hard exactly (validated, max |Δ|≈0 over random cases).
+
+**Real A/B (MinIO store, Apr 2024, 9 days × 238 units, only soft toggled):**
+
+| | Yellow | Orange | Red | EM-DAT hits ≥Y / ≥O / ≥R |
+|---|---|---|---|---|
+| hard | 105 | 43 | 7 | 60 / 15 / 3 |
+| soft (σ default) | 94 | 42 | 6 | 56 / 15 / 3 |
+
+**Finding:** soft-evidence is **net-conservative** on this window, not a win.
+April 2024's misses are exc=0 (no near-threshold evidence to rescue, per
+ISSUE-22); where evidence sits just above a bar, soft-binning pulls mass back
+down → a few marginal Yellows demote to Green. Soft-evidence's value is on
+**partial-signal / convective** windows (cf. mentor's +14 promotions on a
+signal-bearing Mar-2026 window), not no-signal ones. **Kept default OFF**
+(config flip to re-enable) until demonstrated beneficial on an in-retention
+signal-bearing date + a σ-sensitivity sweep.
+
+**Status:** 210 unit tests pass (8 new), ruff+mypy clean. Combined A1+A2 decisive
+test (tail+soft on a wet-tail flood) still needs a fresh C2 on an in-retention
+date — tail_ratio needs per-member data the expired Apr-2024 S3 objects can't
+supply (the MinIO exceedance store has Apr-2024 `exceedance_prob` but no
+`tail_ratio`).
+
+*Cleanup (2026-06-23):* `SoftEvidenceConfig.enabled` default corrected
+`True → False` (code now matches the documented "default OFF" intent and the
+A/B finding above); restored the ✅/❌/⚠️ status glyphs corrupted in the table
+at the top of this file.
+
+### A3 · Cost-loss decision trigger — SHIPPED, default OFF
+`CostLossConfig` is now wired (previously an orphan class): attached to
+`CRMAModelConfig.cost_loss` and consumed by `CRMAModel._decide_risk_state`,
+which all three inference paths (`infer`, `_infer_soft`, `infer_sequence`) now
+route through. When enabled, the label is the **highest tier whose cumulative
+exceedance posterior reaches that tier's C/L ratio**
+(`_cost_loss_state`: Red if P(≥Red) ≥ τ_red, else Orange if P(≥Orange) ≥
+τ_orange, else Yellow if P(≥Yellow) ≥ τ_yellow, else Green; checked
+most-severe-first). Default τ = 0.15 / 0.25 / 0.35 (anticipatory-action C/L,
+< the argmax's implicit ~0.5) → lifts recall / lead time at a controlled
+false-alarm cost (Murphy 1977; Coughlan de Perez et al. 2015). Flows to
+production output automatically (risk_engine / geojson_writer read the decided
+`risk_state`/`risk_label`). **Default OFF** (argmax preserved) until τ are
+*calibrated* on the C1 multi-year corpus by maximising Relative Economic Value
+against EM-DAT — the planned next step, the asymmetric advantage no
+fixed-γ stack has. 6 new unit tests; ruff+mypy clean.
+
+---
+
 ## AUDIT 2026-06-18 — Dashboard publish path was broken; now served from S3
 
 ### ISSUE-24 · Dashboard never received pipeline results — FIXED (serve-from-S3)

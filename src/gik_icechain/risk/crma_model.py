@@ -16,6 +16,7 @@ load_cpts() invalidates the lazy DBN cache so refined CPTs propagate.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -99,6 +100,91 @@ _INTRA_EDGES = [
 ]
 
 
+def _norm_cdf(z: float) -> float:
+    """Standard normal CDF Φ(z) without a SciPy dependency."""
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _gaussian_soft_bin(x: float, cutoffs: list[float], sigma: float) -> np.ndarray:
+    """Probability vector over ``len(cutoffs)+1`` states for a continuous obs *x*.
+
+    State ``k`` covers the interval ``(edge_k, edge_{k+1}]`` with ``edges =
+    [-inf, *cutoffs, +inf]``. Treating *x* as a Gaussian-noisy observation of the
+    true value (σ = measurement bandwidth), the membership of each state is
+
+        ``P(state_k) = Φ((edge_{k+1} - x)/σ) - Φ((edge_k - x)/σ)``.
+
+    With ``sigma <= 0`` (or a non-finite *x*) this returns the one-hot hard
+    classification (``x`` in state = number of cutoffs ≤ ``x``), so the soft path
+    reduces exactly to the legacy ``>=``-threshold discretization.
+    """
+    k_states = len(cutoffs) + 1
+    if not math.isfinite(x):
+        v = np.zeros(k_states)
+        v[1 if k_states > 1 else 0] = 1.0  # neutral middle on missing value
+        return v
+    if sigma <= 0:
+        v = np.zeros(k_states)
+        v[int(np.searchsorted(cutoffs, x, side="right"))] = 1.0
+        return v
+
+    edges = [-math.inf, *cutoffs, math.inf]
+    probs = np.empty(k_states)
+    for k in range(k_states):
+        e_lo, e_hi = edges[k], edges[k + 1]
+        c_hi = 1.0 if e_hi == math.inf else _norm_cdf((e_hi - x) / sigma)
+        c_lo = 0.0 if e_lo == -math.inf else _norm_cdf((e_lo - x) / sigma)
+        probs[k] = c_hi - c_lo
+    total = probs.sum()
+    return probs / total if total > 0 else probs
+
+
+def _dist_of_max(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Distribution of ``max(A, B)`` for independent categorical A~p, B~q.
+
+    The soft generalization of ``max(frac_state, tail_state)``: it collapses to
+    the hard max when *p* and *q* are one-hot.
+    """
+    p_cum = np.cumsum(p)
+    q_cum = np.cumsum(q)
+    out = np.empty(len(p))
+    for k in range(len(p)):
+        q_le = q_cum[k]
+        p_lt = p_cum[k - 1] if k > 0 else 0.0
+        out[k] = p[k] * q_le + q[k] * p_lt
+    return out
+
+
+def _cost_loss_state(
+    probs: np.ndarray, tau_yellow: float, tau_orange: float, tau_red: float
+) -> int:
+    """Cost-loss decision label for a 4-level risk posterior.
+
+    Assigns the *highest* tier whose cumulative (exceedance) posterior reaches
+    that tier's cost-loss ratio C/L:
+
+        Red    if P(≥Red)    = probs[3]                 ≥ tau_red
+        Orange if P(≥Orange) = probs[2]+probs[3]        ≥ tau_orange
+        Yellow if P(≥Yellow) = probs[1]+probs[2]+probs[3] ≥ tau_yellow
+        else Green
+
+    For anticipatory action C/L < 0.5, so triggers fire below the argmax's
+    implicit ~0.5 — lifting recall / lead time at a controlled false-alarm
+    cost (Murphy 1977; Coughlan de Perez et al. 2015). Checked most-severe
+    first; with tau_yellow ≤ tau_orange ≤ tau_red the result is well-ordered.
+    """
+    p_red = float(probs[3])
+    p_ge_orange = float(probs[2]) + p_red
+    p_ge_yellow = float(probs[1]) + p_ge_orange
+    if p_red >= tau_red:
+        return 3
+    if p_ge_orange >= tau_orange:
+        return 2
+    if p_ge_yellow >= tau_yellow:
+        return 1
+    return 0
+
+
 @dataclass
 class EvidenceThresholds:
     """Discretization thresholds for CRMAEvidence — instance fields (thread-safe).
@@ -118,6 +204,21 @@ class EvidenceThresholds:
     hazard_medium_threshold: float = 0.15  # Low → Medium boundary for Forecast_Hazard
     hazard_high_threshold: float = 0.40  # Medium → High boundary for Forecast_Hazard
     hazard_extreme_threshold: float = 0.70  # High → Extreme boundary for Forecast_Hazard
+    # Tail-aware Forecast_Hazard (possible-worlds): escalate on the ensemble tail
+    # ratio even when the mean exceedance fraction is ~0. Disabled when
+    # tail_aware_hazard is False (tail_*_ratio left at defaults but unused).
+    tail_aware_hazard: bool = True
+    tail_medium_ratio: float = 0.80
+    tail_high_ratio: float = 1.00
+    tail_extreme_ratio: float = 1.30
+    # Gaussian soft-binning (virtual evidence). When False, evidence is hard.
+    # Each sigma is a bandwidth in the node's native units; 0 → hard for that node.
+    soft_evidence: bool = False
+    sigma_forecast: float = 0.05
+    sigma_tail: float = 0.07
+    sigma_gpm: float = 5.0
+    sigma_spatial: float = 0.08
+    sigma_api: float = 10.0
 
 
 @dataclass
@@ -144,6 +245,9 @@ class CRMAEvidence:
     spatial_coverage_fraction: float
     consecutive_signal_days: int
     sat_consecutive_days: int = 0
+    # Possible-worlds tail signal: p95 member accumulation / GEV return level
+    # (max over the 24h/72h windows). 0.0 = no tail signal / tail-risk disabled.
+    forecast_tail_ratio: float = 0.0
     gpm_quality: int = 2
     gpm_missing: bool = False
     rp_years: int = 5
@@ -166,15 +270,45 @@ class CRMAEvidence:
 
     @property
     def forecast_hazard_state(self) -> int:
-        """0=Low, 1=Medium, 2=High, 3=Extreme."""
+        """0=Low, 1=Medium, 2=High, 3=Extreme.
+
+        The state is the max of two complementary views of the forecast:
+
+        - **Fraction (expected-value)**: the share of ensemble members above the
+          GEV threshold (``exceedance_prob_*``). Strong when the ensemble agrees.
+        - **Tail (possible-worlds)**: the high-quantile member accumulation as a
+          ratio to the return level (``forecast_tail_ratio``). Strong when a
+          narrow but extreme tail exists even if the mean fraction is ~0 — the
+          convective wet-tail an ensemble-mean trigger is blind to.
+
+        Taking the max means either an agreeing ensemble *or* a credible extreme
+        member escalates the hazard.
+        """
+        t = self.thresholds
         p = max(self.exceedance_prob_24h, self.exceedance_prob_72h)
-        if p >= self.thresholds.hazard_extreme_threshold:
-            return 3
-        if p >= self.thresholds.hazard_high_threshold:
-            return 2
-        if p >= self.thresholds.hazard_medium_threshold:
-            return 1
-        return 0
+        if p >= t.hazard_extreme_threshold:
+            frac_state = 3
+        elif p >= t.hazard_high_threshold:
+            frac_state = 2
+        elif p >= t.hazard_medium_threshold:
+            frac_state = 1
+        else:
+            frac_state = 0
+
+        if not t.tail_aware_hazard:
+            return frac_state
+
+        r = self.forecast_tail_ratio
+        if r >= t.tail_extreme_ratio:
+            tail_state = 3
+        elif r >= t.tail_high_ratio:
+            tail_state = 2
+        elif r >= t.tail_medium_ratio:
+            tail_state = 1
+        else:
+            tail_state = 0
+
+        return max(frac_state, tail_state)
 
     @property
     def obs_antecedent_state(self) -> int:
@@ -243,6 +377,81 @@ class CRMAEvidence:
             "Soil_Memory": self.soil_memory_state,
         }
 
+    # --- Soft (virtual) evidence: probability vector per node ---------------
+    # Continuous-derived nodes are Gaussian soft-binned; count/quality-derived
+    # nodes stay one-hot. With soft_evidence disabled (or all sigma = 0) every
+    # vector is one-hot and ``to_soft_obs`` reproduces ``to_obs_dict`` exactly.
+
+    @staticmethod
+    def _onehot(state: int, k_states: int) -> np.ndarray:
+        v = np.zeros(k_states)
+        v[state] = 1.0
+        return v
+
+    def forecast_hazard_dist(self) -> np.ndarray:
+        """Soft distribution over the 4 Forecast_Hazard states.
+
+        Soft generalization of ``forecast_hazard_state``: the distribution of
+        ``max(fraction_state, tail_state)`` where each is Gaussian soft-binned.
+        """
+        t = self.thresholds
+        if not t.soft_evidence:
+            return self._onehot(self.forecast_hazard_state, 4)
+        p = max(self.exceedance_prob_24h, self.exceedance_prob_72h)
+        frac = _gaussian_soft_bin(
+            p,
+            [t.hazard_medium_threshold, t.hazard_high_threshold, t.hazard_extreme_threshold],
+            t.sigma_forecast,
+        )
+        if not t.tail_aware_hazard:
+            return frac
+        tail = _gaussian_soft_bin(
+            self.forecast_tail_ratio,
+            [t.tail_medium_ratio, t.tail_high_ratio, t.tail_extreme_ratio],
+            t.sigma_tail,
+        )
+        return _dist_of_max(frac, tail)
+
+    def obs_antecedent_dist(self) -> np.ndarray:
+        t = self.thresholds
+        if self.gpm_missing:
+            return np.array([0.0, 1.0, 0.0])  # neutral Normal on missing obs
+        if not t.soft_evidence:
+            return self._onehot(self.obs_antecedent_state, 3)
+        return _gaussian_soft_bin(
+            self.gpm_obs_24h, [t.gpm_normal_mmday, t.gpm_above_mmday], t.sigma_gpm
+        )
+
+    def spatial_coverage_dist(self) -> np.ndarray:
+        t = self.thresholds
+        if not t.soft_evidence:
+            return self._onehot(self.spatial_coverage_state, 3)
+        return _gaussian_soft_bin(
+            self.spatial_coverage_fraction,
+            [t.spatial_regional, t.spatial_extensive],
+            t.sigma_spatial,
+        )
+
+    def api_state_dist(self) -> np.ndarray:
+        t = self.thresholds
+        if not t.soft_evidence:
+            return self._onehot(self.api_state, 3)
+        return _gaussian_soft_bin(
+            self.api_mm, [t.api_normal_mm, t.api_saturated_mm], t.sigma_api
+        )
+
+    def to_soft_obs(self) -> dict[str, np.ndarray]:
+        """Per-node probability vectors for soft-evidence marginalization."""
+        return {
+            "Forecast_Hazard": self.forecast_hazard_dist(),
+            "Obs_Antecedent": self.obs_antecedent_dist(),
+            "Temporal_Persist": self._onehot(self.temporal_persistence_state, 2),
+            "Spatial_Coverage": self.spatial_coverage_dist(),
+            "Data_Confidence": self._onehot(self.data_confidence_state, 3),
+            "API_State": self.api_state_dist(),
+            "Soil_Memory": self._onehot(self.soil_memory_state, 2),
+        }
+
 
 class CRMAModel:
     """ICPAC CRMA Bayesian Network for East Africa flood risk.
@@ -305,6 +514,16 @@ class CRMAModel:
             hazard_medium_threshold=medium,
             hazard_high_threshold=high,
             hazard_extreme_threshold=extreme,
+            tail_aware_hazard=cfg.tail_aware_hazard,
+            tail_medium_ratio=cfg.tail_medium_ratio,
+            tail_high_ratio=cfg.tail_high_ratio,
+            tail_extreme_ratio=cfg.tail_extreme_ratio,
+            soft_evidence=cfg.soft_evidence.enabled,
+            sigma_forecast=cfg.soft_evidence.sigma_forecast,
+            sigma_tail=cfg.soft_evidence.sigma_tail,
+            sigma_gpm=cfg.soft_evidence.sigma_gpm,
+            sigma_spatial=cfg.soft_evidence.sigma_spatial,
+            sigma_api=cfg.soft_evidence.sigma_api,
         )
 
     def make_evidence(self, rp: int | None = None, **kwargs: object) -> CRMAEvidence:
@@ -392,9 +611,17 @@ class CRMAModel:
         log.debug("dbn_built_lazily", cluster=self.cluster)
 
     def infer(self, evidence: CRMAEvidence) -> dict[str, Any]:
-        """Single-step flood risk inference via O(1) lookup table."""
+        """Single-step flood risk inference.
+
+        Dispatches to the soft-evidence marginalization when
+        ``soft_evidence.enabled`` (config), otherwise the O(1) hard lookup.
+        Both share the same pre-computed lookup table.
+        """
         if self._lookup_table is None:
             raise RuntimeError("Model not built. Call build() first.")
+
+        if self._cfg.soft_evidence.enabled:
+            return self._infer_soft(evidence)
 
         obs = evidence.to_obs_dict()
         probs = self._lookup_table[
@@ -406,8 +633,24 @@ class CRMAModel:
             obs["API_State"],
             obs["Soil_Memory"],
         ]
-        risk_state = int(np.argmax(probs))
+        risk_state = self._decide_risk_state(probs)
         return self._format_result(risk_state, probs, obs)
+
+    def _infer_soft(self, evidence: CRMAEvidence) -> dict[str, Any]:
+        """Soft-evidence inference: weighted marginal of the lookup table.
+
+        ``P(risk) = Σ_states Π_k p_k(state) · P(risk | states)`` — contract each
+        parent axis of the lookup table with that parent's soft probability
+        vector. Under one-hot vectors this equals the hard lookup exactly.
+        """
+        soft = evidence.to_soft_obs()
+        assert self._lookup_table is not None  # guarded by infer()
+        res: np.ndarray = self._lookup_table
+        for node in _COMPOUND_PARENTS:
+            res = np.tensordot(soft[node], res, axes=([0], [0]))
+        probs = res  # shape (N_RISK_LEVELS,)
+        risk_state = self._decide_risk_state(probs)
+        return self._format_result(risk_state, probs, evidence.to_obs_dict())
 
     def infer_sequence(
         self,
@@ -446,7 +689,7 @@ class CRMAModel:
         out: list[dict[str, Any]] = []
         for t, ev in enumerate(evidence_sequence):
             probs = results_raw[("Risk_State", t)].values
-            risk_state = int(np.argmax(probs))
+            risk_state = self._decide_risk_state(probs)
             out.append(self._format_result(risk_state, probs, ev.to_obs_dict()))
         return out
 
@@ -479,6 +722,18 @@ class CRMAModel:
             evidence=[(p, time_slice) for p in parents] if parents else None,
             evidence_card=list(cpd.cardinality[1:]) if parents else None,
         )
+
+    def _decide_risk_state(self, probs: np.ndarray) -> int:
+        """Map a risk posterior to a label.
+
+        Cost-loss tiering when ``cost_loss.enabled`` (highest tier whose
+        cumulative posterior reaches its C/L ratio), otherwise argmax. Under
+        the default (disabled) config this is exactly ``argmax(probs)``.
+        """
+        cl = self._cfg.cost_loss
+        if cl.enabled:
+            return _cost_loss_state(probs, cl.tau_yellow, cl.tau_orange, cl.tau_red)
+        return int(np.argmax(probs))
 
     def _format_result(
         self, risk_state: int, probs: np.ndarray, obs: dict[str, int]
