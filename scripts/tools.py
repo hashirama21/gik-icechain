@@ -1048,5 +1048,69 @@ def validate_emdat(
             )
 
 
+@app.command("calibrate-cost-loss")
+def calibrate_cost_loss_cmd(
+    risk_dir: Annotated[
+        Path, typer.Option(help="Directory with per-day risk_scores.json files.")
+    ] = Path("results/admin1_risk/"),
+    emdat_csv: Annotated[Path, typer.Option(help="EM-DAT flood CSV (from emdat.be).")] = Path(
+        "data/emdat/east_africa_floods.csv"
+    ),
+    output: Annotated[
+        Path | None,
+        typer.Option(help="Optional JSON path for the calibrated CostLossConfig + report."),
+    ] = None,
+    alpha_yellow: Annotated[float, typer.Option(help="Cost-loss ratio C/L for Yellow.")] = 0.10,
+    alpha_orange: Annotated[float, typer.Option(help="Cost-loss ratio C/L for Orange.")] = 0.20,
+    alpha_red: Annotated[float, typer.Option(help="Cost-loss ratio C/L for Red.")] = 0.30,
+    start: Annotated[str | None, typer.Option(help="First date YYYY-MM-DD (inclusive).")] = None,
+    end: Annotated[str | None, typer.Option(help="Last date YYYY-MM-DD (inclusive).")] = None,
+) -> None:
+    """Calibrate cost-loss thresholds (tau) by maximising Relative Economic Value.
+
+    Learns tau_yellow/orange/red from EM-DAT so the cost-loss trigger captures the
+    most economic value at each tier's anticipatory-action cost-loss ratio. The
+    result is advisory: review it, then set component3.crma_model.cost_loss in
+    config (enabled=true) to put it live.
+    """
+    from gik_icechain.risk.cost_loss_calibration import calibrate_from_risk_dir
+    from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+
+    if not emdat_csv.exists():
+        typer.echo(f"EM-DAT CSV not found: {emdat_csv}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Loading EM-DAT records from {emdat_csv} ...")
+    emdat_records = load_emdat_east_africa(emdat_csv)
+    typer.echo(f"  {len(emdat_records)} flood events loaded.")
+
+    alphas = {"yellow": alpha_yellow, "orange": alpha_orange, "red": alpha_red}
+    cfg, report = calibrate_from_risk_dir(risk_dir, emdat_records, start, end, alphas)
+
+    typer.echo(
+        f"\nCalibrated on {report['n_unit_days']} unit-days "
+        f"({report['n_positives']} flood-positive, base rate {report['base_rate']:.4f})."
+    )
+    typer.echo(f"\n{'tier':<8} {'alpha':>6} {'tau':>6} {'REV':>8} {'hit':>6} {'falseAlarm':>11}")
+    typer.echo("-" * 48)
+    for tier in ("yellow", "orange", "red"):
+        t = report["tiers"][tier]
+        typer.echo(
+            f"{tier:<8} {t['alpha']:>6.2f} {t['tau']:>6.2f} {t['rev']:>8.3f} "
+            f"{t['hit_rate']:>6.2f} {t['false_alarm_rate']:>11.3f}"
+        )
+    if report["ordering_clamped"]:
+        typer.echo("  (taus clamped to be non-decreasing for the ordering constraint)")
+    typer.echo(
+        f"\nConfig: cost_loss.enabled=true tau_yellow={cfg.tau_yellow:.2f} "
+        f"tau_orange={cfg.tau_orange:.2f} tau_red={cfg.tau_red:.2f}"
+    )
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps({"cost_loss": cfg.model_dump(), "report": report}, indent=2))
+        typer.echo(f"\nWritten to {output}")
+
+
 if __name__ == "__main__":
     app()

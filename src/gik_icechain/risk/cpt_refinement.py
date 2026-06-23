@@ -537,6 +537,24 @@ def refine_cpts_with_emdat(
     )
 
 
+def emdat_flood_days(emdat_records: list[EMDATFloodRecord]) -> set[tuple[str, str]]:
+    """Expand EM-DAT events into the set of (date_str, admin1_pcode) flood days.
+
+    Each record spans ``start_date``…``end_date``; every calendar day in that
+    span for the affected admin-1 unit is a positive ground-truth label.
+    """
+    from datetime import timedelta
+
+    flood_days: set[tuple[str, str]] = set()
+    for rec in emdat_records:
+        current = rec.start_date.date()
+        end = rec.end_date.date()
+        while current <= end:
+            flood_days.add((str(current), rec.admin1_pcode))
+            current += timedelta(days=1)
+    return flood_days
+
+
 def run_validation(
     risk_results_df: pd.DataFrame,
     emdat_records: list[EMDATFloodRecord],
@@ -562,15 +580,7 @@ def run_validation(
     except ImportError:
         raise ImportError("scikit-learn is required: pip install scikit-learn") from None
 
-    from datetime import timedelta
-
-    flood_days: set[tuple[str, str]] = set()
-    for rec in emdat_records:
-        current = rec.start_date.date()
-        end = rec.end_date.date()
-        while current <= end:
-            flood_days.add((str(current), rec.admin1_pcode))
-            current += timedelta(days=1)
+    flood_days = emdat_flood_days(emdat_records)
 
     df = risk_results_df.copy()
     df["date"] = df["date"].astype(str)

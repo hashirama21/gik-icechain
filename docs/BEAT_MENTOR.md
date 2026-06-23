@@ -86,12 +86,21 @@ eccodes), ruff + mypy clean. Commits sur `develop`, auteur `hashirama21`.
 
 Les axes que le stack du mentor ne peut pas suivre, par rendement décroissant :
 
-### C1 · Calibration REV du cost-loss *(en cours / prochain)*
+### C1 · Calibration REV du cost-loss — SHIPPED (outil, default OFF)
 Le mentor **devine** γ=0.20. Nous, avec ~1000 jours, on **apprend** les τ qui
-maximisent la **Relative Economic Value** (Richardson 2000 ; Wilks) / minimisent
-le coût attendu contre EM-DAT. C'est la métrique exacte du Challenge 41 (« missed
-opportunities ») et ça attaque directement le recall@actionable (~0.025 aujourd'hui).
-**Avantage asymétrique** : seul notre corpus C1 permet de calibrer.
+maximisent la **Relative Economic Value** (Richardson 2000 ; Wilks) contre EM-DAT.
+C'est la métrique exacte du Challenge 41 (« missed opportunities ») et ça attaque
+directement le recall@actionable (~0.025). **Avantage asymétrique** : seul notre
+corpus C1 permet de calibrer.
+
+Module `risk/cost_loss_calibration.py` : `relative_economic_value` (pure,
+REV=1 parfait / 0 sans skill), `calibrate_tier` (balaye τ, maximise REV à la C/L
+du palier), `calibrate_cost_loss` → `CostLossConfig` + rapport (τ non-décroissants
+imposés pour la contrainte d'ordre), `calibrate_from_risk_dir` (charge les
+`*_risk_scores.json` + labels EM-DAT). CLI : `tools.py calibrate-cost-loss`
+(advisory — on revoit puis on met `cost_loss.enabled=true` en config). L'inférence
+live est inchangée. Reste à faire : tourner sur un corpus réel en rétention pour
+publier les τ et l'uplift recall.
 
 ### C2 · Fusion hydrologique (streamflow)
 Consommer le streamflow/riverdepth de `DevOps-hazard-modeling` (GEOSFM/wflow) comme
