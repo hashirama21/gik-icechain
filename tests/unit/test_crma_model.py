@@ -58,7 +58,7 @@ class TestSoftEvidenceInference:
 
     def test_soft_sigma_zero_matches_hard(self, make_evidence):
         soft0 = self._model(enabled=True, sigma_forecast=0, sigma_tail=0, sigma_gpm=0,
-                            sigma_spatial=0, sigma_api=0)
+                            sigma_spatial=0, sigma_api=0, sigma_trend=0)
         hard = self._model(enabled=False)
         rng = np.random.default_rng(0)
         for _ in range(50):
@@ -210,6 +210,76 @@ class TestCostLossDecision:
             p = np.array([r["p_green"], r["p_yellow"], r["p_orange"], r["p_red"]])
             expected = _cost_loss_state(p, cl.tau_yellow, cl.tau_orange, cl.tau_red)
             assert r["risk_state"] == expected
+
+
+class TestRainfallTrend:
+    """Rainfall_Trend node: the 7-day IMERG slope escalates/dampens compound
+    risk, with Stable as the neutral (legacy-preserving) state."""
+
+    def test_default_slope_is_stable(self, make_evidence):
+        assert make_evidence().rainfall_trend_state == 1
+
+    def test_increasing_and_decreasing_bins(self, make_evidence):
+        assert make_evidence(rainfall_trend_slope=2.5).rainfall_trend_state == 2
+        assert make_evidence(rainfall_trend_slope=-2.5).rainfall_trend_state == 0
+        assert make_evidence(rainfall_trend_slope=1.0).rainfall_trend_state == 1
+
+    def test_threshold_is_inclusive(self, make_evidence):
+        thr = EvidenceThresholds(trend_threshold=2.0)
+        assert make_evidence(rainfall_trend_slope=2.0, thresholds=thr).rainfall_trend_state == 2
+        assert make_evidence(rainfall_trend_slope=-2.0, thresholds=thr).rainfall_trend_state == 0
+
+    @staticmethod
+    def _model() -> CRMAModel:
+        m = CRMAModel(EastAfricaCluster.EQUATORIAL_EAST)
+        m.build()
+        return m
+
+    @staticmethod
+    def _expected_state(r: dict) -> float:
+        p = [r["p_green"], r["p_yellow"], r["p_orange"], r["p_red"]]
+        return sum(k * pk for k, pk in enumerate(p))
+
+    @staticmethod
+    def _base(exc: float) -> dict:
+        return dict(
+            rp=5, exceedance_prob_24h=exc, exceedance_prob_72h=0.0,
+            exceedance_prob_7d=0.0, gpm_obs_24h=24.0, api_mm=85.0,
+            spatial_coverage_fraction=0.30, consecutive_signal_days=0,
+        )
+
+    def test_trend_monotonic_in_severity(self):
+        m = self._model()
+        b = self._base(0.30)
+        vals = [
+            self._expected_state(m.infer(m.make_evidence(**b, rainfall_trend_slope=s)))
+            for s in (-5.0, -1.0, 0.0, 1.0, 5.0)
+        ]
+        # Centred (state-1)*weight ⇒ expected severity is monotonic non-decreasing.
+        assert vals == sorted(vals)
+
+    def test_trend_can_change_the_label(self):
+        m = self._model()
+        # Across a forecast-strength sweep, some base score sits within one
+        # weight of a Compound_Risk bucket edge, so the trend flips the label.
+        flipped = False
+        for exc in np.linspace(0.05, 0.95, 19):
+            b = self._base(float(exc))
+            dec = m.infer(m.make_evidence(**b, rainfall_trend_slope=-3.0))["risk_state"]
+            inc = m.infer(m.make_evidence(**b, rainfall_trend_slope=3.0))["risk_state"]
+            if dec != inc:
+                assert inc > dec  # intensifying trend never lowers the label
+                flipped = True
+                break
+        assert flipped, "rainfall trend never altered the risk label across the sweep"
+
+    def test_soft_dist_normalised_and_onehot_when_hard(self, make_evidence):
+        ev = make_evidence(rainfall_trend_slope=1.5)
+        assert list(ev.rainfall_trend_dist()) == [0.0, 1.0, 0.0]  # hard → one-hot Stable
+        thr = EvidenceThresholds(soft_evidence=True, sigma_trend=1.0, trend_threshold=2.0)
+        d = make_evidence(rainfall_trend_slope=1.8, thresholds=thr).rainfall_trend_dist()
+        assert d.sum() == pytest.approx(1.0)
+        assert d[1] > 0 and d[2] > 0  # near +threshold splits Stable/Increasing
 
 
 class TestCRMAEvidenceDiscretisation:
@@ -495,9 +565,13 @@ class TestEscalationLevers:
     """Lever #1 (Extreme hazard state) + #3 (confidence/forecast decoupling)."""
 
     def test_lookup_table_shape_4states(self, built_model):
-        """Forecast_Hazard axis of the O(1) lookup table is 4 states (Extreme)."""
+        """Forecast_Hazard axis of the O(1) lookup table is 4 states (Extreme).
+
+        Axes: Forecast_Hazard, Obs_Antecedent, Temporal_Persist, Spatial_Coverage,
+        Data_Confidence, API_State, Soil_Memory, Rainfall_Trend, Risk_State.
+        """
         assert built_model._lookup_table.shape[0] == 4
-        assert built_model._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 4)
+        assert built_model._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 3, 4)
 
     def test_decoupling_boundary_diverges(self, make_evidence):
         """At a bucket boundary, a strong forecast under missing GPM (Low

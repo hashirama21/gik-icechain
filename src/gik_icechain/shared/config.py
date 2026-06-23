@@ -391,10 +391,14 @@ class SoftEvidenceConfig(BaseModel):
     sigma_gpm: float = 5.0        # mm/day
     sigma_spatial: float = 0.08   # coverage fraction
     sigma_api: float = 10.0       # mm
+    sigma_trend: float = 1.0      # mm/day (rainfall-trend slope)
 
     @model_validator(mode="after")
     def _sigmas_non_negative(self) -> SoftEvidenceConfig:
-        for name in ("sigma_forecast", "sigma_tail", "sigma_gpm", "sigma_spatial", "sigma_api"):
+        for name in (
+            "sigma_forecast", "sigma_tail", "sigma_gpm",
+            "sigma_spatial", "sigma_api", "sigma_trend",
+        ):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be >= 0 (0 reduces to the hard path)")
         return self
@@ -520,9 +524,16 @@ class CRMAModelConfig(BaseModel):
     # surface the lower-return-period exceedance (lower effective rainfall bar).
     soil_conditioned_rp: bool = True
     saturated_rp: int = 2
-    # Additive Compound_Risk score weights for the two non-cluster evidence axes.
+    # Additive Compound_Risk score weights for the non-cluster evidence axes.
     weight_temporal_persist: float = 1.5
     weight_spatial_coverage: float = 1.0
+    # Rainfall_Trend (Decreasing/Stable/Increasing) contributes a *centred*
+    # (state-1)*weight term so Stable is exactly neutral (preserves the legacy
+    # calibration): an intensifying 7-day trend nudges the score up by one
+    # weight, a weakening trend down by one. The ±threshold (mm/day) bins the
+    # IMERG 7-day slope into the three states (cf. mentor's ±2 mm/day).
+    weight_rainfall_trend: float = 1.0
+    rainfall_trend_threshold_mmday: float = 2.0
 
     # CPT parameters
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(

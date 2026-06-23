@@ -74,6 +74,33 @@ Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L
 
 ---
 
+## AUDIT 2026-06-23 — Beat-mentor Phase B: parity node Rainfall_Trend
+
+### B1 · Rainfall_Trend node — SHIPPED (neutral default, zero production impact yet)
+Adds the mentor's `rainfall_trend` parent the BN was missing: an 8th parent of
+`Compound_Risk` with states Decreasing / Stable / Increasing, derived from the
+7-day IMERG accumulation linear slope (mm/day), binned at ±`trend_threshold`
+(default ±2 mm/day, cf. mentor). The contribution to the additive compound
+score is **centred** — `(state-1)·weight_rainfall_trend` — so **Stable is
+exactly neutral and the legacy calibration is preserved bit-for-bit** (the
+Stable slice of the enlarged lookup table equals the old table; all prior
+inference tests pass unchanged). An intensifying antecedent trend escalates,
+a weakening one dampens. Soft-binnable like the other continuous nodes
+(`sigma_trend`); routed through the hard lookup, the soft marginalization, the
+DBN slice, and EM-DAT CPT refinement (`_EVIDENCE_COLS`). Lookup table grows
+1296 → 3888 combos.
+
+**Honest limit:** the production feed is not wired yet — `risk_engine` does not
+yet compute the per-unit 7-day IMERG slope, so `rainfall_trend_slope` defaults
+to 0.0 (Stable) and the node is currently *inert* in live runs. Next step:
+carry a rolling 7-day GPM buffer in `DynamicBNState` → slope → evidence. The
+node + all plumbing + tests are in place so wiring the feed is a localized change.
+
+**Status:** node fully integrated and unit-tested (discretization, monotonic
+severity, label-flip on a borderline sweep, soft σ→0==hard). ruff+mypy clean.
+
+---
+
 ## AUDIT 2026-06-23 — Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)
 
 Closing the two methodological gaps vs the mentor's `bn-ibf` (jua-bnet): the

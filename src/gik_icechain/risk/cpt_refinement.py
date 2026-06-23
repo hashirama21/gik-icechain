@@ -51,6 +51,7 @@ _EVIDENCE_COLS = [
     "Data_Confidence",
     "API_State",
     "Soil_Memory",
+    "Rainfall_Trend",
     "Risk_State",
 ]
 
@@ -62,6 +63,7 @@ _STATE_NAMES: dict[str, list[int]] = {
     "Data_Confidence": [0, 1, 2],
     "API_State": [0, 1, 2],
     "Soil_Memory": [0, 1],
+    "Rainfall_Trend": [0, 1, 2],
     "Compound_Risk": [0, 1, 2, 3],
     "Risk_State": [0, 1, 2, 3],
 }
@@ -139,6 +141,7 @@ def _evidence_row(evidence: CRMAEvidence, risk_state: int, **extra: object) -> d
         "Data_Confidence": evidence.data_confidence_state,
         "API_State": evidence.api_state,
         "Soil_Memory": evidence.soil_memory_state,
+        "Rainfall_Trend": evidence.rainfall_trend_state,
         "Risk_State": risk_state,
         **extra,
     }

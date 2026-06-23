@@ -72,11 +72,13 @@ NODE_CARDS: dict[str, int] = {
     "Data_Confidence": 3,  # Low / Medium / High
     "API_State": 3,  # Dry / Normal / Saturated
     "Soil_Memory": 2,  # Recent (<N days sat) / Prolonged (≥N days sat)
+    "Rainfall_Trend": 3,  # Decreasing / Stable / Increasing (7-day IMERG slope)
     "Compound_Risk": 4,  # None / Low / Moderate / High
     "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
 
-# Ordered parent dimensions of Compound_Risk — defines the lookup table axis order
+# Ordered parent dimensions of Compound_Risk — defines the lookup table axis order.
+# Rainfall_Trend is appended last so the legacy axis order is unchanged.
 _COMPOUND_PARENTS = [
     "Forecast_Hazard",
     "Obs_Antecedent",
@@ -85,6 +87,7 @@ _COMPOUND_PARENTS = [
     "Data_Confidence",
     "API_State",
     "Soil_Memory",
+    "Rainfall_Trend",
 ]
 _PARENT_CARDS = [NODE_CARDS[p] for p in _COMPOUND_PARENTS]
 
@@ -96,6 +99,7 @@ _INTRA_EDGES = [
     ("Data_Confidence", "Compound_Risk"),
     ("API_State", "Compound_Risk"),
     ("Soil_Memory", "Compound_Risk"),
+    ("Rainfall_Trend", "Compound_Risk"),
     ("Compound_Risk", "Risk_State"),
 ]
 
@@ -219,6 +223,10 @@ class EvidenceThresholds:
     sigma_gpm: float = 5.0
     sigma_spatial: float = 0.08
     sigma_api: float = 10.0
+    sigma_trend: float = 1.0
+    # Rainfall_Trend: |7-day IMERG slope| ≥ trend_threshold (mm/day) bins the
+    # observation into Decreasing (≤ −thr) / Stable / Increasing (≥ +thr).
+    trend_threshold: float = 2.0
 
 
 @dataclass
@@ -248,6 +256,9 @@ class CRMAEvidence:
     # Possible-worlds tail signal: p95 member accumulation / GEV return level
     # (max over the 24h/72h windows). 0.0 = no tail signal / tail-risk disabled.
     forecast_tail_ratio: float = 0.0
+    # 7-day IMERG accumulation linear slope (mm/day). 0.0 = Stable (neutral):
+    # an intensifying antecedent trend escalates risk, a weakening one dampens.
+    rainfall_trend_slope: float = 0.0
     gpm_quality: int = 2
     gpm_missing: bool = False
     rp_years: int = 5
@@ -365,6 +376,16 @@ class CRMAEvidence:
         """0=Recent, 1=Prolonged (≥ soil_memory_days of consecutive saturation)."""
         return int(self.sat_consecutive_days >= self.thresholds.soil_memory_days)
 
+    @property
+    def rainfall_trend_state(self) -> int:
+        """0=Decreasing, 1=Stable, 2=Increasing (7-day IMERG slope, mm/day)."""
+        thr = self.thresholds.trend_threshold
+        if self.rainfall_trend_slope >= thr:
+            return 2
+        if self.rainfall_trend_slope <= -thr:
+            return 0
+        return 1
+
     def to_obs_dict(self) -> dict[str, int]:
         """Discretised evidence as a plain dict keyed by BN node name."""
         return {
@@ -375,6 +396,7 @@ class CRMAEvidence:
             "Data_Confidence": self.data_confidence_state,
             "API_State": self.api_state,
             "Soil_Memory": self.soil_memory_state,
+            "Rainfall_Trend": self.rainfall_trend_state,
         }
 
     # --- Soft (virtual) evidence: probability vector per node ---------------
@@ -440,6 +462,14 @@ class CRMAEvidence:
             self.api_mm, [t.api_normal_mm, t.api_saturated_mm], t.sigma_api
         )
 
+    def rainfall_trend_dist(self) -> np.ndarray:
+        t = self.thresholds
+        if not t.soft_evidence:
+            return self._onehot(self.rainfall_trend_state, 3)
+        return _gaussian_soft_bin(
+            self.rainfall_trend_slope, [-t.trend_threshold, t.trend_threshold], t.sigma_trend
+        )
+
     def to_soft_obs(self) -> dict[str, np.ndarray]:
         """Per-node probability vectors for soft-evidence marginalization."""
         return {
@@ -450,6 +480,7 @@ class CRMAEvidence:
             "Data_Confidence": self._onehot(self.data_confidence_state, 3),
             "API_State": self.api_state_dist(),
             "Soil_Memory": self._onehot(self.soil_memory_state, 2),
+            "Rainfall_Trend": self.rainfall_trend_dist(),
         }
 
 
@@ -457,7 +488,7 @@ class CRMAModel:
     """ICPAC CRMA Bayesian Network for East Africa flood risk.
 
     Single-step inference uses a pre-computed lookup table (O(1) per call).
-    Shape: (3, 3, 2, 3, 3, 3, 2, 4) → 972 parent combos × 4 risk states.
+    Shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) → 3888 parent combos × 4 risk states.
 
     All CPT parameters are driven by CRMAModelConfig (no hardcoded numerics).
     """
@@ -475,7 +506,7 @@ class CRMAModel:
         self._model: Any = None  # DiscreteBayesianNetwork
         self._dbn: Any = None  # DynamicBayesianNetwork — built lazily
         self._dbn_inference: Any = None  # DBNInference — built lazily
-        # Shape: (3, 3, 2, 3, 3, 3, 2, 4) — O(1) single-step inference
+        # Shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) — O(1) single-step inference
         self._lookup_table: np.ndarray | None = None
         self._cpt_path = cpt_path
         self._cfg = crma_cfg or self._default_cfg()
@@ -524,6 +555,8 @@ class CRMAModel:
             sigma_gpm=cfg.soft_evidence.sigma_gpm,
             sigma_spatial=cfg.soft_evidence.sigma_spatial,
             sigma_api=cfg.soft_evidence.sigma_api,
+            sigma_trend=cfg.soft_evidence.sigma_trend,
+            trend_threshold=cfg.rainfall_trend_threshold_mmday,
         )
 
     def make_evidence(self, rp: int | None = None, **kwargs: object) -> CRMAEvidence:
@@ -632,6 +665,7 @@ class CRMAModel:
             obs["Data_Confidence"],
             obs["API_State"],
             obs["Soil_Memory"],
+            obs["Rainfall_Trend"],
         ]
         risk_state = self._decide_risk_state(probs)
         return self._format_result(risk_state, probs, obs)
@@ -680,6 +714,7 @@ class CRMAModel:
                 "Spatial_Coverage",
                 "Data_Confidence",
                 "Soil_Memory",
+                "Rainfall_Trend",
             ):
                 dbn_evidence[(node, t)] = obs[node]
 
@@ -694,13 +729,13 @@ class CRMAModel:
         return out
 
     def _build_lookup_table(self, cpd_compound: Any, cpd_risk: Any) -> np.ndarray:
-        """Pre-compute Risk_State probabilities for all 972 parent combinations.
+        """Pre-compute Risk_State probabilities for all 3888 parent combinations.
 
-        Table shape: (3, 3, 2, 3, 3, 3, 2, 4) indexed by
-        [forecast_hazard, obs_antecedent, temporal_persist,
-         spatial_coverage, data_confidence, api_state, soil_memory] → risk_probs.
+        Table shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) indexed by
+        [forecast_hazard, obs_antecedent, temporal_persist, spatial_coverage,
+         data_confidence, api_state, soil_memory, rainfall_trend] → risk_probs.
         """
-        compound_cpt = cpd_compound.get_values()  # shape (4, 972)
+        compound_cpt = cpd_compound.get_values()  # shape (4, 3888)
         risk_cpt = cpd_risk.get_values()  # shape (4, 4)
 
         table = np.zeros((*_PARENT_CARDS, N_RISK_LEVELS))
@@ -759,6 +794,8 @@ class CRMAModel:
         cpd_confidence = TabularCPD("Data_Confidence", 3, [[0.10], [0.30], [0.60]])
         cpd_api = TabularCPD("API_State", 3, [[0.45], [0.35], [0.20]])
         cpd_soil_memory = TabularCPD("Soil_Memory", 2, [[0.80], [0.20]])
+        # Rainfall_Trend prior: Stable most likely, symmetric tails.
+        cpd_trend = TabularCPD("Rainfall_Trend", 3, [[0.25], [0.50], [0.25]])
 
         cpd_compound = self._build_compound_risk_cpd(cfg)
         cpd_risk = TabularCPD(
@@ -781,6 +818,7 @@ class CRMAModel:
             cpd_confidence,
             cpd_api,
             cpd_soil_memory,
+            cpd_trend,
             cpd_compound,
             cpd_risk,
         ]
@@ -794,7 +832,10 @@ class CRMAModel:
           - fresh (soil_memory=0): standard thresholds
           - prolonged (soil_memory=1): lower thresholds → higher sensitivity,
             capturing the "15-day saturated soil + 50mm" scenario.
-        3×3×2×3×3×3×2 = 972 parent state combinations.
+        Rainfall_Trend contributes a *centred* (state-1)*weight term, so the
+        Stable state (1) is exactly neutral and the legacy calibration is
+        preserved; Increasing adds one weight, Decreasing subtracts one.
+        4×3×2×3×3×3×2×3 = 3888 parent state combinations.
         """
         n_combinations = 1
         for c in _PARENT_CARDS:
@@ -817,17 +858,19 @@ class CRMAModel:
 
         cpt = np.zeros((4, n_combinations))
         for idx in range(n_combinations):
-            f_haz, obs_ant, t_persist, spatial, confidence, api, soil_mem = self._idx_to_states(
-                idx, _PARENT_CARDS
-            )
+            (
+                f_haz, obs_ant, t_persist, spatial, confidence, api, soil_mem, trend,
+            ) = self._idx_to_states(idx, _PARENT_CARDS)
 
             # Data_Confidence dampens only the observation branch, not forecast.
+            # Rainfall_Trend is centred on Stable (state 1 → 0 contribution).
             score_forecast = f_haz * w["forecast"]
             score_obs = (
                 obs_ant * w["obs"]
                 + t_persist * cfg.weight_temporal_persist
                 + spatial * cfg.weight_spatial_coverage
                 + api * w["api"]
+                + (trend - 1) * cfg.weight_rainfall_trend
             )
             if self._cfg.confidence_damps_forecast:
                 score = (score_forecast + score_obs) * damping[confidence]
