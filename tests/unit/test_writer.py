@@ -34,6 +34,34 @@ def _exc_da(
     return build_exceedance_dataset(results, day)
 
 
+class TestStorylineVariables:
+    """tail_ratio (worst world) and median_ratio (median world) persist alongside
+    exceedance_prob, on initial write and on append."""
+
+    def test_median_and_tail_written_and_appended(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1, value=0.1)},
+            uri,
+            append=False,
+            tail_dict={d1: _exc_da([24], [5], d1, value=1.5)},
+            median_dict={d1: _exc_da([24], [5], d1, value=0.3)},
+        )
+        write_exceedance_store(
+            {d2: _exc_da([24], [5], d2, value=0.2)},
+            uri,
+            append=True,
+            tail_dict={d2: _exc_da([24], [5], d2, value=1.6)},
+            median_dict={d2: _exc_da([24], [5], d2, value=0.4)},
+        )
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert "median_ratio" in ds and "tail_ratio" in ds
+        assert ds.sizes["date"] == 2
+        assert float(ds["median_ratio"].sel(date="2024-01-02").mean()) == pytest.approx(0.4)
+        assert float(ds["tail_ratio"].sel(date="2024-01-01").mean()) == pytest.approx(1.5)
+
+
 class TestAppendSchemaSafety:
     """Appending a different window/return_period grid must not corrupt the store."""
 

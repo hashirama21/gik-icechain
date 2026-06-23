@@ -302,8 +302,26 @@ def _process_day(
 
     # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
     has_tail = "tail_ratio" in exc_day
+    has_median = "median_ratio" in exc_day
     agg: dict[int, dict[str, pd.Series]] = {}
     tail_agg: dict[int, pd.Series] = {}
+    median_agg: dict[int, pd.Series] = {}
+
+    def _ratio_agg(var: str, rp: int) -> pd.Series | None:
+        """max over the 24h/72h windows of the admin-1 aggregated member ratio
+        (mirrors forecast_hazard's max(24h,72h))."""
+        try:
+            grids = [
+                aggregate_to_admin1(
+                    exc_day[var].sel(window=wh, return_period=rp),
+                    admin, stat=hazard_stat, min_coverage=min_coverage,
+                )
+                for wh in (24, 72)
+            ]
+            return pd.concat(grids, axis=1).max(axis=1)
+        except KeyError:
+            return None
+
     for rp in rp_options:
         try:
             grids = {
@@ -318,21 +336,12 @@ def _process_day(
             for w, da in grids.items()
         }
         agg[rp]["cov"] = coverage_fraction(grids["24h"], admin, signal_threshold)
-        # Possible-worlds tail signal: max over the 24h/72h windows of the admin-1
-        # aggregated tail ratio (mirrors forecast_hazard's max(24h,72h)). Feeds
-        # CRMAEvidence.forecast_tail_ratio → tail-aware Forecast_Hazard.
-        if has_tail:
-            try:
-                tail_grids = [
-                    aggregate_to_admin1(
-                        exc_day["tail_ratio"].sel(window=wh, return_period=rp),
-                        admin, stat=hazard_stat, min_coverage=min_coverage,
-                    )
-                    for wh in (24, 72)
-                ]
-                tail_agg[rp] = pd.concat(tail_grids, axis=1).max(axis=1)
-            except KeyError:
-                pass
+        # Possible-worlds storyline ladder: p95 (worst world) feeds the tail-aware
+        # Forecast_Hazard; p50 (median world) feeds the storyline central case.
+        if has_tail and (s := _ratio_agg("tail_ratio", rp)) is not None:
+            tail_agg[rp] = s
+        if has_median and (s := _ratio_agg("median_ratio", rp)) is not None:
+            median_agg[rp] = s
     if rp_signal not in agg:
         log.warning("primary_rp_missing", date=day, rp=rp_signal)
         return None
@@ -457,6 +466,29 @@ def _process_day(
             scores[pcode]["rainfall_trend_state"] = int(
                 primary_result["evidence"].get("Rainfall_Trend", 1)
             )
+
+        # Per-member storyline: risk_state is the worst world (p95 tail-aware).
+        # Re-run the BN on the *median* world (p50 member drives the forecast
+        # hazard, observations unchanged) and report it + the worst−median
+        # spread — how much worse the tail is than the central plausible case.
+        if (
+            has_median
+            and primary_result is not None
+            and "evidence" in primary_result
+            and primary_ev.rp_years in median_agg
+        ):
+            med_ratio = _finite(median_agg[primary_ev.rp_years], pcode)
+            median_ev = replace(
+                primary_ev,
+                exceedance_prob_24h=0.0,
+                exceedance_prob_72h=0.0,
+                exceedance_prob_7d=0.0,
+                forecast_tail_ratio=med_ratio,
+            )
+            median_state = int(model.infer(median_ev)["risk_state"])
+            worst_state = int(primary_result["risk_state"])
+            scores[pcode]["storyline_median_state"] = median_state
+            scores[pcode]["storyline_spread"] = max(0, worst_state - median_state)
 
     out_path = write_risk_scores(day, scores, output_dir, meta=meta)
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))

@@ -107,6 +107,29 @@ backward-compat, plus the BN-level discretization / monotonic-severity /
 label-flip / soft σ→0==hard tests). ruff+mypy clean. Still TODO: an A/B on an
 in-retention signal-bearing window to quantify the recall lift.
 
+### B3 · Per-member storylines (quantile ladder) — SHIPPED
+The mentor runs the BN on all 51 members and reports worst/median/best. C2 does
+**not** persist members (51× storage), and in our DAG the only per-member axis is
+the forecast (observations are deterministic) — so the storyline reduces to
+varying `Forecast_Hazard` across **member-quantile worlds**. C2 now emits, beside
+`tail_ratio` (p95 = worst world), a `median_ratio` (**p50 = median world**) via
+the generalized `exceedance.compute_member_ratio(quantile)`. The risk engine:
+- keeps `risk_state` = the **worst world** (live tail-aware risk, unchanged);
+- re-runs the BN on the **median world** (p50 member drives the forecast hazard,
+  observations held fixed) → `storyline_median_state`;
+- reports `storyline_spread = max(0, worst − median)` — how much worse the tail
+  is than the central plausible case (an anticipatory-action prioritisation cue).
+
+Plumbed through the zarr store, the IceChunk decision store, and the score
+output; the median world is computed once per unit (cheap, O(1) lookup). Honest
+scope: this is a 2-point worst/median storyline (the operative mentor framing),
+not a literal 51-member sweep; a p90 "high world" rung is trivially addable.
+
+**Status:** C2 + writer + risk-engine integrated; unit tests
+(`compute_member_ratio` p50, tail delegation, median<worst), writer
+persist/append of `median_ratio`/`tail_ratio`, and a C3 integration test
+(strong p95 + weak p50 ⇒ positive spread, worst ≥ median). ruff+mypy clean.
+
 ---
 
 ## AUDIT 2026-06-23 — Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)

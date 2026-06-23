@@ -42,6 +42,7 @@ def write_exceedance_store(
     append: bool = True,
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
+    median_dict: dict[date, xr.DataArray] | None = None,
     endpoint_url: str | None = None,
 ) -> None:
     """Write or extend the exceedance Zarr store with new forecast dates.
@@ -61,7 +62,10 @@ def write_exceedance_store(
         tail_dict:       Optional mapping forecast date → tail_ratio DataArray
                          (same (latitude, longitude, window, return_period) dims
                          as exceedance). Written as the variable ``tail_ratio``
-                         (the possible-worlds tail signal).
+                         (the possible-worlds tail / worst-world signal).
+        median_dict:     Optional mapping forecast date → median_ratio DataArray
+                         (same dims). Written as ``median_ratio`` — the p50
+                         member world for the per-member storyline.
     """
     if not exceedance_dict:
         log.warning("write_exceedance_store_empty")
@@ -70,7 +74,7 @@ def write_exceedance_store(
     effective_chunks = chunks or _DEFAULT_CHUNKS
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
 
-    ds = _build_dataset(exceedance_dict, confidence_dict, tail_dict)
+    ds = _build_dataset(exceedance_dict, confidence_dict, tail_dict, median_dict)
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
     zarr_kw: dict = {}
@@ -109,8 +113,14 @@ def write_exceedance_store(
                 if tail_dict
                 else None
             )
+            new_median = (
+                {d: median_dict[d] for d in new_dates.values() if d in median_dict}
+                if median_dict
+                else None
+            )
             new_ds = _build_dataset(
-                {d: exceedance_dict[d] for d in new_dates.values()}, new_conf, new_tail
+                {d: exceedance_dict[d] for d in new_dates.values()},
+                new_conf, new_tail, new_median,
             )
             new_ds = _align_append_schema(new_ds, existing)
             new_ds = new_ds.chunk(
@@ -222,6 +232,7 @@ def _build_dataset(
     exceedance_dict: dict[date, xr.DataArray],
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
+    median_dict: dict[date, xr.DataArray] | None = None,
 ) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
     combined = xr.concat([exceedance_dict[d] for d in sorted_dates], dim="date")
@@ -242,6 +253,16 @@ def _build_dataset(
                 "long_name": "Forecast tail ratio (pXX member accumulation / GEV return level)",
                 "units": "1",
                 "definition": "possible-worlds tail signal — see exceedance.compute_tail_ratio",
+            }
+    if median_dict:
+        median_arrays = [median_dict[d] for d in sorted_dates if d in median_dict]
+        if len(median_arrays) == len(sorted_dates):
+            median_combined = xr.concat(median_arrays, dim="date")
+            ds["median_ratio"] = median_combined.astype(np.float32)
+            ds["median_ratio"].attrs = {
+                "long_name": "Median member ratio (p50 member accumulation / GEV return level)",
+                "units": "1",
+                "definition": "median-world storyline signal — see exceedance.compute_member_ratio",
             }
     if confidence_dict:
         conf_arrays = [confidence_dict[d] for d in sorted_dates if d in confidence_dict]

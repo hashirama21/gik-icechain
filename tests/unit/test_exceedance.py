@@ -14,6 +14,7 @@ from gik_icechain.exceedance.accumulations import (
 from gik_icechain.exceedance.exceedance import (
     compute_ensemble_confidence,
     compute_exceedance_probabilities,
+    compute_member_ratio,
     compute_tail_ratio,
 )
 
@@ -86,6 +87,49 @@ class TestComputeTailRatio:
             acc, thr, window_h=24, return_period=5, member_dim="member",
         )
         assert bool(np.isnan(out.isel(latitude=0, longitude=0)))
+
+    def test_median_world_is_p50_member(self):
+        members = np.arange(1, 21, dtype=np.float32)  # 1..20 mm
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(10.0)
+        out = compute_member_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.5,
+        )
+        expected = float(np.quantile(members, 0.5)) / 10.0
+        assert float(out.isel(latitude=0, longitude=0)) == pytest.approx(expected)
+
+    def test_tail_ratio_delegates_to_member_ratio(self):
+        members = np.arange(1, 21, dtype=np.float32)
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(10.0)
+        tail = compute_tail_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", tail_quantile=0.9,
+        )
+        member = compute_member_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.9,
+        )
+        assert float(tail.isel(latitude=0, longitude=0)) == pytest.approx(
+            float(member.isel(latitude=0, longitude=0))
+        )
+
+    def test_median_below_worst(self):
+        # 1 of 20 members at 100 mm, rest at 5 mm → median world stays low,
+        # worst (p95) world spikes — the storyline gap the BN exploits.
+        members = np.full(20, 5.0, dtype=np.float32)
+        members[-1] = 100.0
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(50.0)
+        med = float(
+            compute_member_ratio(
+                acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.5,
+            ).isel(latitude=0, longitude=0)
+        )
+        worst = float(
+            compute_member_ratio(
+                acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.99,
+            ).isel(latitude=0, longitude=0)
+        )
+        assert med < worst
 
 
 def _make_forecast(nmembers=4, nsteps=10, nlat=5, nlon=5, seed=0) -> xr.Dataset:

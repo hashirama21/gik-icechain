@@ -288,6 +288,7 @@ def _process_exceedance_day(args: dict) -> dict:
     from gik_icechain.exceedance.exceedance import (
         compute_ensemble_confidence,
         compute_exceedance_probabilities,
+        compute_member_ratio,
         compute_tail_ratio,
     )
     from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
@@ -391,6 +392,7 @@ def _process_exceedance_day(args: dict) -> dict:
 
     day_results: dict[tuple[int, int], xr.DataArray] = {}
     tail_results: dict[tuple[int, int], xr.DataArray] = {}
+    median_results: dict[tuple[int, int], xr.DataArray] = {}
     for w in args["windows_h"]:
         for rp in args["return_periods"]:
             try:
@@ -404,10 +406,17 @@ def _process_exceedance_day(args: dict) -> dict:
                     flood_floor_mm=floor,
                 )
                 if tail_enabled:
+                    # Storyline ladder: p95 = worst world (tail-aware hazard),
+                    # p50 = median world (storyline central case).
                     tail_results[(w, rp)] = compute_tail_ratio(
                         acc_ds, thr_ds,
                         window_h=w, return_period=rp, member_dim=member_dim,
                         tail_quantile=tail_quantile, flood_floor_mm=floor,
+                    )
+                    median_results[(w, rp)] = compute_member_ratio(
+                        acc_ds, thr_ds,
+                        window_h=w, return_period=rp, member_dim=member_dim,
+                        quantile=0.5, flood_floor_mm=floor,
                     )
             except Exception as exc:
                 log.warning(
@@ -434,6 +443,17 @@ def _process_exceedance_day(args: dict) -> dict:
             log.warning("tail_ratio_failed", date=date_str, exc_info=True)
             tail_path = None
 
+    median_path = None
+    if median_results:
+        try:
+            median_da = build_exceedance_dataset(median_results, day)
+            median_out = str(Path(args["tmp_dir"]) / f"{date_str}_median.zarr")
+            _robust_to_zarr(median_da.to_dataset(name="median_ratio"), median_out)
+            median_path = median_out
+        except Exception:
+            log.warning("median_ratio_failed", date=date_str, exc_info=True)
+            median_path = None
+
     conf_path = None
     try:
         conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim=member_dim)
@@ -451,6 +471,7 @@ def _process_exceedance_day(args: dict) -> dict:
         "path": tmp_path,
         "conf_path": conf_path,
         "tail_path": tail_path,
+        "median_path": median_path,
     }
 
 
@@ -587,6 +608,7 @@ def _run_exceedance(
     results: dict[date, xr.DataArray] = {}
     confidence_results: dict[date, xr.DataArray] = {}
     tail_results: dict[date, xr.DataArray] = {}
+    median_results: dict[date, xr.DataArray] = {}
     for r in sorted(succeeded, key=lambda x: x["date_str"]):
         day = date.fromisoformat(r["date_str"])
         ds = xr.open_zarr(r["path"], consolidated=False)
@@ -597,6 +619,9 @@ def _run_exceedance(
         if r.get("tail_path"):
             tds = xr.open_zarr(r["tail_path"], consolidated=False)
             tail_results[day] = tds["tail_ratio"]
+        if r.get("median_path"):
+            mds = xr.open_zarr(r["median_path"], consolidated=False)
+            median_results[day] = mds["median_ratio"]
 
     write_exceedance_store(
         results, output_uri,
@@ -604,6 +629,7 @@ def _run_exceedance(
         append=True,
         confidence_dict=confidence_results or None,
         tail_dict=tail_results or None,
+        median_dict=median_results or None,
         endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
@@ -622,6 +648,8 @@ def _run_exceedance(
                 ds["ensemble_confidence"] = confidence_results[day]
             if day in tail_results:
                 ds["tail_ratio"] = tail_results[day]
+            if day in median_results:
+                ds["median_ratio"] = median_results[day]
             decision.commit_day(day, ds)
         log.info("decision_store_committed", n_dates=len(results))
 
