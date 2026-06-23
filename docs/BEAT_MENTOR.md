@@ -107,10 +107,17 @@ Consommer le streamflow/riverdepth de `DevOps-hazard-modeling` (GEOSFM/wflow) co
 node `River_Hazard`. **Seul coup qui relève le recall sur les crues fluviales** — le
 plafond structurel (ISSUE-22) qui bride *les deux* stacks.
 
-### C3 · As-of-date skill curves
-Productiser le time-travel C1 : « qu'aurait-on su à J-3 ? » → courbes de skill par
-lead-time. **Impossible pour le mentor** (pas d'historique versionné). C'est le thème
+### C3 · As-of-date skill curves — SHIPPED
+Productiser le time-travel C1 : « qu'aurait-on su à J-L ? » → courbes de skill par
+lead-time. **Impossible pour le mentor** (pas d'historique versionné). Thème
 littéral du challenge.
+
+Module `risk/lead_time_skill.py` : pour chaque onset EM-DAT, lit le signal de la
+prévision émise L jours avant (date T0−L) et agrège **recall@palier** +
+**trigger moyen P(≥palier)** par lead 0…max_lead. Méthodologiquement propre
+précisément parce que chaque batch quotidien est un snapshot IceChunk (pas de
+fuite du futur). CLI `tools.py skill-vs-lead` (table recall/proba par lead ;
+`--output` écrit le JSON). Reste à faire : tourner sur un corpus réel.
 
 ### C4 · CPT hiérarchique (Dirichlet)
 Étendre le refinement EM-DAT avec priors Dirichlet + pooling par cluster — exactement

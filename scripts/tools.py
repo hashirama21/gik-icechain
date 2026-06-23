@@ -1112,5 +1112,59 @@ def calibrate_cost_loss_cmd(
         typer.echo(f"\nWritten to {output}")
 
 
+@app.command("skill-vs-lead")
+def skill_vs_lead(
+    risk_dir: Annotated[
+        Path, typer.Option(help="Directory with per-day risk_scores.json files.")
+    ] = Path("results/admin1_risk/"),
+    emdat_csv: Annotated[Path, typer.Option(help="EM-DAT flood CSV (from emdat.be).")] = Path(
+        "data/emdat/east_africa_floods.csv"
+    ),
+    max_lead: Annotated[int, typer.Option(help="Maximum lead time in days.")] = 7,
+    output: Annotated[
+        Path | None, typer.Option(help="Optional JSON path for the lead-time curve.")
+    ] = None,
+    start: Annotated[str | None, typer.Option(help="First date YYYY-MM-DD (inclusive).")] = None,
+    end: Annotated[str | None, typer.Option(help="Last date YYYY-MM-DD (inclusive).")] = None,
+) -> None:
+    """As-of-date early-warning skill vs forecast lead time, against EM-DAT.
+
+    For each EM-DAT flood onset, reads the risk signal from the forecast issued L
+    days earlier and reports recall@tier and mean trigger probability per lead —
+    "how many days ahead could we have acted?". Honest because every daily batch
+    is an IceChunk snapshot (no future leakage).
+    """
+    from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+    from gik_icechain.risk.lead_time_skill import lead_time_skill_from_risk_dir
+
+    if not emdat_csv.exists():
+        typer.echo(f"EM-DAT CSV not found: {emdat_csv}", err=True)
+        raise typer.Exit(1)
+
+    emdat_records = load_emdat_east_africa(emdat_csv)
+    typer.echo(f"Loaded {len(emdat_records)} EM-DAT flood events.")
+    curve = lead_time_skill_from_risk_dir(
+        risk_dir, emdat_records, max_lead=max_lead, start=start, end=end
+    )
+
+    typer.echo(
+        f"\n{'lead':>4} {'n':>4} {'rec_Y':>7} {'rec_O':>7} {'rec_R':>7} "
+        f"{'p>=Y':>6} {'p>=O':>6} {'p>=R':>6}"
+    )
+    typer.echo("-" * 56)
+    for lead in sorted(curve):
+        e = curve[lead]
+        typer.echo(
+            f"{lead:>4} {int(e['n']):>4} "
+            f"{e['recall_yellow']:>7.3f} {e['recall_orange']:>7.3f} {e['recall_red']:>7.3f} "
+            f"{e['mean_p_yellow']:>6.3f} {e['mean_p_orange']:>6.3f} {e['mean_p_red']:>6.3f}"
+        )
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(curve, indent=2))
+        typer.echo(f"\nWritten to {output}")
+
+
 if __name__ == "__main__":
     app()
