@@ -450,13 +450,20 @@ def _process_day(
         p24 = primary_ev.exceedance_prob_24h
         scores[pcode]["ensemble_spread_24h"] = round(math.sqrt(p24 * (1.0 - p24) / n_members), 4)
         scores[pcode]["forecast_tail_ratio"] = round(primary_ev.forecast_tail_ratio, 3)
+        # Rainfall_Trend state (0=Decreasing, 1=Stable, 2=Increasing) from the
+        # state-overridden evidence the BN actually saw (primary_ev predates the
+        # in-step slope injection, so read the discretised state off the result).
+        if primary_result is not None and "evidence" in primary_result:
+            scores[pcode]["rainfall_trend_state"] = int(
+                primary_result["evidence"].get("Rainfall_Trend", 1)
+            )
 
     out_path = write_risk_scores(day, scores, output_dir, meta=meta)
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
 
 
-_CHECKPOINT_VERSION = 2
+_CHECKPOINT_VERSION = 3  # v3 adds DynamicBNState.gpm_history (Rainfall_Trend)
 
 
 def _save_checkpoint(
@@ -485,6 +492,8 @@ def _state_from_dict(s: dict) -> DynamicBNState:
         consecutive_days=int(s["consecutive_days"]),
         sat_consecutive_days=int(s["sat_consecutive_days"]),
         last_risk_state=int(s["last_risk_state"]),
+        # Backward-compatible: pre-v3 checkpoints have no gpm_history.
+        gpm_history=tuple(float(x) for x in s.get("gpm_history", ())),
     )
 
 

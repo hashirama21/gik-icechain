@@ -74,7 +74,7 @@ Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L
 
 ---
 
-## AUDIT 2026-06-23 — Beat-mentor Phase B: parity node Rainfall_Trend
+## AUDIT 2026-06-23 — Beat-mentor Phase B: parity node Rainfall_Trend (+ live IMERG feed)
 
 ### B1 · Rainfall_Trend node — SHIPPED (neutral default, zero production impact yet)
 Adds the mentor's `rainfall_trend` parent the BN was missing: an 8th parent of
@@ -90,14 +90,22 @@ a weakening one dampens. Soft-binnable like the other continuous nodes
 DBN slice, and EM-DAT CPT refinement (`_EVIDENCE_COLS`). Lookup table grows
 1296 → 3888 combos.
 
-**Honest limit:** the production feed is not wired yet — `risk_engine` does not
-yet compute the per-unit 7-day IMERG slope, so `rainfall_trend_slope` defaults
-to 0.0 (Stable) and the node is currently *inert* in live runs. Next step:
-carry a rolling 7-day GPM buffer in `DynamicBNState` → slope → evidence. The
-node + all plumbing + tests are in place so wiring the feed is a localized change.
+### B2 · Rainfall_Trend production feed — SHIPPED (node now live)
+`DynamicBNState` carries a rolling 7-day GPM buffer (`gpm_history`); `step`
+appends each day's observation, computes the least-squares `_trend_slope`
+(mm/day per day), and injects it into the evidence as `rainfall_trend_slope`
+before inference — so the node is now **live in `risk_engine`** (both the
+forecast days and the API-only lead-in fill the buffer). Checkpoint bumped to
+v3 (`gpm_history` persisted; pre-v3 checkpoints load with an empty buffer).
+The discretised trend state is exposed per unit as `rainfall_trend_state` in the
+score output. *Limit:* a missing GPM day enters the buffer as 0 mm (consistent
+with the existing API pathway), a minor downward bias on sparse-obs windows.
 
-**Status:** node fully integrated and unit-tested (discretization, monotonic
-severity, label-flip on a borderline sweep, soft σ→0==hard). ruff+mypy clean.
+**Status:** node + feed fully integrated and unit-tested (slope sign, buffer
+cap, rising/falling series → Increasing/Decreasing, checkpoint roundtrip +
+backward-compat, plus the BN-level discretization / monotonic-severity /
+label-flip / soft σ→0==hard tests). ruff+mypy clean. Still TODO: an A/B on an
+in-retention signal-bearing window to quantify the recall lift.
 
 ---
 
