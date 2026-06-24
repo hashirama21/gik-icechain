@@ -92,6 +92,8 @@ component2:
     max_workers: null
     multiprocessing: true
     day_timeout_s: 300
+    mem_gb_per_worker: 3.0
+    mem_headroom_fraction: 0.1
 
   thresholds:
     adaptive: true
@@ -109,6 +111,7 @@ component2:
     n_workers: 4
     threads_per_worker: 2
     memory_limit: "4GB"
+    memory_fraction: 0.6
     dashboard_address: ":8787"
     chunk_dims:
       member: 1

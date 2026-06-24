@@ -147,7 +147,8 @@ class DaskConfig(BaseModel):
     scheduler: str = "distributed"
     n_workers: int = 4
     threads_per_worker: int = 2
-    memory_limit: str = "4GB"
+    memory_limit: str = "4GB"           # fallback when memory_fraction is null
+    memory_fraction: float | None = 0.6  # cluster-wide share of total RAM; null = absolute
     dashboard_address: str = ":8787"
     chunk_dims: dict[str, Any] = Field(
         default_factory=lambda: {"member": 1, "step": 1, "latitude": 50, "longitude": 50}
@@ -170,6 +171,8 @@ class ParallelConfig(BaseModel):
     max_workers: int | None = None   # None = auto (os.cpu_count())
     multiprocessing: bool = True
     day_timeout_s: int = 300
+    mem_gb_per_worker: float = 3.0      # 0 disables the memory-based worker cap
+    mem_headroom_fraction: float = 0.1  # share of total RAM kept free
 
     @field_validator("max_workers")
     @classmethod

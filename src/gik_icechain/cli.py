@@ -575,12 +575,28 @@ def _run_exceedance(
 
     # Dimension 6: Parallel config
     par = c2.parallel
+    mem_cap: int | None = None
     if par.multiprocessing:
         auto_workers = os.cpu_count() or 4
         n_workers = min(par.max_workers or auto_workers, len(committed_dates), auto_workers)
+        if par.mem_gb_per_worker > 0:
+            try:
+                import psutil
+
+                vm = psutil.virtual_memory()
+                budget_gb = (vm.available - par.mem_headroom_fraction * vm.total) / 1024**3
+                mem_cap = max(1, int(budget_gb // par.mem_gb_per_worker))
+                n_workers = min(n_workers, mem_cap)
+            except Exception:
+                pass
     else:
         n_workers = 1
-    log.info("exceedance_parallel_start", n_dates=len(committed_dates), n_workers=n_workers)
+    log.info(
+        "exceedance_parallel_start",
+        n_dates=len(committed_dates),
+        n_workers=n_workers,
+        mem_cap=mem_cap,
+    )
 
     succeeded: list[dict] = []
     if n_workers <= 1 or len(committed_dates) == 1:
@@ -884,9 +900,20 @@ def exceedance(
         try:
             from dask.distributed import Client
 
+            mem_limit: str | int = dask_cfg.memory_limit
+            if dask_cfg.memory_fraction is not None:
+                try:
+                    import psutil
+
+                    total = psutil.virtual_memory().total
+                    mem_limit = int(dask_cfg.memory_fraction * total / dask_workers)
+                except Exception:
+                    pass
+
             Client(
                 n_workers=dask_workers,
                 threads_per_worker=dask_cfg.threads_per_worker,
+                memory_limit=mem_limit,
                 silence_logs=True,
             )
         except ImportError:
