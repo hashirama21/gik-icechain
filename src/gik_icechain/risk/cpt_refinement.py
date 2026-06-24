@@ -25,8 +25,10 @@ import structlog
 from gik_icechain.risk.crma_model import (
     _COMPOUND_PARENTS,
     _PARENT_CARDS,
+    NODE_CARDS,
     CRMAEvidence,
     CRMAModel,
+    EastAfricaCluster,
     EvidenceThresholds,
 )
 from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
@@ -535,6 +537,107 @@ def refine_cpts_with_emdat(
         n_training_samples=len(training_df),
         laplace_alpha=laplace_alpha,
     )
+
+
+def dirichlet_partial_pool(
+    global_probs: np.ndarray, cluster_counts: np.ndarray, pool_strength: float
+) -> np.ndarray:
+    """Empirical-Bayes partial pooling of a per-cluster CPT toward a global CPT.
+
+    Treats the global CPT (columns = parent states, summing to 1 over the child
+    states) as a Dirichlet prior with concentration ``pool_strength``, updated by
+    the cluster's observed ``cluster_counts``:
+
+        posterior[:, j] = (pool_strength * global_probs[:, j] + counts[:, j])
+                          / (pool_strength + counts[:, j].sum())
+
+    A cluster with no data recovers the global CPT exactly; a cluster with many
+    events follows its own empirical CPT. This is the hierarchical refinement the
+    mentor's roadmap flags as a future upgrade — only our multi-cluster EM-DAT
+    corpus can fit it.
+    """
+    posterior = pool_strength * global_probs + cluster_counts
+    col_totals = posterior.sum(axis=0, keepdims=True)
+    return posterior / np.where(col_totals > 0, col_totals, 1.0)
+
+
+def _risk_state_counts(model: Any, df: pd.DataFrame) -> np.ndarray:
+    """Count matrix ``[Risk_State, Compound_Risk]`` from a labelled evidence frame.
+
+    Compound_Risk is the deterministic argmax of *model*'s Compound_Risk CPD for
+    each row's parent states (so cluster-specific weights are respected).
+    """
+    n_risk = NODE_CARDS["Risk_State"]
+    n_comp = NODE_CARDS["Compound_Risk"]
+    counts = np.zeros((n_risk, n_comp))
+    if df.empty:
+        return counts
+    compound = _derive_compound_risk(model, df)
+    for risk_state, comp_state in zip(
+        df["Risk_State"].astype(int), compound.astype(int), strict=True
+    ):
+        counts[risk_state, comp_state] += 1
+    return counts
+
+
+def refine_cpts_hierarchical(
+    crma_models: dict[EastAfricaCluster, CRMAModel],
+    training_df: pd.DataFrame,
+    pcode_to_cluster: dict[str, EastAfricaCluster],
+    laplace_alpha: float = 1.0,
+    pool_strength: float = 8.0,
+) -> dict[str, Any]:
+    """Refine each cluster's Risk_State CPT via Dirichlet partial pooling.
+
+    Fits a global Risk_State CPT pooled across all clusters (each cluster's
+    Compound_Risk derived with its own weights), then for every cluster shrinks
+    the cluster-empirical CPT toward that global prior with strength
+    ``pool_strength``. Mutates the models in place (rebuilds each lookup table).
+
+    Args:
+        crma_models:      Built CRMAModel per cluster.
+        training_df:      Labelled evidence rows (``_evidence_row`` schema) with
+                          an ``admin1_pcode`` column.
+        pcode_to_cluster: Maps each admin-1 pcode to its climate cluster.
+        laplace_alpha:    Add-alpha smoothing of the pooled global counts.
+        pool_strength:    Dirichlet prior concentration toward the global CPT.
+
+    Returns:
+        Report dict: global CPT, per-cluster row counts, and parameters.
+    """
+    df = training_df.copy()
+    df["_cluster"] = df["admin1_pcode"].map(pcode_to_cluster)
+
+    n_risk = NODE_CARDS["Risk_State"]
+    n_comp = NODE_CARDS["Compound_Risk"]
+    cluster_counts: dict[EastAfricaCluster, np.ndarray] = {}
+    global_counts = np.zeros((n_risk, n_comp))
+    for cluster, crma in crma_models.items():
+        sub = df[df["_cluster"] == cluster]
+        c = _risk_state_counts(crma.get_pgmpy_model(), sub)
+        cluster_counts[cluster] = c
+        global_counts += c
+
+    pooled = global_counts + laplace_alpha
+    global_cpd = pooled / pooled.sum(axis=0, keepdims=True)
+
+    for cluster, crma in crma_models.items():
+        posterior = dirichlet_partial_pool(global_cpd, cluster_counts[cluster], pool_strength)
+        crma.load_cpts({"Risk_State": posterior.tolist()})
+
+    n_by_cluster = {str(c): int(cluster_counts[c].sum()) for c in crma_models}
+    log.info(
+        "cpts_refined_hierarchical",
+        n_total=int(global_counts.sum()),
+        n_by_cluster=n_by_cluster,
+        pool_strength=pool_strength,
+    )
+    return {
+        "global_cpd": global_cpd.tolist(),
+        "n_by_cluster": n_by_cluster,
+        "pool_strength": pool_strength,
+        "laplace_alpha": laplace_alpha,
+    }
 
 
 def emdat_flood_days(emdat_records: list[EMDATFloodRecord]) -> set[tuple[str, str]]:

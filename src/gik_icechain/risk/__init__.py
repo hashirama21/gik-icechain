@@ -7,7 +7,9 @@ from gik_icechain.risk.cpt_refinement import (
     EMDATFloodRecord,
     build_training_dataset,
     build_training_dataset_from_gpm,
+    dirichlet_partial_pool,
     load_emdat_east_africa,
+    refine_cpts_hierarchical,
     refine_cpts_with_emdat,
 )
 from gik_icechain.risk.crma_model import (
@@ -48,11 +50,13 @@ __all__ = [
     "build_training_dataset_from_gpm",
     "compute_api_series",
     "coverage_fraction",
+    "dirichlet_partial_pool",
     "export_eahw_format",
     "init_state",
     "load_emdat_east_africa",
     "load_gpm_daily",
     "load_gpm_range",
+    "refine_cpts_hierarchical",
     "refine_cpts_with_emdat",
     "run_risk_batch",
     "run_temporal_sequence",

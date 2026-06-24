@@ -31,6 +31,7 @@ Dernière mise à jour : 2026-06-23.
 | Seuils GEV adaptatifs ENSO/IOD/saison | ❌ (2 ans fixe) | ✅ | **On mène** |
 | Multi return-period (6 RP) | ❌ (2 ans seul) | ✅ | **On mène** |
 | Apprentissage empirique des CPT (EM-DAT) | ❌ (règles expert) | ✅ | **On mène** |
+| CPT hiérarchique Dirichlet (pooling par cluster) | ❌ (roadmap) | ✅ | **On mène** |
 | AIFS vs IFS (AI-NWP) | ❌ (GEFS = « futur ») | ✅ | **On mène** |
 | Poids régionalisés (4 clusters climat) | ❌ | ✅ | **On mène** |
 | Dashboard / storymap / EAHW | ❌ | ✅ | **On mène** |
@@ -119,9 +120,18 @@ précisément parce que chaque batch quotidien est un snapshot IceChunk (pas de
 fuite du futur). CLI `tools.py skill-vs-lead` (table recall/proba par lead ;
 `--output` écrit le JSON). Reste à faire : tourner sur un corpus réel.
 
-### C4 · CPT hiérarchique (Dirichlet)
-Étendre le refinement EM-DAT avec priors Dirichlet + pooling par cluster — exactement
-la « future upgrade » que le mentor annonce. Le battre sur sa propre roadmap.
+### C4 · CPT hiérarchique (Dirichlet) — SHIPPED
+Étend le refinement EM-DAT avec priors Dirichlet + pooling partiel par cluster —
+exactement la « future upgrade » que le mentor annonce. Le battre sur sa propre
+roadmap : seul notre corpus multi-cluster permet de l'ajuster.
+
+`risk/cpt_refinement.py` : `dirichlet_partial_pool` (pure — empirical-Bayes ;
+un cluster sans donnée recouvre exactement le CPT global, un cluster riche suit
+son CPT empirique), `refine_cpts_hierarchical` ajuste in-place le CPT `Risk_State`
+de chaque cluster en le rétractant vers un CPT global poolé (Compound_Risk dérivé
+avec les poids propres de chaque cluster), force de prior `pool_strength`.
+Mutualise l'apprentissage entre les 4 clusters quand l'EM-DAT par cluster est
+clairsemé. Reste à faire : tourner sur le corpus réel et publier l'uplift recall.
 
 ---
 
