@@ -194,15 +194,19 @@ component3:
       - [0.05, 0.25, 0.60]
     # Cost-loss decision trigger (Murphy 1977; Coughlan de Perez 2015): label the
     # highest tier whose cumulative posterior P(>=tier) reaches its C/L ratio,
-    # instead of argmax. On the Apr-2024 EA window this lifts Orange-level day x
-    # unit recall 0.006 -> 0.138 (44 vs 2 TP) at FAR ~5%, exposing skill the
-    # argmax left stranded at Yellow (P(>=Orange)~0.48). tau_orange in [0.25,0.45]
-    # is a flat plateau; 0.25 keeps margin below the ~0.48 posterior cliff.
+    # instead of argmax. Lifts Orange-level day x unit recall 0.006 -> 0.138 on
+    # the Apr-2024 EA window, exposing skill the argmax left stranded at Yellow.
+    # taus are REV-DERIVED (Richardson 2000), not guessed: `calibrate-cost-loss`
+    # over the 19-file / 4522-unit-day fresh multi-season corpus (FbF alphas
+    # 0.10/0.20/0.30) maximises Relative Economic Value per tier. REV is strong
+    # at Yellow (0.243) but modest at Orange (0.076) / Red (0.030); tau_red's raw
+    # optimum (0.06) was clamped up to tau_orange by the non-decreasing-order
+    # constraint. Caveat: corpus still includes Apr-2024, so partly in-sample.
     cost_loss:
       enabled: true
-      tau_yellow: 0.15
-      tau_orange: 0.25
-      tau_red: 0.35
+      tau_yellow: 0.14
+      tau_orange: 0.19
+      tau_red: 0.19
   emdat_refinement:
     enabled: true
     laplace_alpha: 1.0
