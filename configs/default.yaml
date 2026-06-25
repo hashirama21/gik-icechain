@@ -192,6 +192,17 @@ component3:
       - [0.70, 0.20, 0.05]
       - [0.25, 0.55, 0.35]
       - [0.05, 0.25, 0.60]
+    # Cost-loss decision trigger (Murphy 1977; Coughlan de Perez 2015): label the
+    # highest tier whose cumulative posterior P(>=tier) reaches its C/L ratio,
+    # instead of argmax. On the Apr-2024 EA window this lifts Orange-level day x
+    # unit recall 0.006 -> 0.138 (44 vs 2 TP) at FAR ~5%, exposing skill the
+    # argmax left stranded at Yellow (P(>=Orange)~0.48). tau_orange in [0.25,0.45]
+    # is a flat plateau; 0.25 keeps margin below the ~0.48 posterior cliff.
+    cost_loss:
+      enabled: true
+      tau_yellow: 0.15
+      tau_orange: 0.25
+      tau_red: 0.35
   emdat_refinement:
     enabled: true
     laplace_alpha: 1.0
