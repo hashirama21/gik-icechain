@@ -14,7 +14,122 @@ from gik_icechain.exceedance.accumulations import (
 from gik_icechain.exceedance.exceedance import (
     compute_ensemble_confidence,
     compute_exceedance_probabilities,
+    compute_member_ratio,
+    compute_tail_ratio,
 )
+
+
+class TestComputeTailRatio:
+    @staticmethod
+    def _acc_single_cell(member_maxima: np.ndarray) -> xr.Dataset:
+        """Build a tp_24h dataset (member, step, lat, lon) whose per-member
+        max-over-step equals *member_maxima* at the single (lat, lon) cell."""
+        n = len(member_maxima)
+        tp = np.broadcast_to(
+            member_maxima.reshape(n, 1, 1, 1), (n, 3, 1, 1)
+        ).astype(np.float32)
+        da = xr.DataArray(
+            tp,
+            dims=["member", "step", "latitude", "longitude"],
+            coords={
+                "member": np.arange(n),
+                "step": [0, 6, 12],
+                "latitude": [0.0],
+                "longitude": [35.0],
+            },
+        )
+        return xr.Dataset({"tp_24h": da})
+
+    @staticmethod
+    def _threshold(value: float) -> xr.Dataset:
+        return xr.Dataset(
+            {"rp_5y": xr.DataArray(
+                [[value]], dims=["latitude", "longitude"],
+                coords={"latitude": [0.0], "longitude": [35.0]},
+            )}
+        )
+
+    def test_ratio_matches_member_quantile(self):
+        members = np.arange(1, 21, dtype=np.float32)  # 1..20 mm
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(10.0)
+        out = compute_tail_ratio(
+            acc, thr, window_h=24, return_period=5,
+            member_dim="member", tail_quantile=0.95,
+        )
+        assert set(out.dims) == {"latitude", "longitude"}
+        assert "quantile" not in out.coords
+        expected = float(np.quantile(members, 0.95)) / 10.0
+        assert float(out.isel(latitude=0, longitude=0)) == pytest.approx(expected)
+
+    def test_tail_sees_signal_below_mean_exceedance(self):
+        # 1 of 20 members at 100 mm, rest at 5 mm, threshold 50 mm.
+        members = np.full(20, 5.0, dtype=np.float32)
+        members[-1] = 100.0
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(50.0)
+        # Mean exceedance fraction is only 1/20 = 0.05 (below the 0.15 Medium bar)…
+        frac = compute_exceedance_probabilities(
+            acc, thr, window_h=24, return_period=5, member_dim="member",
+        )
+        assert float(frac.isel(latitude=0, longitude=0)) == pytest.approx(0.05)
+        # …but a tail at p99 lifts the ratio toward / past the return level.
+        tail = compute_tail_ratio(
+            acc, thr, window_h=24, return_period=5,
+            member_dim="member", tail_quantile=0.99,
+        )
+        assert float(tail.isel(latitude=0, longitude=0)) > 1.0
+
+    def test_dry_cell_threshold_zero_is_nan(self):
+        acc = self._acc_single_cell(np.full(10, 3.0, dtype=np.float32))
+        thr = self._threshold(0.0)
+        out = compute_tail_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member",
+        )
+        assert bool(np.isnan(out.isel(latitude=0, longitude=0)))
+
+    def test_median_world_is_p50_member(self):
+        members = np.arange(1, 21, dtype=np.float32)  # 1..20 mm
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(10.0)
+        out = compute_member_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.5,
+        )
+        expected = float(np.quantile(members, 0.5)) / 10.0
+        assert float(out.isel(latitude=0, longitude=0)) == pytest.approx(expected)
+
+    def test_tail_ratio_delegates_to_member_ratio(self):
+        members = np.arange(1, 21, dtype=np.float32)
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(10.0)
+        tail = compute_tail_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", tail_quantile=0.9,
+        )
+        member = compute_member_ratio(
+            acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.9,
+        )
+        assert float(tail.isel(latitude=0, longitude=0)) == pytest.approx(
+            float(member.isel(latitude=0, longitude=0))
+        )
+
+    def test_median_below_worst(self):
+        # 1 of 20 members at 100 mm, rest at 5 mm → median world stays low,
+        # worst (p95) world spikes — the storyline gap the BN exploits.
+        members = np.full(20, 5.0, dtype=np.float32)
+        members[-1] = 100.0
+        acc = self._acc_single_cell(members)
+        thr = self._threshold(50.0)
+        med = float(
+            compute_member_ratio(
+                acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.5,
+            ).isel(latitude=0, longitude=0)
+        )
+        worst = float(
+            compute_member_ratio(
+                acc, thr, window_h=24, return_period=5, member_dim="member", quantile=0.99,
+            ).isel(latitude=0, longitude=0)
+        )
+        assert med < worst
 
 
 def _make_forecast(nmembers=4, nsteps=10, nlat=5, nlon=5, seed=0) -> xr.Dataset:

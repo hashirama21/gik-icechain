@@ -288,6 +288,8 @@ def _process_exceedance_day(args: dict) -> dict:
     from gik_icechain.exceedance.exceedance import (
         compute_ensemble_confidence,
         compute_exceedance_probabilities,
+        compute_member_ratio,
+        compute_tail_ratio,
     )
     from gik_icechain.exceedance.thresholds import AdaptiveGEVThresholds
     from gik_icechain.exceedance.writer import build_exceedance_dataset
@@ -385,18 +387,37 @@ def _process_exceedance_day(args: dict) -> dict:
     )
     member_dim = "member" if "member" in day_ds.dims else "number"
 
+    tail_enabled = args.get("tail_enabled", True)
+    tail_quantile = float(args.get("tail_quantile", 0.95))
+
     day_results: dict[tuple[int, int], xr.DataArray] = {}
+    tail_results: dict[tuple[int, int], xr.DataArray] = {}
+    median_results: dict[tuple[int, int], xr.DataArray] = {}
     for w in args["windows_h"]:
         for rp in args["return_periods"]:
             try:
                 thr = thresholds.get(w, rp, mode)  # type: ignore[arg-type]
                 floor_map = args.get("flood_floor_mm", {}) or {}
                 floor = float(floor_map.get(w, floor_map.get(str(w), 0.0)))
+                thr_ds = xr.Dataset({f"rp_{rp}y": thr})
                 day_results[(w, rp)] = compute_exceedance_probabilities(
-                    acc_ds, xr.Dataset({f"rp_{rp}y": thr}),
+                    acc_ds, thr_ds,
                     window_h=w, return_period=rp, member_dim=member_dim,
                     flood_floor_mm=floor,
                 )
+                if tail_enabled:
+                    # Storyline ladder: p95 = worst world (tail-aware hazard),
+                    # p50 = median world (storyline central case).
+                    tail_results[(w, rp)] = compute_tail_ratio(
+                        acc_ds, thr_ds,
+                        window_h=w, return_period=rp, member_dim=member_dim,
+                        tail_quantile=tail_quantile, flood_floor_mm=floor,
+                    )
+                    median_results[(w, rp)] = compute_member_ratio(
+                        acc_ds, thr_ds,
+                        window_h=w, return_period=rp, member_dim=member_dim,
+                        quantile=0.5, flood_floor_mm=floor,
+                    )
             except Exception as exc:
                 log.warning(
                     "exceedance_window_rp_failed",
@@ -411,6 +432,28 @@ def _process_exceedance_day(args: dict) -> dict:
     tmp_path = str(Path(args["tmp_dir"]) / f"{date_str}.zarr")
     _robust_to_zarr(exceedance_da.to_dataset(name="exceedance_prob"), tmp_path)
 
+    tail_path = None
+    if tail_results:
+        try:
+            tail_da = build_exceedance_dataset(tail_results, day)
+            tail_out = str(Path(args["tmp_dir"]) / f"{date_str}_tail.zarr")
+            _robust_to_zarr(tail_da.to_dataset(name="tail_ratio"), tail_out)
+            tail_path = tail_out
+        except Exception:
+            log.warning("tail_ratio_failed", date=date_str, exc_info=True)
+            tail_path = None
+
+    median_path = None
+    if median_results:
+        try:
+            median_da = build_exceedance_dataset(median_results, day)
+            median_out = str(Path(args["tmp_dir"]) / f"{date_str}_median.zarr")
+            _robust_to_zarr(median_da.to_dataset(name="median_ratio"), median_out)
+            median_path = median_out
+        except Exception:
+            log.warning("median_ratio_failed", date=date_str, exc_info=True)
+            median_path = None
+
     conf_path = None
     try:
         conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim=member_dim)
@@ -422,7 +465,14 @@ def _process_exceedance_day(args: dict) -> dict:
         log.warning("ensemble_confidence_failed", date=date_str, exc_info=True)
         conf_path = None
 
-    return {"date_str": date_str, "success": True, "path": tmp_path, "conf_path": conf_path}
+    return {
+        "date_str": date_str,
+        "success": True,
+        "path": tmp_path,
+        "conf_path": conf_path,
+        "tail_path": tail_path,
+        "median_path": median_path,
+    }
 
 
 def _run_exceedance(
@@ -504,6 +554,8 @@ def _run_exceedance(
             "compute_variables": c2.compute_variables,
             "precip_scale_to_mm": c2.precip_scale_to_mm,
             "flood_floor_mm": dict(c2.flood_floor_mm),
+            "tail_enabled": c2.tail_enabled,
+            "tail_quantile": c2.tail_quantile,
             "tmp_dir": tmp_dir,
             # Manifest-aware params
             "manifest_aware_enabled": ma.enabled,
@@ -523,12 +575,28 @@ def _run_exceedance(
 
     # Dimension 6: Parallel config
     par = c2.parallel
+    mem_cap: int | None = None
     if par.multiprocessing:
         auto_workers = os.cpu_count() or 4
         n_workers = min(par.max_workers or auto_workers, len(committed_dates), auto_workers)
+        if par.mem_gb_per_worker > 0:
+            try:
+                import psutil
+
+                vm = psutil.virtual_memory()
+                budget_gb = (vm.available - par.mem_headroom_fraction * vm.total) / 1024**3
+                mem_cap = max(1, int(budget_gb // par.mem_gb_per_worker))
+                n_workers = min(n_workers, mem_cap)
+            except Exception:
+                pass
     else:
         n_workers = 1
-    log.info("exceedance_parallel_start", n_dates=len(committed_dates), n_workers=n_workers)
+    log.info(
+        "exceedance_parallel_start",
+        n_dates=len(committed_dates),
+        n_workers=n_workers,
+        mem_cap=mem_cap,
+    )
 
     succeeded: list[dict] = []
     if n_workers <= 1 or len(committed_dates) == 1:
@@ -555,6 +623,8 @@ def _run_exceedance(
 
     results: dict[date, xr.DataArray] = {}
     confidence_results: dict[date, xr.DataArray] = {}
+    tail_results: dict[date, xr.DataArray] = {}
+    median_results: dict[date, xr.DataArray] = {}
     for r in sorted(succeeded, key=lambda x: x["date_str"]):
         day = date.fromisoformat(r["date_str"])
         ds = xr.open_zarr(r["path"], consolidated=False)
@@ -562,12 +632,20 @@ def _run_exceedance(
         if r.get("conf_path"):
             cds = xr.open_zarr(r["conf_path"], consolidated=False)
             confidence_results[day] = cds["ensemble_confidence"]
+        if r.get("tail_path"):
+            tds = xr.open_zarr(r["tail_path"], consolidated=False)
+            tail_results[day] = tds["tail_ratio"]
+        if r.get("median_path"):
+            mds = xr.open_zarr(r["median_path"], consolidated=False)
+            median_results[day] = mds["median_ratio"]
 
     write_exceedance_store(
         results, output_uri,
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
+        tail_dict=tail_results or None,
+        median_dict=median_results or None,
         endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
@@ -584,6 +662,10 @@ def _run_exceedance(
             ds = exc_da.to_dataset(name="exceedance_prob")
             if day in confidence_results:
                 ds["ensemble_confidence"] = confidence_results[day]
+            if day in tail_results:
+                ds["tail_ratio"] = tail_results[day]
+            if day in median_results:
+                ds["median_ratio"] = median_results[day]
             decision.commit_day(day, ds)
         log.info("decision_store_committed", n_dates=len(results))
 
@@ -818,9 +900,20 @@ def exceedance(
         try:
             from dask.distributed import Client
 
+            mem_limit: str | int = dask_cfg.memory_limit
+            if dask_cfg.memory_fraction is not None:
+                try:
+                    import psutil
+
+                    total = psutil.virtual_memory().total
+                    mem_limit = int(dask_cfg.memory_fraction * total / dask_workers)
+                except Exception:
+                    pass
+
             Client(
                 n_workers=dask_workers,
                 threads_per_worker=dask_cfg.threads_per_worker,
+                memory_limit=mem_limit,
                 silence_logs=True,
             )
         except ImportError:

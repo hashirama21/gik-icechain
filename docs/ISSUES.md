@@ -74,6 +74,133 @@ Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L
 
 ---
 
+## AUDIT 2026-06-23 — Beat-mentor Phase B: parity node Rainfall_Trend (+ live IMERG feed)
+
+### B1 · Rainfall_Trend node — SHIPPED (neutral default, zero production impact yet)
+Adds the mentor's `rainfall_trend` parent the BN was missing: an 8th parent of
+`Compound_Risk` with states Decreasing / Stable / Increasing, derived from the
+7-day IMERG accumulation linear slope (mm/day), binned at ±`trend_threshold`
+(default ±2 mm/day, cf. mentor). The contribution to the additive compound
+score is **centred** — `(state-1)·weight_rainfall_trend` — so **Stable is
+exactly neutral and the legacy calibration is preserved bit-for-bit** (the
+Stable slice of the enlarged lookup table equals the old table; all prior
+inference tests pass unchanged). An intensifying antecedent trend escalates,
+a weakening one dampens. Soft-binnable like the other continuous nodes
+(`sigma_trend`); routed through the hard lookup, the soft marginalization, the
+DBN slice, and EM-DAT CPT refinement (`_EVIDENCE_COLS`). Lookup table grows
+1296 → 3888 combos.
+
+### B2 · Rainfall_Trend production feed — SHIPPED (node now live)
+`DynamicBNState` carries a rolling 7-day GPM buffer (`gpm_history`); `step`
+appends each day's observation, computes the least-squares `_trend_slope`
+(mm/day per day), and injects it into the evidence as `rainfall_trend_slope`
+before inference — so the node is now **live in `risk_engine`** (both the
+forecast days and the API-only lead-in fill the buffer). Checkpoint bumped to
+v3 (`gpm_history` persisted; pre-v3 checkpoints load with an empty buffer).
+The discretised trend state is exposed per unit as `rainfall_trend_state` in the
+score output. *Limit:* a missing GPM day enters the buffer as 0 mm (consistent
+with the existing API pathway), a minor downward bias on sparse-obs windows.
+
+**Status:** node + feed fully integrated and unit-tested (slope sign, buffer
+cap, rising/falling series → Increasing/Decreasing, checkpoint roundtrip +
+backward-compat, plus the BN-level discretization / monotonic-severity /
+label-flip / soft σ→0==hard tests). ruff+mypy clean. Still TODO: an A/B on an
+in-retention signal-bearing window to quantify the recall lift.
+
+### B3 · Per-member storylines (quantile ladder) — SHIPPED
+The mentor runs the BN on all 51 members and reports worst/median/best. C2 does
+**not** persist members (51× storage), and in our DAG the only per-member axis is
+the forecast (observations are deterministic) — so the storyline reduces to
+varying `Forecast_Hazard` across **member-quantile worlds**. C2 now emits, beside
+`tail_ratio` (p95 = worst world), a `median_ratio` (**p50 = median world**) via
+the generalized `exceedance.compute_member_ratio(quantile)`. The risk engine:
+- keeps `risk_state` = the **worst world** (live tail-aware risk, unchanged);
+- re-runs the BN on the **median world** (p50 member drives the forecast hazard,
+  observations held fixed) → `storyline_median_state`;
+- reports `storyline_spread = max(0, worst − median)` — how much worse the tail
+  is than the central plausible case (an anticipatory-action prioritisation cue).
+
+Plumbed through the zarr store, the IceChunk decision store, and the score
+output; the median world is computed once per unit (cheap, O(1) lookup). Honest
+scope: this is a 2-point worst/median storyline (the operative mentor framing),
+not a literal 51-member sweep; a p90 "high world" rung is trivially addable.
+
+**Status:** C2 + writer + risk-engine integrated; unit tests
+(`compute_member_ratio` p50, tail delegation, median<worst), writer
+persist/append of `median_ratio`/`tail_ratio`, and a C3 integration test
+(strong p95 + weak p50 ⇒ positive spread, worst ≥ median). ruff+mypy clean.
+
+---
+
+## AUDIT 2026-06-23 — Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)
+
+Closing the two methodological gaps vs the mentor's `bn-ibf` (jua-bnet): the
+ensemble was collapsed to a *mean* exceedance fraction (blind to a wet tail) and
+evidence was hard-discretized at bin edges. Engine stays pgmpy + lookup
+marginalization (no RxInfer/Julia).
+
+### A1 · Tail-risk (possible-worlds) — SHIPPED (config-gated, default ON)
+`exceedance.compute_tail_ratio` = pXX (default p95) member accumulation / GEV
+return level, persisted as the `tail_ratio` variable in the C2 zarr
+(backward-compatible: absent → tail neutral). `Forecast_Hazard` is now
+`max(fraction_state, tail_state)` (`CRMAModelConfig.tail_aware_hazard`,
+ratios 0.80/1.00/1.30). Escalates hazard 0→High→Extreme even when the mean
+fraction is ~0 (the Nairobi-Mar-2026 wet-tail case the mentor catches).
+**Honest limit:** recovers events with an ensemble wet tail, NOT pure ECMWF
+misses (Apr-2024 Nairobi forecast ~2.5 mm, whole ensemble dry) — those stay
+structural (ISSUE-22).
+
+### A2 · Soft-evidence (Gaussian soft-binning / virtual evidence) — SHIPPED, default OFF
+`SoftEvidenceConfig` (per-node σ) + `_gaussian_soft_bin`/`_dist_of_max`;
+`CRMAModel._infer_soft` marginalizes the lookup table under per-parent soft
+vectors. σ→0 == hard exactly (validated, max |Δ|≈0 over random cases).
+
+**Real A/B (MinIO store, Apr 2024, 9 days × 238 units, only soft toggled):**
+
+| | Yellow | Orange | Red | EM-DAT hits ≥Y / ≥O / ≥R |
+|---|---|---|---|---|
+| hard | 105 | 43 | 7 | 60 / 15 / 3 |
+| soft (σ default) | 94 | 42 | 6 | 56 / 15 / 3 |
+
+**Finding:** soft-evidence is **net-conservative** on this window, not a win.
+April 2024's misses are exc=0 (no near-threshold evidence to rescue, per
+ISSUE-22); where evidence sits just above a bar, soft-binning pulls mass back
+down → a few marginal Yellows demote to Green. Soft-evidence's value is on
+**partial-signal / convective** windows (cf. mentor's +14 promotions on a
+signal-bearing Mar-2026 window), not no-signal ones. **Kept default OFF**
+(config flip to re-enable) until demonstrated beneficial on an in-retention
+signal-bearing date + a σ-sensitivity sweep.
+
+**Status:** 210 unit tests pass (8 new), ruff+mypy clean. Combined A1+A2 decisive
+test (tail+soft on a wet-tail flood) still needs a fresh C2 on an in-retention
+date — tail_ratio needs per-member data the expired Apr-2024 S3 objects can't
+supply (the MinIO exceedance store has Apr-2024 `exceedance_prob` but no
+`tail_ratio`).
+
+*Cleanup (2026-06-23):* `SoftEvidenceConfig.enabled` default corrected
+`True → False` (code now matches the documented "default OFF" intent and the
+A/B finding above); restored the ✅/❌/⚠️ status glyphs corrupted in the table
+at the top of this file.
+
+### A3 · Cost-loss decision trigger — SHIPPED, default OFF
+`CostLossConfig` is now wired (previously an orphan class): attached to
+`CRMAModelConfig.cost_loss` and consumed by `CRMAModel._decide_risk_state`,
+which all three inference paths (`infer`, `_infer_soft`, `infer_sequence`) now
+route through. When enabled, the label is the **highest tier whose cumulative
+exceedance posterior reaches that tier's C/L ratio**
+(`_cost_loss_state`: Red if P(≥Red) ≥ τ_red, else Orange if P(≥Orange) ≥
+τ_orange, else Yellow if P(≥Yellow) ≥ τ_yellow, else Green; checked
+most-severe-first). Default τ = 0.15 / 0.25 / 0.35 (anticipatory-action C/L,
+< the argmax's implicit ~0.5) → lifts recall / lead time at a controlled
+false-alarm cost (Murphy 1977; Coughlan de Perez et al. 2015). Flows to
+production output automatically (risk_engine / geojson_writer read the decided
+`risk_state`/`risk_label`). **Default OFF** (argmax preserved) until τ are
+*calibrated* on the C1 multi-year corpus by maximising Relative Economic Value
+against EM-DAT — the planned next step, the asymmetric advantage no
+fixed-γ stack has. 6 new unit tests; ruff+mypy clean.
+
+---
+
 ## AUDIT 2026-06-18 — Dashboard publish path was broken; now served from S3
 
 ### ISSUE-24 · Dashboard never received pipeline results — FIXED (serve-from-S3)

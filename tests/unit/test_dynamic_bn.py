@@ -5,7 +5,12 @@ from __future__ import annotations
 import pytest
 
 from gik_icechain.risk.crma_model import CRMAEvidence
-from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state, run_temporal_sequence
+from gik_icechain.risk.dynamic_bn import (
+    DynamicBNState,
+    _trend_slope,
+    init_state,
+    run_temporal_sequence,
+)
 from gik_icechain.risk.dynamic_bn import step as bn_step
 
 
@@ -93,6 +98,74 @@ class TestBNStep:
         assert {"risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red"}.issubset(
             result.keys()
         )
+
+
+class TestTrendSlope:
+    def test_empty_and_single_are_zero(self):
+        assert _trend_slope(()) == 0.0
+        assert _trend_slope((5.0,)) == 0.0
+
+    def test_increasing_is_positive(self):
+        assert _trend_slope((1.0, 2.0, 3.0, 4.0)) == pytest.approx(1.0)
+
+    def test_decreasing_is_negative(self):
+        assert _trend_slope((4.0, 3.0, 2.0, 1.0)) == pytest.approx(-1.0)
+
+    def test_flat_is_zero(self):
+        assert _trend_slope((5.0, 5.0, 5.0)) == pytest.approx(0.0)
+
+
+class TestStepTrendBuffer:
+    def test_buffer_appends_observation(self, built_model):
+        _, ns = bn_step(init_state(), _evidence(), built_model, gpm_obs_mm=12.0)
+        assert ns.gpm_history == (12.0,)
+
+    def test_buffer_capped_at_window(self, built_model):
+        state = init_state()
+        for i in range(10):
+            _, state = bn_step(
+                state, _evidence(), built_model, gpm_obs_mm=float(i), trend_window=7
+            )
+        assert len(state.gpm_history) == 7
+        assert state.gpm_history == tuple(float(i) for i in range(3, 10))
+
+    def test_rising_series_feeds_increasing_trend(self, built_model):
+        # A steepening 7-day GPM series ⇒ the BN sees Rainfall_Trend=Increasing,
+        # proving the slope feed is live (not the inert default).
+        state = init_state()
+        result: dict = {}
+        for g in (0.0, 3.0, 6.0, 9.0, 12.0, 15.0, 18.0):
+            result, state = bn_step(state, _evidence(), built_model, gpm_obs_mm=g)
+        assert _trend_slope(state.gpm_history) == pytest.approx(3.0)
+        assert result["evidence"]["Rainfall_Trend"] == 2  # Increasing
+
+    def test_falling_series_feeds_decreasing_trend(self, built_model):
+        state = init_state()
+        result: dict = {}
+        for g in (18.0, 15.0, 12.0, 9.0, 6.0, 3.0, 0.0):
+            result, state = bn_step(state, _evidence(), built_model, gpm_obs_mm=g)
+        assert result["evidence"]["Rainfall_Trend"] == 0  # Decreasing
+
+
+class TestStateSerialization:
+    def test_roundtrip_preserves_gpm_history(self):
+        from dataclasses import asdict
+
+        from gik_icechain.risk.risk_engine import _state_from_dict
+
+        s = DynamicBNState(
+            api_mm=30.0, consecutive_days=2, sat_consecutive_days=1,
+            last_risk_state=2, gpm_history=(1.0, 2.0, 3.0),
+        )
+        assert _state_from_dict(asdict(s)) == s
+
+    def test_pre_v3_checkpoint_defaults_empty_history(self):
+        from gik_icechain.risk.risk_engine import _state_from_dict
+
+        legacy = dict(
+            api_mm=20.0, consecutive_days=0, sat_consecutive_days=0, last_risk_state=0
+        )
+        assert _state_from_dict(legacy).gpm_history == ()
 
 
 class TestRunTemporalSequence:

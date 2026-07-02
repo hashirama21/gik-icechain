@@ -147,7 +147,8 @@ class DaskConfig(BaseModel):
     scheduler: str = "distributed"
     n_workers: int = 4
     threads_per_worker: int = 2
-    memory_limit: str = "4GB"
+    memory_limit: str = "4GB"           # fallback when memory_fraction is null
+    memory_fraction: float | None = 0.6  # cluster-wide share of total RAM; null = absolute
     dashboard_address: str = ":8787"
     chunk_dims: dict[str, Any] = Field(
         default_factory=lambda: {"member": 1, "step": 1, "latitude": 50, "longitude": 50}
@@ -170,6 +171,8 @@ class ParallelConfig(BaseModel):
     max_workers: int | None = None   # None = auto (os.cpu_count())
     multiprocessing: bool = True
     day_timeout_s: int = 300
+    mem_gb_per_worker: float = 3.0      # 0 disables the memory-based worker cap
+    mem_headroom_fraction: float = 0.1  # share of total RAM kept free
 
     @field_validator("max_workers")
     @classmethod
@@ -218,6 +221,13 @@ class Component2Config(BaseModel):
     # resolution (e.g. a 3 h window on 6-hourly data): True = skip the window
     # with a warning (graceful), False = raise an error and abort the day.
     skip_subresolution_windows: bool = True
+
+    # Possible-worlds tail signal: the upper member-quantile of accumulation /
+    # GEV threshold, persisted as the `tail_ratio` variable alongside
+    # `exceedance_prob` and consumed by the tail-aware Forecast_Hazard node.
+    # 0.95 = the worst plausible ensemble member (cf. Nairobi flash-flood tail).
+    tail_quantile: float = 0.95
+    tail_enabled: bool = True
 
     # --- Dimension 3 + 7: Windows (direct + profiles) ---
     windows_h: list[int] = Field(default_factory=lambda: [3, 6, 12, 24, 48, 72, 168])
@@ -357,6 +367,81 @@ class ClusterWeightConfig(BaseModel):
     api: float = 1.5
 
 
+class SoftEvidenceConfig(BaseModel):
+    """Gaussian soft-binning of continuous BN evidence (virtual / soft evidence).
+
+    When enabled, a near-threshold continuous observation is propagated as a
+    probability distribution over the node's discrete states (Gaussian CDF
+    differences at the bin edges) instead of being collapsed to a single hard
+    state. The risk posterior becomes the weighted marginal over the lookup
+    table: ``P(risk) = Σ_states Π_k p_k(state) · P(risk | states)``. As every
+    ``sigma → 0`` this reduces *exactly* to the hard lookup path.
+
+    Each sigma is a bandwidth in the node's own units (≈30% of the narrowest
+    bin spacing, per the measurement-error / fuzzy-set rationale). Only the
+    continuous-derived nodes are soft-binned; count/quality-derived nodes
+    (Temporal_Persist, Data_Confidence, Soil_Memory) stay one-hot.
+    """
+
+    # Default OFF: on the April-2024 validation window (exc=0 misses, no
+    # near-threshold evidence to rescue) soft-binning is net-conservative
+    # (Yellow 105→94, Orange/Red flat). Theoretically sound and σ→0 == hard;
+    # enable + demonstrate on a partial-signal (convective) window before
+    # making it the production default. See docs/ISSUES.md A2 A/B.
+    enabled: bool = False
+    sigma_forecast: float = 0.05  # exceedance-probability units
+    sigma_tail: float = 0.07      # tail-ratio units
+    sigma_gpm: float = 5.0        # mm/day
+    sigma_spatial: float = 0.08   # coverage fraction
+    sigma_api: float = 10.0       # mm
+    sigma_trend: float = 1.0      # mm/day (rainfall-trend slope)
+
+    @model_validator(mode="after")
+    def _sigmas_non_negative(self) -> SoftEvidenceConfig:
+        for name in (
+            "sigma_forecast", "sigma_tail", "sigma_gpm",
+            "sigma_spatial", "sigma_api", "sigma_trend",
+        ):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be >= 0 (0 reduces to the hard path)")
+        return self
+
+
+class CostLossConfig(BaseModel):
+    """Cost-loss decision trigger (Murphy 1977; Coughlan de Perez et al. 2015).
+
+    Instead of labelling each unit with the argmax risk state, assign the
+    *highest* tier whose cumulative posterior probability exceeds that tier's
+    cost-loss ratio C/L:
+
+        Red    if P(≥Red)    ≥ tau_red
+        Orange if P(≥Orange) ≥ tau_orange
+        Yellow if P(≥Yellow) ≥ tau_yellow
+        else Green
+
+    For anticipatory action C/L is low (acting early is cheap, missing is
+    devastating), so the optimal trigger probability is far below the argmax's
+    implicit ~0.5 — this lifts recall / lead time at a controlled false-alarm
+    cost. More expensive actions get a higher bar: tau_yellow ≤ tau_orange ≤
+    tau_red. Defaults follow published forecast-based-financing C/L ratios
+    (~0.1 cash transfers, ~0.2 pre-positioned stockpiles). Default OFF.
+    """
+
+    enabled: bool = False
+    tau_yellow: float = 0.15
+    tau_orange: float = 0.25
+    tau_red: float = 0.35
+
+    @model_validator(mode="after")
+    def _taus_ordered(self) -> CostLossConfig:
+        if not (0.0 < self.tau_yellow <= self.tau_orange <= self.tau_red <= 1.0):
+            raise ValueError(
+                "cost-loss taus must satisfy 0 < tau_yellow <= tau_orange <= "
+                f"tau_red <= 1 (got {self.tau_yellow}, {self.tau_orange}, {self.tau_red})"
+            )
+        return self
+
+
 class CRMAModelConfig(BaseModel):
     """All CRMA BN parameters — no hardcoded values in source modules."""
 
@@ -389,6 +474,38 @@ class CRMAModelConfig(BaseModel):
         default_factory=lambda: {2: 0.85, 5: 0.70}
     )
 
+    # Tail-aware Forecast_Hazard (possible-worlds reasoning). When enabled, the
+    # Forecast_Hazard state is max(fraction-based state, tail-based state) so a
+    # narrow but extreme ensemble tail escalates hazard even when the
+    # ensemble-mean exceedance fraction is ~0. Ratios are tail_ratio = pXX member
+    # accumulation / GEV return level (see exceedance.compute_tail_ratio):
+    #   ratio ≥ tail_medium_ratio  → Forecast_Hazard ≥ Medium
+    #   ratio ≥ tail_high_ratio    → Forecast_Hazard ≥ High
+    #   ratio ≥ tail_extreme_ratio → Forecast_Hazard = Extreme
+    tail_aware_hazard: bool = True
+    tail_medium_ratio: float = 0.80   # p95 member at ~80% of the return level
+    tail_high_ratio: float = 1.00     # p95 member reaches the return level
+    tail_extreme_ratio: float = 1.30  # p95 member well past the return level
+
+    # Gaussian soft-binning of continuous evidence (virtual evidence). Disabled
+    # → hard discretization (legacy). See SoftEvidenceConfig.
+    soft_evidence: SoftEvidenceConfig = Field(default_factory=SoftEvidenceConfig)
+
+    # Cost-loss decision trigger. Disabled → argmax labelling (legacy). When
+    # enabled, the risk label is the highest tier whose cumulative posterior
+    # exceeds that tier's cost-loss ratio. See CostLossConfig.
+    cost_loss: CostLossConfig = Field(default_factory=CostLossConfig)
+
+    @model_validator(mode="after")
+    def _tail_ratios_ordered(self) -> CRMAModelConfig:
+        if not (0.0 < self.tail_medium_ratio < self.tail_high_ratio < self.tail_extreme_ratio):
+            raise ValueError(
+                "tail ratios must satisfy 0 < medium < high < extreme "
+                f"(got {self.tail_medium_ratio}, {self.tail_high_ratio}, "
+                f"{self.tail_extreme_ratio})"
+            )
+        return self
+
     @model_validator(mode="after")
     def _hazard_rp_thresholds_ordered(self) -> CRMAModelConfig:
         for rp, (medium, high) in self.hazard_thresholds_by_rp.items():
@@ -410,9 +527,16 @@ class CRMAModelConfig(BaseModel):
     # surface the lower-return-period exceedance (lower effective rainfall bar).
     soil_conditioned_rp: bool = True
     saturated_rp: int = 2
-    # Additive Compound_Risk score weights for the two non-cluster evidence axes.
+    # Additive Compound_Risk score weights for the non-cluster evidence axes.
     weight_temporal_persist: float = 1.5
     weight_spatial_coverage: float = 1.0
+    # Rainfall_Trend (Decreasing/Stable/Increasing) contributes a *centred*
+    # (state-1)*weight term so Stable is exactly neutral (preserves the legacy
+    # calibration): an intensifying 7-day trend nudges the score up by one
+    # weight, a weakening trend down by one. The ±threshold (mm/day) bins the
+    # IMERG 7-day slope into the three states (cf. mentor's ±2 mm/day).
+    weight_rainfall_trend: float = 1.0
+    rainfall_trend_threshold_mmday: float = 2.0
 
     # CPT parameters
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(

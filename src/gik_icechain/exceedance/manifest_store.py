@@ -396,7 +396,9 @@ def load_day_manifest_aware(
     bbox_slices = _bbox_to_slices(bbox) if bbox is not None else None
     decoded: dict[tuple, np.ndarray] = {}
 
-    for (member_idx, step_idx, var), data in raw_data.items():
+    for key in list(raw_data.keys()):
+        member_idx, step_idx, var = key
+        data = raw_data.pop(key)
         grid = _decode_grib_message(
             data,
             bbox_slices,
@@ -406,7 +408,7 @@ def load_day_manifest_aware(
             step=step_idx if step_idx is not None else -1,
         )
         if grid is not None:
-            decoded[(member_idx, step_idx, var)] = grid
+            decoded[key] = grid
 
     if not decoded:
         raise ValueError(f"All GRIB2 decodes failed for {date_str}")

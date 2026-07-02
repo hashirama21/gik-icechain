@@ -120,6 +120,110 @@ def compute_exceedance_probabilities(
     return exceedance
 
 
+def compute_member_ratio(
+    acc_ds: xr.Dataset,
+    thresholds_ds: xr.Dataset,
+    window_h: int,
+    return_period: int,
+    member_dim: str = "number",
+    quantile: float = 0.95,
+    flood_floor_mm: float = 0.0,
+) -> xr.DataArray:
+    """Possible-worlds signal: the *quantile* member accumulation / threshold.
+
+    Where :func:`compute_exceedance_probabilities` collapses the ensemble to the
+    *fraction* of members above the threshold (a mean-based view), this collapses
+    it to a single member quantile: the ``quantile`` member's worst-case window
+    accumulation expressed as a ratio to the GEV return level. It is the building
+    block of the per-member *storyline ladder*:
+
+    - ``quantile=0.5``  → the **median world** (the central plausible member);
+    - ``quantile=0.95`` → the **worst world** / tail (cf. the Nairobi Mar-2026
+      flash flood: ensemble mean ~18 mm but a tail member at 131 mm).
+
+    A ratio ≥ 1.0 means that member reaches the return level. The p95 ratio is
+    the forecast-side input to the tail-aware ``Forecast_Hazard`` node; lower
+    quantiles drive the median-world risk in the storyline.
+
+    Args:
+        acc_ds:        Dataset from ``compute_rolling_accumulations`` with
+                       ``tp_{window_h}h`` (dims include *member_dim* and step).
+        thresholds_ds: Dataset with GEV variable ``rp_{return_period}y`` (lat×lon).
+        window_h:      Accumulation window in hours.
+        return_period: Return period in years.
+        member_dim:    Ensemble member dimension name.
+        quantile:      Quantile over members (0.5 = median, 0.95 = worst world).
+        flood_floor_mm: Flood-relevance floor applied to the threshold (mirrors
+                       :func:`compute_exceedance_probabilities`).
+
+    Returns:
+        xr.DataArray (latitude × longitude) of the member ratio (≥ 0, unitless).
+        Cells outside the threshold domain are NaN (→ no signal downstream).
+    """
+    var_name = f"tp_{window_h}h"
+    if var_name not in acc_ds:
+        raise KeyError(
+            f"Variable '{var_name}' not found in accumulated dataset. "
+            f"Available: {list(acc_ds.data_vars)}"
+        )
+
+    threshold = thresholds_ds[f"rp_{return_period}y"]
+    tp = acc_ds[var_name]
+
+    step_dim = find_step_dim(tp)
+    tp_worst = tp.max(dim=step_dim)
+
+    threshold = _align_threshold_to_forecast(threshold, tp_worst)
+    if flood_floor_mm > 0:
+        threshold = threshold.clip(min=flood_floor_mm)
+
+    # Quantile member accumulation, then ratio to the (floored) return level.
+    # Divide by a positive-clipped threshold so dry/NaN cells stay NaN, not inf.
+    tp_q = tp_worst.quantile(quantile, dim=member_dim)
+    if "quantile" in tp_q.coords:
+        tp_q = tp_q.drop_vars("quantile")
+    ratio = tp_q / threshold.where(threshold > 0)
+    ratio.attrs.update(
+        {
+            "long_name": (
+                f"Member ratio (p{int(quantile * 100)} member / "
+                f"{return_period}-year RP, {window_h}h)"
+            ),
+            "units": "1",
+            "window_h": window_h,
+            "return_period": return_period,
+            "quantile": quantile,
+        }
+    )
+    return ratio
+
+
+def compute_tail_ratio(
+    acc_ds: xr.Dataset,
+    thresholds_ds: xr.Dataset,
+    window_h: int,
+    return_period: int,
+    member_dim: str = "number",
+    tail_quantile: float = 0.95,
+    flood_floor_mm: float = 0.0,
+) -> xr.DataArray:
+    """Worst-world tail ratio — thin alias of :func:`compute_member_ratio`.
+
+    Kept as the named forecast-side input to the tail-aware ``Forecast_Hazard``
+    node (``tail_quantile`` defaults to p95). See :func:`compute_member_ratio`
+    for the full possible-worlds rationale.
+    """
+    return compute_member_ratio(
+        acc_ds,
+        thresholds_ds,
+        window_h=window_h,
+        return_period=return_period,
+        member_dim=member_dim,
+        quantile=tail_quantile,
+        flood_floor_mm=flood_floor_mm,
+    )
+
+
 def compute_ensemble_confidence(
     acc_ds: xr.Dataset,
     window_h: int,

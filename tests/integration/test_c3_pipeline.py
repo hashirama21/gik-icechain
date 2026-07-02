@@ -108,6 +108,40 @@ def dual_rp_exceedance_store(tmp_path):
 
 
 @pytest.fixture
+def storyline_exceedance_store(tmp_path):
+    """Store with a strong worst world (p95 tail) but a weak median world (p50),
+    so the per-member storyline spread must be positive."""
+    shape = (1, NLAT, NLON, len(WINDOWS_H), len(RETURN_PERIODS))
+    coords = {
+        "date": [pd.Timestamp(TEST_DATE)],
+        "latitude": LAT,
+        "longitude": LON,
+        "window": np.array(WINDOWS_H, dtype=np.int16),
+        "return_period": np.array(RETURN_PERIODS, dtype=np.int16),
+    }
+    dims = ["date", "latitude", "longitude", "window", "return_period"]
+
+    def _da(value):
+        return xr.DataArray(np.full(shape, value, dtype=np.float32), dims=dims, coords=coords)
+
+    ds = xr.Dataset(
+        {
+            "exceedance_prob": _da(0.05),   # low ensemble fraction
+            "tail_ratio": _da(1.5),         # worst world ≫ return level → Extreme
+            "median_ratio": _da(0.3),       # median world well below → Low
+            "ensemble_confidence": xr.DataArray(
+                np.full((1, NLAT, NLON), 2, dtype=np.int8),
+                dims=["date", "latitude", "longitude"],
+                coords={"date": [pd.Timestamp(TEST_DATE)], "latitude": LAT, "longitude": LON},
+            ),
+        }
+    )
+    out = str(tmp_path / "exceedance_storyline.zarr")
+    ds.to_zarr(out, mode="w", consolidated=True)
+    return out
+
+
+@pytest.fixture
 def fake_admin_boundaries(tmp_path):
     pytest.importorskip("geopandas")
     import geopandas as gpd
@@ -245,6 +279,37 @@ class TestRiskBatch:
                 any_differs = True
         # exceedances are random across the RP dim → at least one unit differs
         assert any_differs
+
+    def test_storyline_worst_median_spread(
+        self, built_crma, storyline_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
+    ):
+        pytest.importorskip("regionmask", reason="regionmask not installed")
+        from gik_icechain.risk.risk_engine import run_risk_batch
+
+        written = run_risk_batch(
+            exceedance_store_uri=storyline_exceedance_store,
+            gpm_dir=fake_gpm_dir,
+            admin_boundaries_path=fake_admin_boundaries,
+            crma_models=built_crma,
+            output_dir=tmp_path / "risk_storyline",
+            start=TEST_DATE,
+            end=TEST_DATE,
+            rp_signal=5,
+            rp_signal_options=[5, 20],
+        )
+        units = json.loads(written[0].read_text())["units"]
+        spreads = []
+        for u in units.values():
+            if u["risk_label"] == "No_Data":
+                continue
+            assert "storyline_median_state" in u
+            assert "storyline_spread" in u
+            assert u["storyline_spread"] >= 0
+            # the worst world (= risk_state) is at least as severe as the median
+            assert u["risk_state"] >= u["storyline_median_state"]
+            spreads.append(u["storyline_spread"])
+        # strong p95 tail + weak p50 median ⇒ at least one unit has a real gap
+        assert any(s > 0 for s in spreads)
 
     def test_missing_exceedance_date_skipped(
         self, built_crma, fake_exceedance_store, fake_gpm_dir, fake_admin_boundaries, tmp_path
