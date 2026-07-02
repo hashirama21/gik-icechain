@@ -36,3 +36,6 @@ notebooks/07_e2e_pipeline_test.ipynb
 
 # Generated knowledge graph (regenerate with `graphify update .`)
 graphify-out/
+
+# Local Claude Code project instructions (not for the repo)
+CLAUDE.md
