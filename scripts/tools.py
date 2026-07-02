@@ -41,6 +41,7 @@ def _urlopen(url: str, timeout: int):
     ctx = None
     try:
         import certifi
+
         ctx = ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         pass
@@ -532,9 +533,7 @@ _ENSO_PHASES = ["el_nino", "neutral", "la_nina"]
 _IOD_PHASES = ["positive", "neutral", "negative"]
 
 
-def _classify_years_enso_iod(
-    years: list[int], index_path: Path
-) -> dict[int, tuple[str, str]]:
+def _classify_years_enso_iod(years: list[int], index_path: Path) -> dict[int, tuple[str, str]]:
     """Classify each year by its OND-season (Oct-Dec) ENSO & IOD phase.
 
     Uses the Oct-Dec mean of the Niño-3.4 anomaly and DMI for each year.
@@ -609,8 +608,7 @@ def download_thresholds(
     year_phase = _classify_years_enso_iod(years, REPO_ROOT / "data" / "enso_iod_index.csv")
     if not year_phase:
         typer.echo(
-            "  WARNING: ENSO/IOD index missing -> thresholds NOT stratified "
-            "(single climatology).",
+            "  WARNING: ENSO/IOD index missing -> thresholds NOT stratified (single climatology).",
             err=True,
         )
     available = {str(d) for d in ds["duration"].values}
@@ -678,9 +676,9 @@ def build_thresholds_gpm(
     output: Annotated[
         Path, typer.Option(help="Output directory for threshold NetCDFs.")
     ] = REPO_ROOT / "data" / "cmorph_thresholds",
-    enso_iod_csv: Annotated[
-        Path, typer.Option(help="ENSO/IOD index CSV.")
-    ] = REPO_ROOT / "data" / "enso_iod_index.csv",
+    enso_iod_csv: Annotated[Path, typer.Option(help="ENSO/IOD index CSV.")] = REPO_ROOT
+    / "data"
+    / "enso_iod_index.csv",
     min_years: Annotated[int, typer.Option(help="Min years per bin before fallback.")] = 6,
     seasons: Annotated[str, typer.Option(help="Comma-separated seasons.")] = "MAM,OND,JJAS,DJF",
     download: Annotated[
@@ -934,6 +932,7 @@ def _event_level_metrics(
         for pcode, score in data.get("units", {}).items():
             if score.get("risk_label") == "No_Data" or int(score.get("risk_state", -1)) < 0:
                 continue
+
             by_pc.setdefault(pcode, []).append(
                 {
                     "date": date_str,
@@ -1037,8 +1036,10 @@ def validate_emdat(
 
     if event_level:
         ev = _event_level_metrics(risk_dir, lead_days, start, end)
-        typer.echo(f"\nEvent-level early detection (lead={lead_days}d) — "
-                   "contiguous EM-DAT runs per unit collapsed to one event:")
+        typer.echo(
+            f"\nEvent-level early detection (lead={lead_days}d) — "
+            "contiguous EM-DAT runs per unit collapsed to one event:"
+        )
         typer.echo(
             f"{'level':<8} {'recall':>8} {'precision':>10} {'detected':>10} {'falseAlarm':>11}"
         )
@@ -1219,7 +1220,7 @@ def _emdat_graphql(query: str, api_key: str, timeout: int = 60) -> dict:
         method="POST",
     )
     try:
-        raw = urllib.request.urlopen(request, timeout=timeout, context=ctx).read()  # noqa: S310
+        raw = urllib.request.urlopen(request, timeout=timeout, context=ctx).read()
     except urllib.error.HTTPError as exc:
         # EM-DAT returns 500 with a JSON {"errors":[...]} body for a bad/expired
         # key; surface that message instead of a raw HTTPError traceback.
@@ -1258,7 +1259,11 @@ def _emdat_admin1_rows(rec: dict) -> list[dict]:
         except (TypeError, ValueError):
             return None
 
-    sy, sm, sd = _num(rec.get("start_year")), _num(rec.get("start_month")), _num(rec.get("start_day"))
+    sy, sm, sd = (
+        _num(rec.get("start_year")),
+        _num(rec.get("start_month")),
+        _num(rec.get("start_day")),
+    )
     ey, em, ed = _num(rec.get("end_year")), _num(rec.get("end_month")), _num(rec.get("end_day"))
     # EM-DAT leaves month/day blank when unknown. Bound the event with sane
     # defaults so the validator's date-overlap stays monotonic (end >= start).
@@ -1273,8 +1278,12 @@ def _emdat_admin1_rows(rec: dict) -> list[dict]:
         "Country": country,
         "Start Date": start_iso,
         "End Date": end_iso,
-        "Total Deaths": _num(rec.get("total_deaths")) if _num(rec.get("total_deaths")) is not None else "",
-        "No. Affected": _num(rec.get("no_affected")) if _num(rec.get("no_affected")) is not None else "",
+        "Total Deaths": _num(rec.get("total_deaths"))
+        if _num(rec.get("total_deaths")) is not None
+        else "",
+        "No. Affected": _num(rec.get("no_affected"))
+        if _num(rec.get("no_affected")) is not None
+        else "",
     }
 
     units = rec.get("admin_units")
@@ -1301,9 +1310,9 @@ def _emdat_admin1_rows(rec: dict) -> list[dict]:
 def download_emdat(
     from_year: Annotated[int, typer.Option("--from-year", help="First disaster year.")] = 2015,
     to_year: Annotated[int, typer.Option("--to-year", help="Last disaster year.")] = 2024,
-    output: Annotated[
-        Path, typer.Option(help="Output CSV (pipeline schema).")
-    ] = Path("data/emdat/east_africa_floods.csv"),
+    output: Annotated[Path, typer.Option(help="Output CSV (pipeline schema).")] = Path(
+        "data/emdat/east_africa_floods.csv"
+    ),
     merge: Annotated[
         bool,
         typer.Option(
@@ -1338,14 +1347,24 @@ def download_emdat(
     classif_json = json.dumps(_EMDAT_FLOOD_CLASSIF)
 
     cols = [
-        "DisNo.", "Disaster Type", "ISO", "Country", "Start Date", "End Date",
-        "Total Deaths", "No. Affected", "Admin1", "Admin1 Code",
+        "DisNo.",
+        "Disaster Type",
+        "ISO",
+        "Country",
+        "Start Date",
+        "End Date",
+        "Total Deaths",
+        "No. Affected",
+        "Admin1",
+        "Admin1 Code",
     ]
     fetched: dict[tuple[str, str], dict] = {}
     cursor: str | None = None
     n_records = 0
 
-    typer.echo(f"Downloading EM-DAT floods {from_year}-{to_year} for {len(iso_list)} EA countries ...")
+    typer.echo(
+        f"Downloading EM-DAT floods {from_year}-{to_year} for {len(iso_list)} EA countries ..."
+    )
     while True:
         cur_lit = "null" if cursor is None else json.dumps(cursor)
         query = f"""
@@ -1400,11 +1419,13 @@ def download_emdat(
 @app.command("clean-emdat-xlsx")
 def clean_emdat_xlsx(
     xlsx: Annotated[Path, typer.Argument(help="EM-DAT public portal .xlsx export.")],
-    output: Annotated[
-        Path, typer.Option(help="Output CSV (pipeline schema).")
-    ] = Path("data/emdat/east_africa_floods.csv"),
+    output: Annotated[Path, typer.Option(help="Output CSV (pipeline schema).")] = Path(
+        "data/emdat/east_africa_floods.csv"
+    ),
     sheet: Annotated[str, typer.Option(help="Worksheet holding the records.")] = "EM-DAT Data",
-    from_year: Annotated[int, typer.Option("--from-year", help="Keep events from this year on.")] = 0,
+    from_year: Annotated[
+        int, typer.Option("--from-year", help="Keep events from this year on.")
+    ] = 0,
     merge: Annotated[
         bool,
         typer.Option(
@@ -1438,8 +1459,16 @@ def clean_emdat_xlsx(
     typer.echo(f"{len(fl)} EA flood events in {xlsx.name} (from {from_year or 'all'}).")
 
     cols = [
-        "DisNo.", "Disaster Type", "ISO", "Country", "Start Date", "End Date",
-        "Total Deaths", "No. Affected", "Admin1", "Admin1 Code",
+        "DisNo.",
+        "Disaster Type",
+        "ISO",
+        "Country",
+        "Start Date",
+        "End Date",
+        "Total Deaths",
+        "No. Affected",
+        "Admin1",
+        "Admin1 Code",
     ]
     rows: dict[tuple[str, str], dict] = {}
     for _, r in fl.iterrows():
@@ -1447,9 +1476,14 @@ def clean_emdat_xlsx(
             "disno": r["DisNo."],
             "iso": r["ISO"],
             "country": r["Country"],
-            "start_year": r["Start Year"], "start_month": r["Start Month"], "start_day": r["Start Day"],
-            "end_year": r["End Year"], "end_month": r["End Month"], "end_day": r["End Day"],
-            "total_deaths": r["Total Deaths"], "no_affected": r["No. Affected"],
+            "start_year": r["Start Year"],
+            "start_month": r["Start Month"],
+            "start_day": r["Start Day"],
+            "end_year": r["End Year"],
+            "end_month": r["End Month"],
+            "end_day": r["End Day"],
+            "total_deaths": r["Total Deaths"],
+            "no_affected": r["No. Affected"],
             "admin_units": None if pd.isna(r["Admin Units"]) else r["Admin Units"],
         }
         for row in _emdat_admin1_rows(rec):
@@ -1469,9 +1503,7 @@ def clean_emdat_xlsx(
         for _, r in sorted(rows.items()):
             w.writerow({c: r.get(c, "") for c in cols})
 
-    typer.echo(
-        f"Wrote {len(rows)} rows ({n_admin1} with admin1) to {output} (merge={merge})."
-    )
+    typer.echo(f"Wrote {len(rows)} rows ({n_admin1} with admin1) to {output} (merge={merge}).")
 
 
 if __name__ == "__main__":
