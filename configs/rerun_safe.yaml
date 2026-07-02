@@ -1,0 +1,10 @@
+# Override merged on top of configs/default.yaml.
+# Purpose: re-run a block that OOM-crashed during the parallel exceedance step
+# (ECCODES default_buffer_malloc / BrokenProcessPool). Forcing the exceedance
+# to run sequentially (one date at a time) keeps peak RAM ~6 GB instead of
+# ~3x that, so it fits comfortably in available memory.
+component2:
+  parallel:
+    max_workers: 1        # -> sequential path in _run_exceedance (no ProcessPool)
+    multiprocessing: false
+    mem_gb_per_worker: 6.0 # realistic per-date peak, in case workers>1 is ever used

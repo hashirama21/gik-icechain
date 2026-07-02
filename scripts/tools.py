@@ -12,6 +12,7 @@ Usage:
     python scripts/tools.py gap-fill --start 2023-05-01 --end 2024-02-29
     python scripts/tools.py export-eahw --risk-dir results/admin1_risk/ --output results/eahw/
     python scripts/tools.py validate-emdat --risk-dir results/admin1_risk/
+    python scripts/tools.py download-emdat --from-year 2024 --to-year 2024
 """
 
 from __future__ import annotations
@@ -1164,6 +1165,313 @@ def skill_vs_lead(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(curve, indent=2))
         typer.echo(f"\nWritten to {output}")
+
+
+# --------------------------------------------------------------------------- #
+# EM-DAT download (ground truth)                                              #
+# --------------------------------------------------------------------------- #
+
+# EM-DAT new-classification keys for the flood family (doc.emdat.be).
+_EMDAT_FLOOD_CLASSIF = [
+    "nat-hyd-flo-flo",  # Flood (general)
+    "nat-hyd-flo-fla",  # Flash flood
+    "nat-hyd-flo-riv",  # Riverine flood
+    "nat-hyd-flo-coa",  # Coastal flood
+]
+
+_EMDAT_API_URL = "https://api.emdat.be/v1"
+
+
+def _load_dotenv(repo_root: Path) -> None:
+    """Populate os.environ from repo .env (KEY=VALUE, no export), if present."""
+    import os
+
+    env = repo_root / ".env"
+    if not env.exists():
+        return
+    for line in env.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        os.environ.setdefault(k.strip(), v.strip())
+
+
+def _emdat_graphql(query: str, api_key: str, timeout: int = 60) -> dict:
+    """POST a GraphQL query to the EM-DAT API with the Authorization key."""
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    ctx = None
+    try:
+        import certifi
+
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+
+    body = json.dumps({"query": query}).encode("utf-8")
+    request = urllib.request.Request(
+        _EMDAT_API_URL,
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": api_key},
+        method="POST",
+    )
+    try:
+        raw = urllib.request.urlopen(request, timeout=timeout, context=ctx).read()  # noqa: S310
+    except urllib.error.HTTPError as exc:
+        # EM-DAT returns 500 with a JSON {"errors":[...]} body for a bad/expired
+        # key; surface that message instead of a raw HTTPError traceback.
+        detail = exc.read().decode("utf-8", "replace")
+        try:
+            errs = json.loads(detail).get("errors", [])
+            msgs = "; ".join(e.get("message", str(e)) for e in errs) or detail
+        except json.JSONDecodeError:
+            msgs = detail
+        raise RuntimeError(f"EM-DAT API HTTP {exc.code}: {msgs}") from None
+
+    payload = json.loads(raw)
+    if payload.get("errors"):
+        msgs = "; ".join(e.get("message", str(e)) for e in payload["errors"])
+        raise RuntimeError(f"EM-DAT API error: {msgs}")
+    return payload["data"]
+
+
+def _emdat_admin1_rows(rec: dict) -> list[dict]:
+    """Flatten one EM-DAT record into per-admin1 CSV rows (pipeline schema).
+
+    ``admin_units`` is a JSON list of {adm1_code, adm1_name} and/or
+    {adm2_code, adm2_name} dicts. We key on the pipeline's unit format
+    ``ISO_<adm1 name>`` so rows join directly to the risk output. Records with
+    no admin1 detail yield a single country-level row (empty Admin1).
+    """
+    iso = rec.get("iso") or ""
+    country = rec.get("country") or ""
+
+    def _num(v: object) -> int | None:
+        # Tolerate floats/NaN/strings coming from either the API or an xlsx.
+        try:
+            if v is None or v != v:  # NaN
+                return None
+            return int(float(v))
+        except (TypeError, ValueError):
+            return None
+
+    sy, sm, sd = _num(rec.get("start_year")), _num(rec.get("start_month")), _num(rec.get("start_day"))
+    ey, em, ed = _num(rec.get("end_year")), _num(rec.get("end_month")), _num(rec.get("end_day"))
+    # EM-DAT leaves month/day blank when unknown. Bound the event with sane
+    # defaults so the validator's date-overlap stays monotonic (end >= start).
+    start_iso = f"{sy:04d}-{sm or 1:02d}-{sd or 1:02d}" if sy else ""
+    ey = ey or sy
+    end_iso = f"{ey:04d}-{(em or sm or 12):02d}-{(ed or 28):02d}" if ey else start_iso
+
+    base = {
+        "DisNo.": rec.get("disno") or "",
+        "Disaster Type": "Flood",
+        "ISO": iso,
+        "Country": country,
+        "Start Date": start_iso,
+        "End Date": end_iso,
+        "Total Deaths": _num(rec.get("total_deaths")) if _num(rec.get("total_deaths")) is not None else "",
+        "No. Affected": _num(rec.get("no_affected")) if _num(rec.get("no_affected")) is not None else "",
+    }
+
+    units = rec.get("admin_units")
+    if isinstance(units, str):
+        try:
+            units = json.loads(units)
+        except (json.JSONDecodeError, TypeError):
+            units = None
+
+    adm1_names: list[str] = []
+    if isinstance(units, list):
+        for u in units:
+            if isinstance(u, dict) and u.get("adm1_name"):
+                name = str(u["adm1_name"]).strip()
+                if name and name not in adm1_names:
+                    adm1_names.append(name)
+
+    if not adm1_names:
+        return [{**base, "Admin1": "", "Admin1 Code": ""}]
+    return [{**base, "Admin1": n, "Admin1 Code": f"{iso}_{n}"} for n in adm1_names]
+
+
+@app.command("download-emdat")
+def download_emdat(
+    from_year: Annotated[int, typer.Option("--from-year", help="First disaster year.")] = 2015,
+    to_year: Annotated[int, typer.Option("--to-year", help="Last disaster year.")] = 2024,
+    output: Annotated[
+        Path, typer.Option(help="Output CSV (pipeline schema).")
+    ] = Path("data/emdat/east_africa_floods.csv"),
+    merge: Annotated[
+        bool,
+        typer.Option(
+            "--merge/--overwrite",
+            help="Merge with existing CSV (dedupe by DisNo.+Admin1 Code) vs replace it.",
+        ),
+    ] = True,
+) -> None:
+    """Download EM-DAT flood ground truth for East Africa via the GraphQL API.
+
+    Needs an EM-DAT API key (Account > API key on public.emdat.be), read from
+    the EMDAT_API_KEY environment variable or the repo .env. The portal
+    email/password is NOT the API key.
+    """
+    import csv
+    import os
+
+    from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
+
+    _load_dotenv(REPO_ROOT)
+    api_key = os.environ.get("EMDAT_API_KEY", "").strip()
+    if not api_key:
+        typer.echo(
+            "ERROR: EMDAT_API_KEY not set. Get it from public.emdat.be "
+            "(Account > API key) and add EMDAT_API_KEY=<key> to .env.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    iso_list = sorted(EAST_AFRICA_COUNTRIES_ISO3)
+    iso_json = json.dumps(iso_list)
+    classif_json = json.dumps(_EMDAT_FLOOD_CLASSIF)
+
+    cols = [
+        "DisNo.", "Disaster Type", "ISO", "Country", "Start Date", "End Date",
+        "Total Deaths", "No. Affected", "Admin1", "Admin1 Code",
+    ]
+    fetched: dict[tuple[str, str], dict] = {}
+    cursor: str | None = None
+    n_records = 0
+
+    typer.echo(f"Downloading EM-DAT floods {from_year}-{to_year} for {len(iso_list)} EA countries ...")
+    while True:
+        cur_lit = "null" if cursor is None else json.dumps(cursor)
+        query = f"""
+        query {{
+          public_emdat(
+            cursor: {cur_lit}, limit: 100,
+            filters: {{from: {from_year}, to: {to_year}, classif: {classif_json}, iso: {iso_json}}}
+          ) {{
+            total_available
+            info {{ cursor }}
+            data {{
+              disno type iso country
+              start_year start_month start_day
+              end_year end_month end_day
+              total_deaths no_affected admin_units
+            }}
+          }}
+        }}"""
+        try:
+            block = _emdat_graphql(query, api_key)["public_emdat"]
+        except RuntimeError as exc:
+            typer.echo(f"ERROR: {exc}", err=True)
+            raise typer.Exit(1) from None
+        data = block.get("data") or []
+        for rec in data:
+            n_records += 1
+            for row in _emdat_admin1_rows(rec):
+                fetched[(row["DisNo."], row["Admin1 Code"])] = row
+        cursor = (block.get("info") or {}).get("cursor")
+        typer.echo(f"  fetched {n_records}/{block.get('total_available')} events ...")
+        if not cursor or not data:
+            break
+
+    rows = dict(fetched)
+    if merge and output.exists():
+        with output.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                key = (r.get("DisNo.", ""), r.get("Admin1 Code", ""))
+                rows.setdefault(key, {c: r.get(c, "") for c in cols})
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for _, r in sorted(rows.items()):
+            w.writerow({c: r.get(c, "") for c in cols})
+
+    typer.echo(f"\n{n_records} EM-DAT events -> {len(fetched)} admin1 rows.")
+    typer.echo(f"Wrote {len(rows)} total rows to {output} (merge={merge}).")
+
+
+@app.command("clean-emdat-xlsx")
+def clean_emdat_xlsx(
+    xlsx: Annotated[Path, typer.Argument(help="EM-DAT public portal .xlsx export.")],
+    output: Annotated[
+        Path, typer.Option(help="Output CSV (pipeline schema).")
+    ] = Path("data/emdat/east_africa_floods.csv"),
+    sheet: Annotated[str, typer.Option(help="Worksheet holding the records.")] = "EM-DAT Data",
+    from_year: Annotated[int, typer.Option("--from-year", help="Keep events from this year on.")] = 0,
+    merge: Annotated[
+        bool,
+        typer.Option(
+            "--merge/--overwrite",
+            help="Merge with existing CSV (dedupe by DisNo.+Admin1 Code) vs replace it.",
+        ),
+    ] = False,
+) -> None:
+    """Clean a manual EM-DAT xlsx export into the pipeline's flood CSV.
+
+    Same output schema and admin1 flattening as ``download-emdat`` (which the
+    free portal can't reach without an API account). Keeps Disaster Type=Flood
+    over the East-Africa ISO set and flattens ``Admin Units`` to per-admin1 rows.
+    """
+    import csv
+
+    import pandas as pd
+
+    from gik_icechain.shared.regions import EAST_AFRICA_COUNTRIES_ISO3
+
+    if not xlsx.exists():
+        typer.echo(f"xlsx not found: {xlsx}", err=True)
+        raise typer.Exit(1)
+
+    df = pd.read_excel(xlsx, sheet_name=sheet)
+    ea = sorted(EAST_AFRICA_COUNTRIES_ISO3)
+    mask = (df["Disaster Type"] == "Flood") & (df["ISO"].isin(ea))
+    if from_year:
+        mask &= df["Start Year"] >= from_year
+    fl = df[mask]
+    typer.echo(f"{len(fl)} EA flood events in {xlsx.name} (from {from_year or 'all'}).")
+
+    cols = [
+        "DisNo.", "Disaster Type", "ISO", "Country", "Start Date", "End Date",
+        "Total Deaths", "No. Affected", "Admin1", "Admin1 Code",
+    ]
+    rows: dict[tuple[str, str], dict] = {}
+    for _, r in fl.iterrows():
+        rec = {
+            "disno": r["DisNo."],
+            "iso": r["ISO"],
+            "country": r["Country"],
+            "start_year": r["Start Year"], "start_month": r["Start Month"], "start_day": r["Start Day"],
+            "end_year": r["End Year"], "end_month": r["End Month"], "end_day": r["End Day"],
+            "total_deaths": r["Total Deaths"], "no_affected": r["No. Affected"],
+            "admin_units": None if pd.isna(r["Admin Units"]) else r["Admin Units"],
+        }
+        for row in _emdat_admin1_rows(rec):
+            rows[(row["DisNo."], row["Admin1 Code"])] = row
+
+    n_admin1 = sum(1 for k in rows if k[1])
+    if merge and output.exists():
+        with output.open(encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                key = (r.get("DisNo.", ""), r.get("Admin1 Code", ""))
+                rows.setdefault(key, {c: r.get(c, "") for c in cols})
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("w", encoding="utf-8-sig", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for _, r in sorted(rows.items()):
+            w.writerow({c: r.get(c, "") for c in cols})
+
+    typer.echo(
+        f"Wrote {len(rows)} rows ({n_admin1} with admin1) to {output} (merge={merge})."
+    )
 
 
 if __name__ == "__main__":

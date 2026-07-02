@@ -358,6 +358,12 @@ python scripts/tools.py export-eahw --risk-dir results/admin1_risk/ --output res
 
 # Validate risk outputs against EM-DAT historical flood events
 python scripts/tools.py validate-emdat --risk-dir results/admin1_risk/
+
+# Build the EM-DAT flood ground-truth CSV from a manual portal .xlsx export
+python scripts/tools.py clean-emdat-xlsx scripts/public_emdat_*.xlsx
+
+# (paid API accounts only) pull EM-DAT floods via the GraphQL API
+python scripts/tools.py download-emdat --from-year 2024 --to-year 2024
 ```
 
 ---
@@ -391,6 +397,33 @@ target) is the operational metric. The remaining ceiling is a documented
 *structural* limit  most missed events are riverine / non-local floods that a
 local-rainfall trigger plus ECMWF skill cannot capture  analysed in
 [`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 … ISSUE-24).
+
+**Nov 2024 operational case (independent ground truth).** EM-DAT has not yet
+recorded the Nov-2024 East-Africa floods (6–12 month reporting lag), so the
+31-day window (31 Oct – 30 Nov 2024, 238 units) was validated against **IFRC GO**
+active flood appeals (public API, `goadmin.ifrc.org`) plus OCHA/SWALIM for the
+Somali Deyr floods — ground truth saved to `data/emdat/nov2024_ground_truth_ifrc.csv`.
+As this source is country-resolution, the alignment is scored per country:
+
+| Metric | Value |
+|--------|-------|
+| C3 alerts (Orange+Red) falling in genuinely-flooded countries | 76 % |
+| Alert rate — flooded vs non-flooded countries | 9.0 % vs 5.0 % |
+| Confirmed top hotspots (alert rate) | SOM / Deyr 32 %, SSD / Sudd 56 % |
+
+Observations:
+
+- C3's two largest hotspots — Somalia (Deyr) and South Sudan (Sudd, ~300 k
+  affected) — are corroborated by independent ground truth; both were heavily
+  flagged and both genuinely flooded.
+- KEN / TZA / UGA / BDI show ~0 alerts despite open IFRC appeals, but those
+  appeals are residual from the 2024 long-rains (peak Mar–May), so quiet
+  November alerts are expected behaviour, not misses.
+- Two open limits: (1) country resolution only — no free admin-1 daily flood
+  mask (Copernicus GFM / UNOSAT via HDX) was ingested for this window; (2) every
+  Red cell shares an identical `p_red = 0.39`, i.e. the BN posterior saturates
+  and severity gradation is lost (decision is driven by the cost-loss trigger,
+  not posterior magnitude).
 
 ---
 

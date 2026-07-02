@@ -7,6 +7,10 @@ set -u
 
 PROJ="/c/Users/BKNV2795/Documents/Projects/gik-icechain"
 GIK="$PROJ/.venv/Scripts/gik-icechain.exe"
+# Safe config: forces the exceedance step to run sequentially (max_workers=1),
+# which avoids the parallel-worker OOM (ECCODES default_buffer_malloc /
+# BrokenProcessPool) seen with the default config.
+CONFIG="$PROJ/configs/rerun_safe.yaml"
 LOG="$PROJ/backfill_ond2024.log"
 PROG="$PROJ/backfill_ond2024.progress"
 
@@ -42,7 +46,7 @@ printf '%s\n' "$BLOCKS" | tr -d '\r' | while read -r S E; do
   i=$((i+1))
   t0=$(date +%s)
   echo "=== [$i/$N] BLOCK $S .. $E START $(date) ===" >> "$LOG"
-  if "$GIK" run-all --start "$S" --end "$E" >> "$LOG" 2>&1; then
+  if "$GIK" run-all --config "$CONFIG" --start "$S" --end "$E" >> "$LOG" 2>&1; then
     st="OK"
   else
     st="FAILED"
