@@ -346,6 +346,9 @@ python scripts/tools.py clean-emdat-xlsx scripts/public_emdat_*.xlsx
 
 # (paid API accounts only) pull EM-DAT floods via the GraphQL API
 python scripts/tools.py download-emdat --from-year 2024 --to-year 2024
+
+# Admin-1 satellite validation (FAO/VIIRS + UNOSAT via HDX)
+python scripts/satellite_validation.py --risk-dir results/admin1_risk
 ```
 
 ## Live dashboard & validation
@@ -384,11 +387,66 @@ Observations:
 - KEN / TZA / UGA / BDI show ~0 alerts despite open IFRC appeals, but those
   appeals are residual from the 2024 long-rains (peak Mar–May), so quiet
   November alerts are expected behaviour, not misses.
-- Three open limits: (1) country resolution only — no free admin-1 daily flood
-  mask (Copernicus GFM / UNOSAT via HDX) was ingested for this window; (2) every
-  Red cell shares an identical `p_red = 0.39`, i.e. the BN posterior saturates
-  and severity gradation is lost (decision is driven by the cost-loss trigger,
-  not posterior magnitude); (3) most residual misses are riverine or non-local floods that a local-rainfall trigger plus ECMWF ensemble skill cannot capture, as analysed in [`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 to ISSUE-24).
+- Two residual limitations remain at country resolution: every Red cell carries
+  an identical `p_red = 0.39`, so the Bayesian-network posterior saturates and
+  severity gradation collapses (the decision is then driven by the cost-loss
+  trigger rather than by posterior magnitude); and the country label is itself
+  coarse. The second is resolved below by moving to admin-1 satellite truth.
+
+### Admin-1 satellite validation (November 2024)
+
+To validate at the resolution at which the system actually issues alerts, C3 was
+scored against two independent, satellite-derived flood products published on the
+Humanitarian Data Exchange — both public and unauthenticated — reproduced end to
+end by `python scripts/satellite_validation.py`:
+
+- **FAO EVE Global Flood Monitoring** (NOAA VIIRS): flooded area and exposed
+  population per administrative unit, in 15-day composites, across eight East
+  African countries. Because it reports *every* monitored unit rather than only
+  activated flood footprints, it supplies genuine dry-unit negatives and hence a
+  well-posed precision / recall / AUC panel.
+- **UNOSAT** Sentinel-1 water-extent exposure tables for South Sudan.
+
+Panel — FAO/VIIRS, 105 admin-1 units across 8 countries (flooded ≥ 50 km²):
+
+| Metric | Value |
+|--------|-------|
+| AUC (C3 peak `p_red` vs VIIRS flood label) | 0.715 |
+| Precision @ Orange+ | 0.96 (26 / 27) |
+| Recall @ Orange+ | 0.29 (26 / 91) |
+
+C3 is thus **high-precision, low-recall**: an alert almost invariably marks
+genuinely inundated ground, yet roughly two-thirds of flooded units go undetected.
+The miss profile is far from random. In Somalia the divergence is stark:
+
+| Region | Basin | VIIRS flood (km²) | Population exposed | C3 Orange+ days |
+|--------|-------|------------------:|-------------------:|----------------:|
+| Middle Shabelle | Shabelle (south) | 3 016 | 245 149 | 0 |
+| Lower Juba | Juba (south) | 1 812 | 126 773 | 0 |
+| Lower Shabelle | Shabelle (south) | 1 568 | 157 215 | 0 |
+| Middle Juba | Juba (south) | 1 064 | 51 603 | 0 |
+| Banadir (Mogadishu) | coastal (south) | 94 | 561 738 | 0 |
+| Sool | northern highlands | 69 | 427 | 28 |
+| Togdheer | northern highlands | 13 | 101 | 28 |
+
+C3 systematically overlooked the major riverine floods of the southern Shabelle
+and Juba basins — whose discharge is governed by upstream Ethiopian-highland
+rainfall rather than local precipitation — while sustaining Red alerts over the
+northern highlands, where only marginal inundation occurred. This is a textbook
+expression of the local-rainfall-trigger blind spot documented in
+[`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 to ISSUE-24): the pipeline resolves
+convective and flash flooding but not non-local, catchment-routed riverine floods.
+
+South Sudan corroborates the same conclusion from the opposite direction. UNOSAT
+Sentinel-1 confirms flood exposure across all ten states; against this reference
+C3 attains **100 % Yellow-or-higher recall** — it never declares a flooded state
+clear — and **50 % Orange+ recall**, with its strongest alerts correctly
+concentrated over the Sudd and White-Nile corridor (Unity and Warrap 9/10 days;
+Jonglei, Upper Nile and the Bahr-el-Ghazals 7–8/10).
+
+The operational takeaway is unambiguous: precision is already production-grade,
+and the path to higher recall runs through an explicit riverine / upstream-routing
+predictor rather than through further tuning of the local-rainfall trigger.
 
 ## Contributing
 

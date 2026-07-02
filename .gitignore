@@ -39,3 +39,6 @@ graphify-out/
 
 # Local Claude Code project instructions (not for the repo)
 CLAUDE.md
+
+# EM-DAT portal xlsx exports (source only, derived CSV is tracked)
+scripts/public_emdat_*.xlsx
