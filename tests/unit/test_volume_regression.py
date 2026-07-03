@@ -102,7 +102,7 @@ class TestCoalescingVolumeOverhead:
         coalesced_bytes = sum(cr.length for cr in coalesced)
 
         overhead_ratio = coalesced_bytes / original_bytes
-        # Overhead should be minimal — less than 5% extra bytes
+        # Overhead should be minimal - less than 5% extra bytes
         assert overhead_ratio < 1.05, (
             f"Coalescing overhead {overhead_ratio:.2%} exceeds 5%: "
             f"{coalesced_bytes} vs {original_bytes}"

@@ -50,7 +50,7 @@ mc mb gik/gik-icechain
 ### AWS S3 (cloud production)
 
 Create the bucket(s) in your region (the workflows use `eu-west-1`). For the public
-dashboard/COG assets, apply a public-read policy — see
+dashboard/COG assets, apply a public-read policy - see
 [`deploy/aws/public_store_bucket_policy.json`](../deploy/aws/public_store_bucket_policy.json)
 and add a CORS rule allowing `GET` from the Pages origin (needed for `dashboard-data/`,
 see §6).
@@ -84,7 +84,7 @@ for MinIO.
 
 ## 4. GitHub Variables & Environment
 
-**Variables** (Settings → Secrets and variables → Actions → *Variables*) — consumed by
+**Variables** (Settings → Secrets and variables → Actions → *Variables*) - consumed by
 `deploy-web.yaml` at build time:
 
 | Variable | Value | Effect |
@@ -119,12 +119,12 @@ Or per component: `gik-icechain convert` (C1), `gik-icechain exceedance` (C2),
 `gik-icechain risk` (C3). The CLI flags are documented in
 [`daily_update_setup.md`](daily_update_setup.md).
 
-**Automated (cron `0 8 * * *`)** — `daily_update.yaml` chains:
+**Automated (cron `0 8 * * *`)** - `daily_update.yaml` chains:
 `ingest-daily-gik` (C1) → `update-exceedance` (C2) → `update-risk` (C3, syncs
 `admin1_risk/` to `s3://$GIK_BUCKET/`) → `update-dashboard` → `notify-failure`.
 The date is "yesterday"; ECMWF S3 retention is ~15 months.
 
-**Manual full-pipeline test** — run the `E2E Pipeline Run` workflow
+**Manual full-pipeline test** - run the `E2E Pipeline Run` workflow
 (`workflow_dispatch`, `start_date`/`end_date`). It uses the **isolated**
 `configs/ci_e2e.yaml` (writes to `e2e-test-store`, never the production store),
 then validates EM-DAT, then renders a dashboard preview into the artifact.
@@ -158,7 +158,7 @@ aws s3 sync dashboard/web/public/data/ s3://$GIK_BUCKET/dashboard-data/
 export to `out/`, with `NEXT_PUBLIC_BASE_PATH=/gik-icechain` + `NEXT_PUBLIC_DATA_BASE`)
 → `.nojekyll` → `upload-pages-artifact` → `deploy-pages`.
 
-**Live URL:** `https://<owner>.github.io/<repo>/` — e.g.
+**Live URL:** `https://<owner>.github.io/<repo>/` - e.g.
 **https://hashirama21.github.io/gik-icechain/**.
 
 ---
@@ -179,7 +179,7 @@ event-level early-detection recall. See [`ISSUES.md`](ISSUES.md) for the interpr
 
 ```bash
 pip install -e ".[dev]"
-pre-commit install            # REQUIRED once per clone — enables the ruff + mypy hooks
+pre-commit install            # REQUIRED once per clone - enables the ruff + mypy hooks
 ```
 
 Credentials for a local MinIO run: the code reads the standard `AWS_*` env vars and does
@@ -201,7 +201,7 @@ The single end-to-end notebook is `notebooks/gik_icechain_walkthrough.ipynb`.
 ## 9. Deployment checklist
 
 - [ ] S3/MinIO buckets created (§2)
-- [ ] 8–10 repo Secrets set (§3)
+- [ ] 8-10 repo Secrets set (§3)
 - [ ] 3 repo Variables set (§4)
 - [ ] `production` environment created (§4)
 - [ ] Reference data + thresholds downloaded / available to the runners (§5)

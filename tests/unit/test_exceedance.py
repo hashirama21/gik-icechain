@@ -114,7 +114,7 @@ class TestComputeTailRatio:
 
     def test_median_below_worst(self):
         # 1 of 20 members at 100 mm, rest at 5 mm → median world stays low,
-        # worst (p95) world spikes — the storyline gap the BN exploits.
+        # worst (p95) world spikes - the storyline gap the BN exploits.
         members = np.full(20, 5.0, dtype=np.float32)
         members[-1] = 100.0
         acc = self._acc_single_cell(members)
@@ -240,7 +240,7 @@ class TestComputeExceedanceProbabilities:
     def test_high_threshold_gives_low_prob(self):
         ds = _make_forecast(nmembers=10, seed=1)
         acc = compute_rolling_accumulations(ds, windows_h=[24])
-        # Very high threshold — almost nothing exceeds it
+        # Very high threshold - almost nothing exceeds it
         thr = xr.Dataset({"rp_5y": xr.DataArray(
             np.full((5, 5), 9999.0, dtype=np.float32),
             dims=["latitude", "longitude"],

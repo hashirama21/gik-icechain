@@ -154,7 +154,7 @@ class TestFetchCoalescedRanges:
         import obstore
         import obstore.store
 
-        # Two chunks in file_a, one in file_b — distinct files.
+        # Two chunks in file_a, one in file_b - distinct files.
         ranges = [
             _br("s3://bucket/file_a", 0, 4, member=0, step=0),
             _br("s3://bucket/file_a", 4, 4, member=1, step=0),

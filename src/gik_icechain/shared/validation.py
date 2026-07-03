@@ -36,7 +36,7 @@ def validate_ensemble_dims(ds: xr.Dataset, required_dims: list[str]) -> None:
 def validate_exceedance_array(da: xr.DataArray) -> None:
     """Raise ValueError if *da* contains values outside [0, 1].
 
-    Ignores NaN values (they are allowed — masked ocean / no-data cells).
+    Ignores NaN values (they are allowed - masked ocean / no-data cells).
     """
     import numpy as np
 

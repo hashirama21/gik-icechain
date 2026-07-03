@@ -34,10 +34,10 @@ ACCUMULATION_WINDOWS_H = [3, 6, 12, 24, 48, 72, 168]
 class Season(StrEnum):
     """East Africa rainfall seasons."""
 
-    MAM = "MAM"  # March–April–May (long rains)
-    OND = "OND"  # October–November–December (short rains)
-    JJAS = "JJAS"  # June–July–August–September
-    DJF = "DJF"  # December–January–February
+    MAM = "MAM"  # March-April-May (long rains)
+    OND = "OND"  # October-November-December (short rains)
+    JJAS = "JJAS"  # June-July-August-September
+    DJF = "DJF"  # December-January-February
 
 
 class ENSOPhase(StrEnum):
@@ -74,7 +74,7 @@ _SEASON_MONTHS: dict[Season, list[int]] = {
 
 
 def get_season(month: int) -> Season:
-    """Map a calendar month (1–12) to an East Africa rainfall season."""
+    """Map a calendar month (1-12) to an East Africa rainfall season."""
     for season, months in _SEASON_MONTHS.items():
         if month in months:
             return season
@@ -159,7 +159,7 @@ class AdaptiveGEVThresholds:
 
         enso_iod_daily = enso_iod_index.set_index("date")
 
-        # Collect lazy DataArrays — no Dask compute triggered yet
+        # Collect lazy DataArrays - no Dask compute triggered yet
         pending: list[tuple[str, int, xr.DataArray]] = []
         for season, enso_phase, iod_phase in itertools.product(Season, ENSOPhase, IODPhase):
             mode = ClimateMode(season, enso_phase, iod_phase)
@@ -187,7 +187,7 @@ class AdaptiveGEVThresholds:
             return instance
 
         log.info("computing_gev_thresholds", n_tasks=len(pending))
-        # Single Dask scheduler call — all grid-cell GEV fits run in parallel
+        # Single Dask scheduler call - all grid-cell GEV fits run in parallel
         computed: tuple[xr.DataArray, ...] = dask.compute(*[da for _, _, da in pending])
 
         for (mode_key, window_h, _), all_thresholds in zip(pending, computed, strict=True):
@@ -489,7 +489,7 @@ class AdaptiveGEVThresholds:
             except Exception:
                 log.debug("gev_mle_fit_failed_trying_gumbel", exc_info=True)
 
-            # Fallback: Gumbel (ξ = 0) — more robust on short records
+            # Fallback: Gumbel (ξ = 0) - more robust on short records
             try:
                 c, loc, scale = genextreme.fit(valid, f0=0)
                 return genextreme.ppf(exceedance_probs, c, loc=loc, scale=scale)

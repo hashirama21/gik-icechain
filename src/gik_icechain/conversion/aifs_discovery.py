@@ -27,9 +27,6 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
-# -----------------
-# Constants
-# -----------------
 
 _ECMWF_BUCKET = "ecmwf-forecasts"
 _ECMWF_S3_PREFIX = f"s3://{_ECMWF_BUCKET}/"
@@ -50,7 +47,7 @@ def discover_aifs_files(
 ) -> list[str]:
     """Build deterministic S3 URIs for AIFS ENS GRIB2 files.
 
-    No S3 listing is performed — paths follow ECMWF's deterministic naming
+    No S3 listing is performed - paths follow ECMWF's deterministic naming
     convention.
 
     Args:
@@ -281,10 +278,6 @@ def aifs_to_virtual_dataset(
     )
     return vds
 
-
-# -----------------
-# Internal helpers
-# -----------------
 
 
 class _PassthroughParser:

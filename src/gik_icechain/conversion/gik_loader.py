@@ -35,8 +35,8 @@ class GIKManifestEntry(BaseModel):
 
     date: date
     run_hour: int
-    step: int  # forecast step in hours (0–360)
-    member: int  # 0 = control, 1–50 = perturbed members
+    step: int  # forecast step in hours (0-360)
+    member: int  # 0 = control, 1-50 = perturbed members
     variable: str
     level: int | None
     s3_uri: str
@@ -54,7 +54,7 @@ class GIKManifestEntry(BaseModel):
     @classmethod
     def validate_member(cls, v: int) -> int:
         if not (0 <= v <= 50):
-            raise ValueError(f"member must be 0–50, got {v}")
+            raise ValueError(f"member must be 0-50, got {v}")
         return v
 
 
@@ -155,7 +155,7 @@ class GIKCatalog:
     ) -> list[str]:
         """Return HuggingFace hf:// paths to Parquet files for a date/hour range.
 
-        The catalog indexes one file per (date, run_hour, member) — no per-variable
+        The catalog indexes one file per (date, run_hour, member) - no per-variable
         filtering is possible here.  Variable filtering is applied downstream when
         each Parquet file is loaded by VirtualiZarr.
 

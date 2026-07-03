@@ -2,7 +2,7 @@
 
 Each daily GIK batch is committed as an atomic IceChunk snapshot and tagged
 with the forecast date. Users can check out any past snapshot for reproducible
-"as-of date X" retrospective queries — directly applicable to anticipatory
+"as-of date X" retrospective queries - directly applicable to anticipatory
 action protocols.
 
 The store holds only Zarr chunk manifests (byte-range references); the
@@ -187,7 +187,7 @@ class IceChainStore:
         )
         # Tags are a best-effort human label for the *first* ingest of a date.
         # IceChunk tags are immutable and names cannot be reused even after
-        # deletion, so a re-ingest cannot move its tag — which is why time-travel
+        # deletion, so a re-ingest cannot move its tag - which is why time-travel
         # resolution relies on branch ancestry + commit metadata, not tags
         # (see _snapshots_by_date). A failing create_tag here is therefore benign.
         try:
@@ -210,7 +210,7 @@ class IceChainStore:
         for a given ``forecast_date`` is its most recent (re-)ingest. This is the
         source of truth for time-travel and listing: IceChunk tags are immutable
         and non-reusable, so a re-ingested date keeps a stale tag but advances the
-        branch — only ancestry reflects the fresh snapshot.
+        branch - only ancestry reflects the fresh snapshot.
 
         Returns:
             Ordered ``{forecast_date_iso: SnapshotInfo}`` (insertion = newest-first).

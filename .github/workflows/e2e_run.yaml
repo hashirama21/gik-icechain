@@ -2,7 +2,7 @@ name: E2E Pipeline Run (MinIO store)
 
 # Runs the full C1 -> C2 -> C3 pipeline on a GitHub-hosted runner against the
 # dev MinIO store. The runner reaches MinIO over its public Azure IP and reads
-# the public ECMWF IFS ENS archive on s3://ecmwf-forecasts anonymously —
+# the public ECMWF IFS ENS archive on s3://ecmwf-forecasts anonymously -
 # cloud-to-cloud bandwidth makes the 1.2 GB/day byte-range fetch fast and
 # reliable, unlike a high-latency local WAN link.
 #
@@ -85,7 +85,7 @@ jobs:
             --event-level --lead-days 1 \
           || echo "validate-emdat produced no metrics (no EM-DAT match in range?)"
 
-      - name: Generate dashboard contract (artifact preview only — NOT committed)
+      - name: Generate dashboard contract (artifact preview only - NOT committed)
         if: always()
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}

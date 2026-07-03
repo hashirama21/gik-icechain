@@ -1,4 +1,4 @@
-GIK-IceChain — Response to VirtualiZarr #884 / icpac-igad Discussion #1
+GIK-IceChain - Response to VirtualiZarr #884 / icpac-igad Discussion #1
 ==========================================================================
 Date: 2026-06-05
 Authors: hashirama21, (SYNTHI-AI / E4DRR)
@@ -46,7 +46,7 @@ gik-icechain avoids the OOM entirely through a different architecture:
       The Kerchunk references for ECMWF IFS ENS are already materialized
       as a flat-parquet catalog on HuggingFace. Each row encodes one
       (date, run_hour, member, step, variable) chunk ref as a byte array.
-      This catalog was built incrementally as forecasts arrived — it is
+      This catalog was built incrementally as forecasts arrived - it is
       never rebuilt from scratch.
 
   [2] PER-DAY STREAMING VIRTUALIZATION (src/gik_icechain/conversion/)
@@ -126,7 +126,7 @@ HOW GIK-ICECHAIN SOLVES IT
 ---------------------------
 icechunk_writer._build_repo_config() now configures manifest splitting along
 the `step` dimension (the forecast-horizon axis, which is the time-like axis
-of each per-day array). Implemented with the *actual* IceChunk 2.0.5 API —
+of each per-day array). Implemented with the *actual* IceChunk 2.0.5 API -
 the API in the original recommendation (split_after_n_chunks) does not exist.
 
   REAL API (verified against icechunk 2.0.5):
@@ -155,7 +155,7 @@ CONFIGURATION (configs/default.yaml -> component1.icechunk):
     manifest_split_dim: "step"     # dimension to split along
     manifest_split_size: 1000      # max index positions per manifest fragment
 
-DESIGN NOTE — why split on `step`, not `time`:
+DESIGN NOTE - why split on `step`, not `time`:
 gik-icechain does not have a single global time axis (see PROBLEM 2): each
 forecast day is its own date-keyed Zarr group with arrays shaped
 (member=51, step=85, lat=721, lon=1440). Within an array, only `member` and
@@ -163,7 +163,7 @@ forecast day is its own date-keyed Zarr group with arrays shaped
 the natural time-like axis, so manifests are split along it. This bounds each
 manifest fragment regardless of how many day-groups the store accumulates.
 
-IMPACT: Low for current scale (< 50 committed days), high at 1200+ days —
+IMPACT: Low for current scale (< 50 committed days), high at 1200+ days -
 now mitigated. Validated: repo config builds correctly with the splitting
 config attached; 38 byte-range/manifest/virtualizer unit tests pass.
 
@@ -202,7 +202,7 @@ IceChunk to write to local MinIO. The manifest-aware C2 path inherited this
 env var, redirecting all ECMWF S3 byte-range reads to MinIO (403 Forbidden).
 
 Fix evolution (three iterations until robust):
-  1. d051604: fsspec with explicit endpoint_url — broke on path-style vs
+  1. d051604: fsspec with explicit endpoint_url - broke on path-style vs
      virtual-hosted bucket addressing.
   2. b2b00ab: switched from fsspec/boto3 (anon=True blocked by ECMWF) to
      obstore S3Store with skip_signature=True (same mechanism as IceChunk).
@@ -234,7 +234,7 @@ ISSUE D: CLUSTER DISPATCH IN C3 (FIXED: commit d8e2c19)
 CRMAModel was instantiated with a single climate cluster (EQUATORIAL_EAST)
 applied to all 155 admin-1 units. Units in Somalia (horn_arid), Ethiopia
 (great_rift), South Sudan (nile_basin) received CPT weights calibrated for
-equatorial Kenya/Tanzania — scientifically incorrect for ~80% of units.
+equatorial Kenya/Tanzania - scientifically incorrect for ~80% of units.
 
 Fix: _build_pcode_cluster_map() maps each admin-1 pcode to its correct
 EastAfricaCluster via ISO3 country code (from shapeGroup column).
@@ -243,7 +243,7 @@ One CRMAModel per cluster is built and dispatched per unit in _process_day().
 ISSUE E: NON-UNIFORM STEP HOURS IN MANIFEST-AWARE LOADER (FIXED: commit 6a5bfae)
 -------------------------------------------------------------------------------
 GIK IFS ENS forecast steps are NON-UNIFORM: 3-hourly out to 144 h (step
-indices 0-48), then 6-hourly to 360 h (indices 48-84) — 85 steps total.
+indices 0-48), then 6-hourly to 360 h (indices 48-84) - 85 steps total.
 
 The manifest-aware loader built a UNIFORM step coordinate
 (np.arange(max_steps) * step_resolution_h, with step_resolution_h=6). This
@@ -251,7 +251,7 @@ caused two defects:
   1. The 3 h accumulation window was unusable (6 h spacing) and was being
      skipped entirely, dropping it from the exceedance store (window dim
      7 -> 6, which then collided with the existing 7-window store on append).
-  2. CORRECTNESS BUG: every step in the 3-hourly region was mislabelled —
+  2. CORRECTNESS BUG: every step in the 3-hourly region was mislabelled -
      index 8 became "48 h" instead of the true "24 h", so all exceedance
      values in the first 144 h were assigned to the wrong forecast hours.
 
@@ -274,10 +274,10 @@ the detected step spacing is skipped with a warning or raises. 175 unit
 tests pass.
 
 
-ISSUE F: C2 EXCEEDANCE ALWAYS ZERO — tp UNIT MISMATCH (FIXED 2026-06-09)
+ISSUE F: C2 EXCEEDANCE ALWAYS ZERO - tp UNIT MISMATCH (FIXED 2026-06-09)
 ------------------------------------------------------------------------
 Every exceedance run produced exceedance_prob = 0.0 across the ENTIRE grid
-(all 7 windows x 6 return periods), regardless of forecast date — so C3 risk
+(all 7 windows x 6 return periods), regardless of forecast date - so C3 risk
 fell back to the BN prior for all admin-1 units (196 identical scores) and
 never produced a non-Green signal. This was the root cause of "no Orange/Red"
 (ISSUE-1 in docs/ISSUES.md).
@@ -330,14 +330,14 @@ VALIDATED: 2024-04-24 with max aggregation -> per-unit exceedance_24h_5y now
 reaches 1.0 (e.g. MDG_Amoron'i Mania, MDG_Melaky) and risk probabilities lift
 to p_yellow 0.31 / p_orange 0.125 / p_red 0.057 (vs 0.091/0.029/0.010 before).
 
-DESIGN NOTE — why labels can still read Green on a severe day: the CRMA
+DESIGN NOTE - why labels can still read Green on a severe day: the CRMA
 Compound_Risk CPT is intentionally compound-conservative. A single-day
 FORECAST spike alone (Forecast_Hazard=High, but Spatial_Coverage=Local,
 API=Dry, no observed rain, no multi-day persistence) scores into the "mid"
 bucket -> Green remains the MAP (argmax) class while p_yellow/p_orange rise.
 Escalation to Yellow/Orange/Red requires corroborating evidence: spatial
 coverage >= regional (>=25% of the unit), antecedent wetness (API), observed
-rainfall (GPM IMERG — currently absent, see ISSUES.md ISSUE-11), or multi-day
+rainfall (GPM IMERG - currently absent, see ISSUES.md ISSUE-11), or multi-day
 persistence (API + consecutive-signal build-up over a date RANGE, not a single
 day). The argmax/MAP label is retained (standard for a discrete BN); the full
 probability vector is preserved per unit for probability-based dashboards.
@@ -360,7 +360,7 @@ HARD FRONTIER: the CMORPH return-period source (cmorph_ea_return_periods.nc)
 stops at -14.48 S and interp does not extrapolate. So units south of -14.5
 (southern MWI/ZMB, most of MDG, all of Mozambique/Zimbabwe) are No_Data by
 construction. Full SADC needs a southern return-period climatology
-(e.g. GEV fit on ~30 yr CHIRPS) — not yet built.
+(e.g. GEV fit on ~30 yr CHIRPS) - not yet built.
 
 LATENT BUG FOUND + FIXED (aggregator._build_multi_region_mask): when any
 admin polygon contains no grid-cell centre (tiny islands COM/SYC at 0.25
@@ -374,7 +374,7 @@ Identity-safe when no region is dropped (the prior 196-unit path). Validated
 3/22; ruff clean, 33 unit tests pass.
 
 
-ISSUE I: ICECHUNK TAG IMMUTABILITY — RE-INGEST RETURNS STALE SNAPSHOT (FIXED 2026-06-12)
+ISSUE I: ICECHUNK TAG IMMUTABILITY - RE-INGEST RETURNS STALE SNAPSHOT (FIXED 2026-06-12)
 ----------------------------------------------------------------------------------------
 Re-running C1 for a date that was already ingested created a fresh IceChunk
 commit (branch HEAD advanced, new data written) but the time-travel and listing
@@ -387,7 +387,7 @@ correctly showed the same-day commit. Time-travel checkout_as_of(2025-11-19)
 would therefore have served stale data.
 
 ROOT CAUSE: the per-day tag scheme ("{date}T{run_hour:02d}Z"). IceChunk tags are
-IMMUTABLE and — verified on 2.0.5 — a tag NAME CANNOT BE REUSED even after
+IMMUTABLE and - verified on 2.0.5 - a tag NAME CANNOT BE REUSED even after
 delete_tag:
     create_tag(...) -> "icechunk does not allow tag reuse and tag was already
                         deleted `2025-11-19T00Z`"
@@ -405,7 +405,7 @@ metadata["forecast_date"] -> the most recent re-ingest wins.
     tag helper (_tag_before_or_on) was removed. commit_day still creates a tag
     best-effort (human label, non-authoritative; failure logged at debug).
   - exceedance/icechunk_output.py (DecisionStore): same fix to checkout_as_of /
-    list_dates (dormant store — outputs.exceedance_icechunk_uri empty — fixed for
+    list_dates (dormant store - outputs.exceedance_icechunk_uri empty - fixed for
     consistency).
 
 VALIDATED: regression tests test_commit_day_reingest_resolves_fresh (C1) and
@@ -425,19 +425,19 @@ SUMMARY TABLE
 
 Problem                              | Status in gik-icechain
 -------------------------------------|----------------------------------------
-OOM writing virtual refs (236K files)| SOLVED — per-day commits, HF catalog
-append_dim O(n) blow-up              | SOLVED — date-keyed groups, no time dim
-Manifest splitting                   | IMPLEMENTED (commit fa42f60) — split on step/1000
-ECMWF S3 data retention (<15 months) | ARCHITECTURAL CONSTRAINT — needs MARS
+OOM writing virtual refs (236K files)| SOLVED - per-day commits, HF catalog
+append_dim O(n) blow-up              | SOLVED - date-keyed groups, no time dim
+Manifest splitting                   | IMPLEMENTED (commit fa42f60) - split on step/1000
+ECMWF S3 data retention (<15 months) | ARCHITECTURAL CONSTRAINT - needs MARS
 AWS_ENDPOINT_URL collision           | FIXED (commits d051604/b2b00ab/fa42f60)
 IceChunk 2.x API migration           | FIXED (commit f19d56f, 2026-06-05)
 CRMA single-cluster dispatch bug     | FIXED (commit d8e2c19, 2026-06-04)
-Non-uniform step hours (3h/6h mix)   | FIXED (commit 6a5bfae) — real hours + hour-based accum
-C2 exceedance always 0 (tp m vs mm)  | FIXED (2026-06-09) — component2.precip_scale_to_mm=1000
-C3 hazard diluted by mean aggregation| FIXED (2026-06-09) — component3.aggregation.method=max, wired
+Non-uniform step hours (3h/6h mix)   | FIXED (commit 6a5bfae) - real hours + hour-based accum
+C2 exceedance always 0 (tp m vs mm)  | FIXED (2026-06-09) - component2.precip_scale_to_mm=1000
+C3 hazard diluted by mean aggregation| FIXED (2026-06-09) - component3.aggregation.method=max, wired
 EA coverage 196->238 (+COM/SYC/MWI/ZMB)| EXTENDED to -14.5 frontier; full SADC needs CHIRPS GEV
-regionmask cell mis-assignment       | FIXED (2026-06-09) — index by mask_3d region coord
-IceChunk tag immutability (re-ingest stale)| FIXED (2026-06-12) — resolve snapshot via branch ancestry, not tags
+regionmask cell mis-assignment       | FIXED (2026-06-09) - index by mask_3d region coord
+IceChunk tag immutability (re-ingest stale)| FIXED (2026-06-12) - resolve snapshot via branch ancestry, not tags
 
 
 ===========================================================================
@@ -448,7 +448,7 @@ The "small starting step" proposed by nishadhka (1 variable + 1 month +
 1 member, batched commits + manifest splitting) is validated by gik-icechain
 at larger scale. The key insight to share with the icpac-igad discussion:
 
-  The OOM is not intrinsic to IceChunk virtual stores — it only occurs when
+  The OOM is not intrinsic to IceChunk virtual stores - it only occurs when
   all references are written in a single transaction. Writing N chunks in
   B-chunk batches with frequent commits and date-keyed group structure keeps
   memory constant at O(B), not O(N).
@@ -458,7 +458,7 @@ at larger scale. The key insight to share with the icpac-igad discussion:
   you a time-indexed transaction log for free.
 
   Manifest splitting (now implemented in gik-icechain, commit fa42f60):
-  use the real IceChunk 2.0.5 API — ManifestSplittingConfig(split_sizes=[
+  use the real IceChunk 2.0.5 API - ManifestSplittingConfig(split_sizes=[
   (ManifestSplitCondition.AnyArray(), [(ManifestSplitDimCondition.
   DimensionName("<time-axis>"), N)])]). The split_after_n_chunks helper
   referenced in earlier discussion does not exist in 2.0.5; the real config

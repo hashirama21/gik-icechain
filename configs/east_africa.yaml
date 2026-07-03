@@ -1,5 +1,5 @@
 # configs/east_africa.yaml
-# East Africa domain — production override for the GIK-IceChain pipeline.
+# East Africa domain - production override for the GIK-IceChain pipeline.
 # Inherits all defaults from configs/default.yaml; only overrides are listed here.
 
 outputs:

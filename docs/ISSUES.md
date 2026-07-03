@@ -1,4 +1,4 @@
-# GIK-IceChain — Remaining Issues (Whole-Project Audit)
+# GIK-IceChain - Remaining Issues (Whole-Project Audit)
 
 > Updated: 2026-06-18 (now tracked in git)
 > Scope: full-project critique after the manifest-aware / non-uniform-step /
@@ -21,11 +21,11 @@ Classification as of 2026-06-18. Details per issue in the sections below.
 | 14 | Null signal (tp→mm) | non-zero exceedance, correct RP gradient |
 | 15 / 11 | API/GPM never fed to C3 | `api_mm` now varies (CHIRPS/GPM wired) |
 | 16 | EM-DAT validation impossible | EM-DAT data tracked + `validate-emdat` (+ event-level) |
-| 17 | AIFS S3 prefix bug | discovery fixed (10/10 URIs) — *kerchunk→VirtualiZarr migration pending* |
-| 24 | Dashboard received nothing | serve-from-S3 code/pipeline fixed — *manual infra pending* |
+| 17 | AIFS S3 prefix bug | discovery fixed (10/10 URIs) - *kerchunk→VirtualiZarr migration pending* |
+| 24 | Dashboard received nothing | serve-from-S3 code/pipeline fixed - *manual infra pending* |
 | 13 | Notebooks not in CI | single notebook, CI offline job (blocking) |
 | 7 | Dashboard data dir empty | `data_pipeline` contract/geojson mechanism in place |
-| 21 | Windows WinError 5 (run-all) | no longer blocking — run-all completed to MinIO ⚠️ *not re-verified as a code fix* |
+| 21 | Windows WinError 5 (run-all) | no longer blocking - run-all completed to MinIO ⚠️ *not re-verified as a code fix* |
 
 Plus the historical **FIXED THIS SESSION** table (CRMA dispatch, 155→196 units,
 IceChunk 2.x, manifest splitting, etc.).
@@ -39,14 +39,14 @@ IceChunk 2.x, manifest splitting, etc.).
 | 18 / 8 | Benchmark never measured | still hardcoded reference numbers |
 | 19 | Deployment deliverables | partial: dashboard deploy OK; public AWS Open Data store + gap_filler not done |
 | 20 | OND excludes December | `thresholds.py Season.OND=[10,11]` unchanged |
-| 22 | Recall ceiling (~37 %) | DIAGNOSED structural (riverine floods) — needs hydrological routing |
+| 22 | Recall ceiling (~37 %) | DIAGNOSED structural (riverine floods) - needs hydrological routing |
 | 23 | Trigger calibrated to rare rainfall | #1-light shipped but inert; #1-full (C2 recompute) deferred |
 | 9 | Gap-fill Cloud Run/Lithops | never run (needs GCP) |
 | 10 | CPT refinement | proof-of-mechanism only |
 | 12 | Coverage 46 % vs 80 % target | CI threshold lowered to 45 %, target unmet |
 
 **Tally:** 12 solved (3 with caveats: 21 unverified, 24/19 have residual manual/infra
-work) · 10 not solved — of which 2 are constraints/diagnoses not cheaply fixable
+work) · 10 not solved - of which 2 are constraints/diagnoses not cheaply fixable
 (6 architectural, 22 structural) and the rest is real debt (3, 18, 20, 23, 9, 10, 12).
 
 ---
@@ -58,7 +58,7 @@ above. Surfaced from the whole-`docs/` review (2026-06-18); source doc in bracke
 
 | # | Latent issue | Source | Risk |
 |---|--------------|--------|------|
-| L1 | **Southern frontier −14.5°**: everything south (S. Malawi/Zambia, **most of Madagascar — MDG only 3/22 in-domain**, Mozambique, Zimbabwe) is **No_Data by construction**; a southern return-period climatology (CHIRPS GEV) is **not built** | 884 ISSUE-H | README advertises broad coverage but part of it is empty |
+| L1 | **Southern frontier −14.5°**: everything south (S. Malawi/Zambia, **most of Madagascar - MDG only 3/22 in-domain**, Mozambique, Zimbabwe) is **No_Data by construction**; a southern return-period climatology (CHIRPS GEV) is **not built** | 884 ISSUE-H | README advertises broad coverage but part of it is empty |
 | L2 | **Manifest-splitting API pinned to IceChunk 2.0.5** (`ManifestSplittingConfig`; the older `split_after_n_chunks` does not exist) | 884 Problem 3 | may break on upgrade |
 | L3 | **Silent partial data past ECMWF retention**: dates >15 mo read best-effort, missing members → NaN (guarded by `min_members`) with no hard error | 884 l.193 | silent reduced-ensemble on old dates |
 | L4 | **ISSUE-21 (WinError 5) not re-verified as a code fix**: run-all completed to MinIO, but the local Windows temp-zarr path was not re-fixed | ISSUES.md | may resurface on local/Windows runs |
@@ -70,18 +70,18 @@ above. Surfaced from the whole-`docs/` review (2026-06-18); source doc in bracke
 | L10 | **`--mode append` accepted but a no-op** | daily_update_setup §7 | misleading flag |
 
 Highest-value to action: **L1** (southern coverage gap), **L2** (API drift), **L3**
-(silent partial data) — none are in the tracked list above.
+(silent partial data) - none are in the tracked list above.
 
 ---
 
-## AUDIT 2026-06-23 — Beat-mentor Phase B: parity node Rainfall_Trend (+ live IMERG feed)
+## AUDIT 2026-06-23 - Beat-mentor Phase B: parity node Rainfall_Trend (+ live IMERG feed)
 
-### B1 · Rainfall_Trend node — SHIPPED (neutral default, zero production impact yet)
+### B1 · Rainfall_Trend node - SHIPPED (neutral default, zero production impact yet)
 Adds the mentor's `rainfall_trend` parent the BN was missing: an 8th parent of
 `Compound_Risk` with states Decreasing / Stable / Increasing, derived from the
 7-day IMERG accumulation linear slope (mm/day), binned at ±`trend_threshold`
 (default ±2 mm/day, cf. mentor). The contribution to the additive compound
-score is **centred** — `(state-1)·weight_rainfall_trend` — so **Stable is
+score is **centred** - `(state-1)·weight_rainfall_trend` - so **Stable is
 exactly neutral and the legacy calibration is preserved bit-for-bit** (the
 Stable slice of the enlarged lookup table equals the old table; all prior
 inference tests pass unchanged). An intensifying antecedent trend escalates,
@@ -90,11 +90,11 @@ a weakening one dampens. Soft-binnable like the other continuous nodes
 DBN slice, and EM-DAT CPT refinement (`_EVIDENCE_COLS`). Lookup table grows
 1296 → 3888 combos.
 
-### B2 · Rainfall_Trend production feed — SHIPPED (node now live)
+### B2 · Rainfall_Trend production feed - SHIPPED (node now live)
 `DynamicBNState` carries a rolling 7-day GPM buffer (`gpm_history`); `step`
 appends each day's observation, computes the least-squares `_trend_slope`
 (mm/day per day), and injects it into the evidence as `rainfall_trend_slope`
-before inference — so the node is now **live in `risk_engine`** (both the
+before inference - so the node is now **live in `risk_engine`** (both the
 forecast days and the API-only lead-in fill the buffer). Checkpoint bumped to
 v3 (`gpm_history` persisted; pre-v3 checkpoints load with an empty buffer).
 The discretised trend state is exposed per unit as `rainfall_trend_state` in the
@@ -107,17 +107,17 @@ backward-compat, plus the BN-level discretization / monotonic-severity /
 label-flip / soft σ→0==hard tests). ruff+mypy clean. Still TODO: an A/B on an
 in-retention signal-bearing window to quantify the recall lift.
 
-### B3 · Per-member storylines (quantile ladder) — SHIPPED
+### B3 · Per-member storylines (quantile ladder) - SHIPPED
 The mentor runs the BN on all 51 members and reports worst/median/best. C2 does
 **not** persist members (51× storage), and in our DAG the only per-member axis is
-the forecast (observations are deterministic) — so the storyline reduces to
+the forecast (observations are deterministic) - so the storyline reduces to
 varying `Forecast_Hazard` across **member-quantile worlds**. C2 now emits, beside
 `tail_ratio` (p95 = worst world), a `median_ratio` (**p50 = median world**) via
 the generalized `exceedance.compute_member_ratio(quantile)`. The risk engine:
 - keeps `risk_state` = the **worst world** (live tail-aware risk, unchanged);
 - re-runs the BN on the **median world** (p50 member drives the forecast hazard,
   observations held fixed) → `storyline_median_state`;
-- reports `storyline_spread = max(0, worst − median)` — how much worse the tail
+- reports `storyline_spread = max(0, worst − median)` - how much worse the tail
   is than the central plausible case (an anticipatory-action prioritisation cue).
 
 Plumbed through the zarr store, the IceChunk decision store, and the score
@@ -132,14 +132,14 @@ persist/append of `median_ratio`/`tail_ratio`, and a C3 integration test
 
 ---
 
-## AUDIT 2026-06-23 — Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)
+## AUDIT 2026-06-23 - Beat-mentor Phase A: tail-risk (A1) + soft-evidence (A2) + cost-loss (A3)
 
 Closing the two methodological gaps vs the mentor's `bn-ibf` (jua-bnet): the
 ensemble was collapsed to a *mean* exceedance fraction (blind to a wet tail) and
 evidence was hard-discretized at bin edges. Engine stays pgmpy + lookup
 marginalization (no RxInfer/Julia).
 
-### A1 · Tail-risk (possible-worlds) — SHIPPED (config-gated, default ON)
+### A1 · Tail-risk (possible-worlds) - SHIPPED (config-gated, default ON)
 `exceedance.compute_tail_ratio` = pXX (default p95) member accumulation / GEV
 return level, persisted as the `tail_ratio` variable in the C2 zarr
 (backward-compatible: absent → tail neutral). `Forecast_Hazard` is now
@@ -147,10 +147,10 @@ return level, persisted as the `tail_ratio` variable in the C2 zarr
 ratios 0.80/1.00/1.30). Escalates hazard 0→High→Extreme even when the mean
 fraction is ~0 (the Nairobi-Mar-2026 wet-tail case the mentor catches).
 **Honest limit:** recovers events with an ensemble wet tail, NOT pure ECMWF
-misses (Apr-2024 Nairobi forecast ~2.5 mm, whole ensemble dry) — those stay
+misses (Apr-2024 Nairobi forecast ~2.5 mm, whole ensemble dry) - those stay
 structural (ISSUE-22).
 
-### A2 · Soft-evidence (Gaussian soft-binning / virtual evidence) — SHIPPED, default OFF
+### A2 · Soft-evidence (Gaussian soft-binning / virtual evidence) - SHIPPED, default OFF
 `SoftEvidenceConfig` (per-node σ) + `_gaussian_soft_bin`/`_dist_of_max`;
 `CRMAModel._infer_soft` marginalizes the lookup table under per-parent soft
 vectors. σ→0 == hard exactly (validated, max |Δ|≈0 over random cases).
@@ -173,7 +173,7 @@ signal-bearing date + a σ-sensitivity sweep.
 
 **Status:** 210 unit tests pass (8 new), ruff+mypy clean. Combined A1+A2 decisive
 test (tail+soft on a wet-tail flood) still needs a fresh C2 on an in-retention
-date — tail_ratio needs per-member data the expired Apr-2024 S3 objects can't
+date - tail_ratio needs per-member data the expired Apr-2024 S3 objects can't
 supply (the MinIO exceedance store has Apr-2024 `exceedance_prob` but no
 `tail_ratio`).
 
@@ -182,7 +182,7 @@ supply (the MinIO exceedance store has Apr-2024 `exceedance_prob` but no
 A/B finding above); restored the ✅/❌/⚠️ status glyphs corrupted in the table
 at the top of this file.
 
-### A3 · Cost-loss decision trigger — SHIPPED, default OFF
+### A3 · Cost-loss decision trigger - SHIPPED, default OFF
 `CostLossConfig` is now wired (previously an orphan class): attached to
 `CRMAModelConfig.cost_loss` and consumed by `CRMAModel._decide_risk_state`,
 which all three inference paths (`infer`, `_infer_soft`, `infer_sequence`) now
@@ -196,14 +196,14 @@ false-alarm cost (Murphy 1977; Coughlan de Perez et al. 2015). Flows to
 production output automatically (risk_engine / geojson_writer read the decided
 `risk_state`/`risk_label`). **Default OFF** (argmax preserved) until τ are
 *calibrated* on the C1 multi-year corpus by maximising Relative Economic Value
-against EM-DAT — the planned next step, the asymmetric advantage no
+against EM-DAT - the planned next step, the asymmetric advantage no
 fixed-γ stack has. 6 new unit tests; ruff+mypy clean.
 
 ---
 
-## AUDIT 2026-06-18 — Dashboard publish path was broken; now served from S3
+## AUDIT 2026-06-18 - Dashboard publish path was broken; now served from S3
 
-### ISSUE-24 · Dashboard never received pipeline results — FIXED (serve-from-S3)
+### ISSUE-24 · Dashboard never received pipeline results - FIXED (serve-from-S3)
 
 The deployed dashboard showed nothing because the publish path was broken at
 three points:
@@ -240,11 +240,11 @@ three points:
 locally into `dashboard/web/public/data` (gitignored, local-dev preview only).
 For the deployed site, `aws s3 sync dashboard/web/public/data/
 s3://$GIK_BUCKET/dashboard-data/` with the production AWS creds (not the dev
-MinIO creds in `.env`) — run by the maintainer or a one-off workflow.
+MinIO creds in `.env`) - run by the maintainer or a one-off workflow.
 
 ---
 
-## AUDIT 2026-06-17 — Recall ceiling root-cause (BN escalation levers + EM-DAT validation)
+## AUDIT 2026-06-17 - Recall ceiling root-cause (BN escalation levers + EM-DAT validation)
 
 Investigation of *why* the CRMA risk output misses most EM-DAT floods. Started
 from the April 2024 compound-flood window (`run-all --start 2024-04-22 --end
@@ -254,7 +254,7 @@ limit (local-rainfall trigger + ECMWF skill), not a tunable bug.** No
 recall-improving code change was warranted; two candidate levers were
 pre-measured to ~zero effect and *not* implemented.
 
-### ISSUE-22 · Recall ceiling is structural (riverine floods + ECMWF miss) — DIAGNOSED, NOT A BUG
+### ISSUE-22 · Recall ceiling is structural (riverine floods + ECMWF miss) - DIAGNOSED, NOT A BUG
 
 **Quantified baseline (replayable).** April 2024, 7 days, 238 admin-1 units:
 `python scripts/tools.py validate-emdat --risk-dir results/admin1_risk
@@ -269,9 +269,9 @@ pre-measured to ~zero effect and *not* implemented.
 
 (NB two label sources coexist: the unit-day path uses `run_validation`'s
 EM-DAT-record date-ranges; the event-level path uses the pre-joined
-`emdat_flood_match` tag — the latter avoids the EM-DAT-pcode-namespace mismatch.
+`emdat_flood_match` tag - the latter avoids the EM-DAT-pcode-namespace mismatch.
 The standalone unit-day recall@Yellow under `emdat_flood_match` labelling was
-0.132 — a *tracking* recall, superseded below by the event-level metric.)
+0.132 - a *tracking* recall, superseded below by the event-level metric.)
 
 The unit-day recall is a *tracking* recall (penalises not alerting every
 day of a multi-week, multi-unit EM-DAT event). The operational metric is
@@ -295,8 +295,8 @@ unit into ONE event, detected if the model fires ≥threshold on any day in
 4. **Not the `flood_floor_mm`.** MAM GEV thresholds (`data/cmorph_thresholds`,
    ~1° grid, vars `rp_2y…rp_100y`): Nairobi/Kiambu/Murang'a 72h **rp5 = 172 mm,
    rp2 = 137 mm**; `flood_floor_mm` (72h = 50 mm) is NOT binding (GEV ≫ floor).
-5. **Observed rainfall is BELOW the trigger.** GPM 72h (24–26 Apr 2024, box-max)
-   during the floods: Nairobi 127 mm, Kiambu 152 mm — **below the 172 mm rp5
+5. **Observed rainfall is BELOW the trigger.** GPM 72h (24-26 Apr 2024, box-max)
+   during the floods: Nairobi 127 mm, Kiambu 152 mm - **below the 172 mm rp5
    bar** (cell values 47/89 mm below even rp2 137 mm). **Floods do not require a
    5-yr rainfall extreme.** Triggering on "exceedance of a rare-rainfall RP"
    structurally misses moderate-rain floods on saturated soil.
@@ -305,31 +305,31 @@ unit into ONE event, detected if the model fires ≥threshold on any day in
    API only rose 20→~50 mm (modest local rain) yet EM-DAT logged floods → these
    are **riverine floods fed by upstream-highland rain / routing**, which a
    local-cell rainfall-exceedance + local-API system is blind to. Confirmed by
-   pre-sizing lever #2: **0/25 missed events had api≥80 (saturated)** — there is
+   pre-sizing lever #2: **0/25 missed events had api≥80 (saturated)** - there is
    no antecedent signal to strengthen either.
 
 **Conclusion.** The recall ceiling (~16/40 @Yellow) reflects ~24/40 EM-DAT
 events being non-local/riverine or unforecast by ECMWF. **The real next
-capability is hydrological routing / river-network modelling — a separate, large
+capability is hydrological routing / river-network modelling - a separate, large
 effort, not a BN or threshold tweak.**
 
-### ISSUE-23 · Forecast-exceedance trigger is calibrated to rare rainfall, not flood production — DESIGN
+### ISSUE-23 · Forecast-exceedance trigger is calibrated to rare rainfall, not flood production - DESIGN
 
 Direct consequence of ISSUE-22.5. The exceedance signal asks "is the forecast
 rainfall a 5-yr extreme?" while floods are produced by moderate rainfall on
 saturated soil. Two fix directions (both deferred, both need C2):
 - **#1-full (C2):** recompute exceedance against a sub-rp2 / flood-relevant /
   soil-conditioned rainfall threshold. The only path that recovers Nairobi-type
-  cases (47–127 mm). ~1–2 h recompute + C2 dev.
+  cases (47-127 mm). ~1-2 h recompute + C2 dev.
 - **#1-light (C3, IMPLEMENTED, INERT):** `soil_conditioned_rp` (CRMAModelConfig,
   default True, `saturated_rp=2`) surfaces the lower-RP exceedance when
   `api_state≥2`. A/B on April 2024 = **0 change** (14 saturated units all have
-  rp2_state == rp5_state because exc=0 at BOTH rp2 and rp5; flood rain 47–127 mm
+  rp2_state == rp5_state because exc=0 at BOTH rp2 and rp5; flood rain 47-127 mm
   < rp2 bar 137 mm). Kept (config-gated, correct, activates when forecast rain
-  lands in 137–172 mm on saturated soil) but proven it cannot help April 2024 —
+  lands in 137-172 mm on saturated soil) but proven it cannot help April 2024 -
   empirical proof that #1-full (C2) is required.
 
-### ISSUE-16 · EM-DAT validation — RESOLVED 2026-06-17
+### ISSUE-16 · EM-DAT validation - RESOLVED 2026-06-17
 
 `data/emdat/east_africa_floods.csv` + `pcode_mapping.csv` are present and
 tracked; `scripts/tools.py validate-emdat` runs a chiffré validation
@@ -339,20 +339,20 @@ unit-day) and now also an **event-level early-detection mode** (`--event-level
 the pre-joined `emdat_flood_match` label (avoids the EM-DAT-pcode-namespace
 mismatch). First numbers above (ISSUE-22). The §7 evaluation framework is live.
 
-### Murang'a tp-integrity check — data confirmed sane (no tp regression)
+### Murang'a tp-integrity check - data confirmed sane (no tp regression)
 
 `SOM`/`KEN` anomaly: Murang'a observed 178 mm > 172 mm threshold yet pipeline
 exc=0. Ruled out (a) regrid/assignment bug (gridded exc uniformly 0 over 143
 central-Kenya cells) and (b) a tp-unit regression: raw IceChunk tp read for
 Murang'a (`IceChainStore('s3://gik-icechain/gik-icechain-store').checkout_as_of`,
 isel on the 0.25° grid since lat/lon carry no coord index; needs `.venv/Scripts`
-on PATH so eccodes can decode the GRIB virtual chunks) = **0.0014–0.011 m
-(1.4–11 mm), sane metres** — not 0.0-exact, not absurd-mm. Double-confirmed: the
+on PATH so eccodes can decode the GRIB virtual chunks) = **0.0014-0.011 m
+(1.4-11 mm), sane metres** - not 0.0-exact, not absurd-mm. Double-confirmed: the
 fact that `SOM_Sool`/`ETH_Somali` fire exc=0.71 PROVES the ×1000 m→mm conversion
 is active (raw metres could never clear a mm threshold). So exc=0 = genuine low
 forecast precip (~2.5 mm vs 178 mm observed; note the 26-Apr init forecasts
 forward while the observed total partly precedes it). Pipeline correct, data
-intact — all session conclusions hold.
+intact - all session conclusions hold.
 
 ### Levers shipped this session (escalation, on develop)
 
@@ -365,12 +365,12 @@ intact — all session conclusions hold.
 
 ---
 
-## AUDIT 2026-06-09 — Promise (Code-for-Earth proposal) vs Code
+## AUDIT 2026-06-09 - Promise (Code-for-Earth proposal) vs Code
 
 Confrontation point par point du document de soumission au dépôt réel. Voir
 la matrice de conformité dans ISSUE-14 → ISSUE-20.
 
-### ISSUE-14 · Signal nul — VALIDÉ/RÉSOLU 2026-06-10
+### ISSUE-14 · Signal nul - VALIDÉ/RÉSOLU 2026-06-10
 **Les sorties all-Green étaient STALE (pré-fix tp→mm).** Run E2E réel sur
 `2025-11-19` (OND humide), MinIO + ECMWF S3 live, 51 membres décodés
 (1530 chunks, 51× reduction) :
@@ -383,7 +383,7 @@ Exceedance non nulle, gradient RP correct (RP↑ → moins de cellules). tp×100
 appliqué (`cli.py:347`), mode `OND_neutral_neutral`. La chaîne C1→C2 marche sur
 données réelles. **Reste :** persistance C2 + C3 bloqués par ISSUE-21.
 
-### ISSUE-21 · Windows: écriture temp-zarr échoue (WinError 5) — bloque run-all
+### ISSUE-21 · Windows: écriture temp-zarr échoue (WinError 5) - bloque run-all
 `_process_exceedance_day` écrit la sortie dans `tempfile.mkdtemp()` →
 `AppData\Local\Temp`. Le `tmp_path.replace()` atomique de zarr y lève
 `PermissionError [WinError 5] Accès refusé` (verrou Defender / Python 3.14) sur
@@ -406,8 +406,8 @@ le répertoire `data/emdat/` **n'existe pas**. Conséquences :
   adaptatif-vs-statique) est impossible : aucune vérité terrain.
 **Done when:** CSV EM-DAT EA présente + ≥1 run de validation chiffré.
 
-### ISSUE-17 · AIFS track — diagnostic CORRIGÉ : bug de préfixe S3, PAS un 403
-**Update 2026-06-09 — FIXED (discovery layer).** Le « 403 / abonnement requis »
+### ISSUE-17 · AIFS track - diagnostic CORRIGÉ : bug de préfixe S3, PAS un 403
+**Update 2026-06-09 - FIXED (discovery layer).** Le « 403 / abonnement requis »
 était un faux diagnostic. AIFS ENS est **ouvert et anonyme** sur
 `s3://ecmwf-forecasts`, mais sous le préfixe `aifs-ens/0p25/enfo` (le code
 utilisait `aifs/0p25/enfo`) et les membres perturbés sont `-pf.grib2` (le code
@@ -419,7 +419,7 @@ Tests mis à jour (23 passed). L'archive ouverte AIFS ENS **commence mi-2025**
 → valider sur OND 2025 (notre date D3 = 2025-11-19 est couverte ; avril 2025
 404).
 **Reste (non bloquant) :** `aifs_to_virtual_dataset` utilise encore
-`kerchunk.combine.MultiZarrToZarr` au lieu de VirtualiZarr 2.x — à migrer pour
+`kerchunk.combine.MultiZarrToZarr` au lieu de VirtualiZarr 2.x - à migrer pour
 cohérence, mais la découverte est désormais fonctionnelle.
 
 ### ISSUE-18 · Benchmark vs dynamical.org jamais mesuré
@@ -431,7 +431,7 @@ non sourcée.
 
 ### ISSUE-19 · Livrables de déploiement = coquilles vides
 - `dashboard/calendar_map/` + `storymaps/` : templates sans données
-  (`calendar_map/data/` vide — voir ISSUE-7). Pas de GitHub Pages / TiTiler /
+  (`calendar_map/data/` vide - voir ISSUE-7). Pas de GitHub Pages / TiTiler /
   VEDA déployé.
 - Store « public `s3://gik-icechain/...` » = en réalité MinIO privé ; rien sur
   AWS Open Data.
@@ -448,19 +448,19 @@ réellement câblé dans le E2E (`cli.py:430` charge les 252 NetCDF de
 
 ---
 
-## CRITICAL — block scientific validation
+## CRITICAL - block scientific validation
 
-### ISSUE-1 · No complete E2E run validated yet — see ISSUE-14
+### ISSUE-1 · No complete E2E run validated yet - see ISSUE-14
 No full C1 -> C2 -> C3 run has succeeded on a real flood date this session.
 The only risk scores produced (2025-02-22 -> 28) are DJF (dry season, all
 Green) and came from a pre-existing store. The GitHub Actions workflow is the
 best path but has not run yet.
 **Update 2026-06-09:** even the OND wet-season output (`2025-11-20`) is all
-Green with exceedance=0 — this is now tracked in detail as **ISSUE-14**.
+Green with exceedance=0 - this is now tracked in detail as **ISSUE-14**.
 3 high-flood validation dates selected for the E2E run (MAM 2025 / OND 2025).
 **Done when:** a green run on an OND/MAM date shows Orange/Red signals.
 
-### ISSUE-2 · Exceedance store schema collision — FIXED
+### ISSUE-2 · Exceedance store schema collision - FIXED
 `exceedance/writer.py` used `to_zarr(mode="a", append_dim="date")` with no
 schema validation; a window-count change (7 vs 6) crashed the append and could
 corrupt the store.
@@ -475,7 +475,7 @@ values. Covered by `tests/unit/test_writer.py`.
 | ~300 admin-1 units | 196 (after MDG+SDN fix) |
 | ~1200 days (May 2023) | catalog 720 days (Mar 2024 -> Feb 2026) |
 | 18.5 GB virtual store | ~12 MB committed so far |
-| Innovation 4 (AIFS) as delivered | 403 Forbidden — needs ECMWF subscription |
+| Innovation 4 (AIFS) as delivered | 403 Forbidden - needs ECMWF subscription |
 | Manifest-aware "~10x fewer S3 requests" | real coalescing ratio = 1.04 (see ISSUE-4) |
 **Fix:** correct the numbers; mark AIFS "conditional"; fix or reword the
 coalescing claim.
@@ -484,7 +484,7 @@ coalescing claim.
 
 ## HIGH
 
-### ISSUE-4 · Byte-range coalescing is ineffective (ratio 1.04) — FIXED
+### ISSUE-4 · Byte-range coalescing is ineffective (ratio 1.04) - FIXED
 1530 chunks -> 1466 requests. The 51 members of one GRIB2 step-file are not
 byte-adjacent, so adjacent-merge coalescing barely helped.
 **Fix applied:** `fetch_coalesced_ranges` now groups ranges by file (URI) and
@@ -492,10 +492,10 @@ issues a single `obstore.get_ranges` multi-range request per file (HTTP-layer
 coalescing). ~1500 per-chunk `get_range` calls collapse to ~30 per-file
 requests (one per step-file holding all 51 members).
 
-### ISSUE-5 · No tolerance to individual fetch failures — FIXED
+### ISSUE-5 · No tolerance to individual fetch failures - FIXED
 A single GRIB2 object timing out aborted the whole day (observed 3x over WAN).
 **Fix applied:** each per-file fetch in `fetch_coalesced_ranges` is wrapped in
-try/except — a failed file (after obstore's retries) is logged
+try/except - a failed file (after obstore's retries) is logged
 (`fetch_file_failed`) and skipped; its chunks stay absent and become NaN
 downstream, guarded by the existing `min_members` check. The completion log
 reports `n_failed_files`. Covered by `tests/unit/test_byte_range.py`.
@@ -503,7 +503,7 @@ reports `n_failed_files`. Covered by `tests/unit/test_byte_range.py`.
 ### ISSUE-6 · ECMWF S3 public retention (~15 months)
 Cannot validate on historical floods (e.g. Kenya MAM 2024) without a MARS
 subscription. Bounds the "retrospective" scope the README advertises.
-**Architectural constraint** — document clearly; MARS or local mirror for old dates.
+**Architectural constraint** - document clearly; MARS or local mirror for old dates.
 
 ---
 
@@ -512,7 +512,7 @@ subscription. Bounds the "retrospective" scope the README advertises.
 | # | Issue | Notes |
 |---|-------|-------|
 | 7  | Dashboard data dir empty | `dashboard/calendar_map/data/` never generated/deployed |
-| 8  | Benchmarks empty | `results/benchmarks/` — README table vs dynamical.org never measured |
+| 8  | Benchmarks empty | `results/benchmarks/` - README table vs dynamical.org never measured |
 | 9  | Gap-fill Cloud Run/Lithops untested | needs GCP environment |
 | 10 | EM-DAT CPT refinement unvalidated | code present, never run on real events |
 | 11 | C3 runs without GPM IMERG | gpm=0 -> observation evidence silently absent |
@@ -540,15 +540,15 @@ subscription. Bounds the "retrospective" scope the README advertises.
 
 ## Recommended priority order (revised 2026-06-09)
 
-1. **ISSUE-14 (existential)** — débloquer le signal : corriger tp→mm dans le
+1. **ISSUE-14 (existential)** - débloquer le signal : corriger tp→mm dans le
    chemin E2E réel + brancher GPM (ISSUE-15). Critère : 3 dates de crue
    MAM/OND 2025 produisent ≥1 Orange/Red. Convertit ISSUE-1, 11, 14, 15.
-2. **ISSUE-16** — récupérer la CSV EM-DAT EA → débloque CPT refinement +
+2. **ISSUE-16** - récupérer la CSV EM-DAT EA → débloque CPT refinement +
    validation chiffrée (le cœur du framework §7 de la proposal).
-3. **ISSUE-17** — décision AIFS : experimental documenté OU migration + source
+3. **ISSUE-17** - décision AIFS : experimental documenté OU migration + source
    accessible. Ne pas laisser 2 innovations affichées « livrées » mais 403.
-4. **ISSUE-3 / ISSUE-19** — aligner README/proposal sur la réalité
+4. **ISSUE-3 / ISSUE-19** - aligner README/proposal sur la réalité
    (chiffres, store privé, dashboard, AIFS conditional).
-5. **ISSUE-18** — un benchmark réel écrit dans `results/benchmarks/`.
-6. **ISSUE-20** — corriger OND (décembre) dans `thresholds.py`.
-7. ~~ISSUE-2 / ISSUE-4 / ISSUE-5~~ — FIXED (see above; tests added).
+5. **ISSUE-18** - un benchmark réel écrit dans `results/benchmarks/`.
+6. **ISSUE-20** - corriger OND (décembre) dans `thresholds.py`.
+7. ~~ISSUE-2 / ISSUE-4 / ISSUE-5~~ - FIXED (see above; tests added).

@@ -22,7 +22,7 @@ false-alarm rate ``F`` of the trigger. REV=1 is a perfect forecast, REV<=0 means
 no better than climatology. This is the metric of the Challenge 41
 "missed opportunities" theme, and only our multi-year C1 corpus can fit it.
 
-Only the calibration lives here — the live inference path is untouched. The
+Only the calibration lives here - the live inference path is untouched. The
 output is a :class:`CostLossConfig` the operator can drop into config
 (``enabled=True``) once satisfied.
 """

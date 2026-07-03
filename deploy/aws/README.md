@@ -1,4 +1,4 @@
-# AWS deployment — GIK gap-fill (ISSUE-9)
+# AWS deployment - GIK gap-fill (ISSUE-9)
 
 Deployment target is **AWS** (the former GCP Cloud Run / Lithops config has been
 removed). The `gap-fill` CLI is infrastructure-agnostic and resume-safe (it
@@ -7,10 +7,10 @@ that has the package + AWS credentials. Two supported paths:
 
 The image `ENTRYPOINT` is `gik-icechain`, so a Batch `command` is args to that
 CLI. `gap-fill` (resume-safe skip logic) lives in `scripts/tools.py`, not the
-`gik-icechain` CLI — so Batch runs `gik-icechain convert` over the range, and
+`gik-icechain` CLI - so Batch runs `gik-icechain convert` over the range, and
 the resume-safe path is the CLI option below.
 
-## Option 1 — AWS Batch (C1 ingest over a range)
+## Option 1 - AWS Batch (C1 ingest over a range)
 ```bash
 aws batch register-job-definition --cli-input-json file://deploy/aws/batch_job_definition.json
 aws batch submit-job \
@@ -24,11 +24,11 @@ job role needs read on `s3://ecmwf-forecasts` (public) and read/write on the
 IceChunk store bucket. Submit only missing dates, or re-run (commits are
 idempotent per date).
 
-## Option 2 — Lithops on AWS Lambda (fan-out, one Lambda per day)
+## Option 2 - Lithops on AWS Lambda (fan-out, one Lambda per day)
 Edit `deploy/aws/lithops_config.yaml` (`ACCOUNT_ID`, role, bucket), then drive
 the ingest through Lithops. AWS Lambda's 15-min limit is fine for single-day C1.
 
-## Option 3 — resume-safe gap-fill CLI (EC2 / local)
+## Option 3 - resume-safe gap-fill CLI (EC2 / local)
 ```bash
 python scripts/tools.py gap-fill --start 2023-05-01 --end 2024-02-29 \
   --store s3://gik-icechain/gik-icechain-store

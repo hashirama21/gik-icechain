@@ -1,4 +1,4 @@
-"""Chantier 2 — EM-DAT CPT refinement (GPM-driven training set).
+"""Chantier 2 - EM-DAT CPT refinement (GPM-driven training set).
 
 Builds the EM-DAT-labeled training set directly from observed GPM IMERG over its
 data-complete window (2015-2023), spinning up API / soil-memory per unit day by

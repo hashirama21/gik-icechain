@@ -7,7 +7,7 @@
 **Zero-Cost Cloud-Native Pipeline for Retrospective Flood Risk  
 Decision Support in East Africa using the ECMWF IFS Ensemble**
 
-> **ECMWF Code for Earth 2026 — Africa Stream (ArcX)**  
+> **ECMWF Code for Earth 2026 - Africa Stream (ArcX)**  
 > Challenge 41: Missed Opportunities in Flood Disaster Risk Management  
 > Mentors: Nishadh Kalladath · Masilin Gudoshava · Ahmed Amdihun · Anthony Mwanthi · Katherine Egan · Jessica Keune · Hillary Koros
 
@@ -21,7 +21,7 @@ Decision Support in East Africa using the ECMWF IFS Ensemble**
 
 ECMWF's open IFS ensemble archive on AWS S3 (`s3://ecmwf-forecasts`) holds over
 **1 petabyte** of GRIB2 weather forecast data: 51 ensemble members, 85 forecast steps
-(0–360 h), and more than 1 000 forecast days since May 2023 — all freely available.
+(0-360 h), and more than 1 000 forecast days since May 2023 - all freely available.
 Yet this data is almost completely inaccessible to the xarray/Dask ecosystem that
 East African disaster risk managers rely on.
 
@@ -29,17 +29,17 @@ GIK-IceChain v2.0 solves this in three components:
 
 | Component | What it does | Key output |
 |-----------|-------------|-----------|
-| **C1 — Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 000+ days, zero data duplication |
-| **C2 — Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 000 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
-| **C3 — Risk (CRMA)** | Admin-1 daily flood risk using ICPAC's CRMA Bayesian Network | Daily GeoJSON risk layer, integrated in calendar-map storymaps |
+| **C1 - Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 000+ days, zero data duplication |
+| **C2 - Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 000 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
+| **C3 - Risk (CRMA)** | Admin-1 daily flood risk using ICPAC's CRMA Bayesian Network | Daily GeoJSON risk layer, integrated in calendar-map storymaps |
 
 ### Key numbers
 
 | Metric | Value |
 |--------|-------|
 | Archive size | ~1 PB (raw GRIB2) |
-| Virtual store size | ~18.5 GB (metadata only) — ≈13 000× smaller than an equivalent full Zarr copy |
-| Days covered | ~1 200 (May 2023 – Aug 2026) |
+| Virtual store size | ~18.5 GB (metadata only) ≈13 000× smaller than an equivalent full Zarr copy |
+| Days covered | ~1 200 (May 2023 - Aug 2026) |
 | Ensemble members | 51 |
 | Accumulation windows | 7 (3 h → 7 days) |
 | Return-period thresholds | 6 (2, 5, 10, 20, 40, 100 years) |
@@ -59,11 +59,11 @@ flowchart TD
     end
 
     %% ==================== C1 : VIRTUAL STORE ====================
-    subgraph C1["C1 — IceChunk Virtual Store"]
+    subgraph C1["C1 - IceChunk Virtual Store"]
         direction TB
         VZ[VirtualiZarr]
         IC[IceChunk<br/>Zarr v3]
-        Store["IceChunk Zarr v3 Virtual Store<br/>Metadata Only — zarr.open&#40;store&#41;<br/>Full Time-Travel History"]
+        Store["IceChunk Zarr v3 Virtual Store<br/>Metadata Only - zarr.open&#40;store&#41;<br/>Full Time-Travel History"]
 
         GRIB & Parquet -->|"byte-range refs"| VZ
         VZ --> IC
@@ -71,7 +71,7 @@ flowchart TD
     end
 
     %% ==================== C2 : EXCEEDANCE ====================
-    subgraph C2["C2 — Exceedance Analysis"]
+    subgraph C2["C2 - Exceedance Analysis"]
         direction TB
         Manifest["Manifest-Aware Loader<br/>VirtualChunkRefs from IceChunk"]
         Coalesce["Byte-Range Coalescence<br/>~714 ranges → ~60 S3 requests"]
@@ -91,7 +91,7 @@ flowchart TD
     end
 
     %% ==================== C3 : CRMA-LIVE ====================
-    subgraph C3["C3 — CRMA-Live Risk Engine"]
+    subgraph C3["C3 - CRMA-Live Risk Engine"]
         direction TB
         DBN[Dynamic Bayesian Network<br/>pgmpy]
         Soil[Soil Saturation Persistence<br/>API Node]
@@ -138,20 +138,20 @@ flowchart TD
 
 ## Components
 
-### Component 1 — GIK to IceChunk Conversion
+### Component 1 - GIK to IceChunk Conversion
 
 Converts the 150 246 GIK Parquet reference files (already available on
 [HuggingFace E4DRR/gik-ecmwf-par](https://huggingface.co/datasets/E4DRR/gik-ecmwf-par))
-into a fully interoperable **IceChunk Zarr v3 virtual store** — with zero data
+into a fully interoperable **IceChunk Zarr v3 virtual store** - with zero data
 duplication. The original GRIB2 objects on S3 are never copied; only byte-range
 references are stored.
 
-**Innovation 1 — IceChunk Time-Travel Audit Trail**: every daily GIK batch
+**Innovation 1 - IceChunk Time-Travel Audit Trail**: every daily GIK batch
 is committed as a new IceChunk snapshot. Users can check out the store as it
 existed on any past date, enabling reproducible "what would we have known on
-date X?" retrospective queries — directly applicable to anticipatory action protocols.
+date X?" retrospective queries - directly applicable to anticipatory action protocols.
 
-### Component 2 — Retrospective Exceedance Analysis
+### Component 2 - Retrospective Exceedance Analysis
 
 For each of ~1 000 forecast days, 51 ensemble members, 7 accumulation windows,
 and 6 return-period thresholds:
@@ -165,23 +165,23 @@ and 6 return-period thresholds:
    `xr.Dataset(member, step, latitude, longitude)`
 5. Computes rolling precipitation accumulations (7 windows: 3 h to 7 days)
 6. Compares against **adaptive GEV thresholds** stratified by season and IOD/ENSO
-   phase (Innovation 2 — substantially reduces false alarm rates in dry regimes)
+   phase (Innovation 2 - substantially reduces false alarm rates in dry regimes)
 7. Outputs a multi-dimensional Zarr v3 store
 
 The manifest-aware path is configurable via `component2.manifest_aware.enabled`
 in `configs/default.yaml`. When disabled, C2 falls back to the standard
 `xr.open_zarr()` + Dask path.
 
-### Component 3 — Admin-1 Risk Assessment (CRMA-Live)
+### Component 3 - Admin-1 Risk Assessment (CRMA-Live)
 
 Integrates ICPAC's [CRMA prototype](https://meetingorganizer.copernicus.org/EGU24/EGU24-6843.html)
 (Bayesian Network, pgmpy) with two innovations:
 
-**Innovation 5 — Dynamic BN with API persistence**: adds an Antecedent
+**Innovation 5 - Dynamic BN with API persistence**: adds an Antecedent
 Precipitation Index (API) node that carries soil moisture state across days,
 capturing multi-day compound flood risk.
 
-**Innovation 6 — EM-DAT CPT refinement**: uses historical EM-DAT flood events
+**Innovation 6 - EM-DAT CPT refinement**: uses historical EM-DAT flood events
 to refine the Bayesian Network Conditional Probability Tables via maximum
 likelihood estimation.
 
@@ -203,7 +203,7 @@ git clone https://github.com/hashirama21/gik-icechain.git
 cd gik-icechain
 pip install -e ".[dev]"
 
-# Run only Component 1 (conversion) — store URI set in configs/default.yaml
+# Run only Component 1 (conversion) store URI set in configs/default.yaml
 python -m gik_icechain convert --start 2024-10-01 --end 2024-10-31
 
 # Run only Component 2 (exceedance)
@@ -356,9 +356,9 @@ python scripts/satellite_validation.py --risk-dir results/admin1_risk
 **Dashboard (GitHub Pages):** <https://hashirama21.github.io/gik-icechain/>
 Static Next.js export, deployed by `.github/workflows/deploy-web.yaml` on push to
 `main`. The per-day risk contract is served from S3 (`NEXT_PUBLIC_DATA_BASE`),
-rebuilt by the `daily_update` workflow — never committed.
+rebuilt by the `daily_update` workflow, never committed.
 
-**End-to-end walkthrough** — a single notebook,
+**End-to-end walkthrough** - a single notebook,
 [`notebooks/gik_icechain_walkthrough.ipynb`](notebooks/gik_icechain_walkthrough.ipynb),
 runs C1 → C2 → C3 → the full pipeline → benchmarks (synthetic offline, or live with
 credentials). Open it in one click:
@@ -367,25 +367,25 @@ credentials). Open it in one click:
 [![Render in nbviewer](https://img.shields.io/badge/render-nbviewer-orange.svg)](https://nbviewer.org/github/hashirama21/gik-icechain/blob/main/notebooks/gik_icechain_walkthrough.ipynb)
 
 **Nov 2024 operational case (independent ground truth).** EM-DAT has not yet
-recorded the Nov-2024 East-Africa floods (6–12 month reporting lag), so the
-31-day window (31 Oct – 30 Nov 2024, 238 units) was validated against **IFRC GO**
+recorded the Nov-2024 East-Africa floods (6-12 month reporting lag), so the
+31-day window (31 Oct - 30 Nov 2024, 238 units) was validated against **IFRC GO**
 active flood appeals (public API, `goadmin.ifrc.org`) plus OCHA/SWALIM for the
-Somali Deyr floods — ground truth saved to `data/emdat/nov2024_ground_truth_ifrc.csv`.
+Somali Deyr floods, ground truth saved to `data/emdat/nov2024_ground_truth_ifrc.csv`.
 As this source is country-resolution, the alignment is scored per country:
 
 | Metric | Value |
 |--------|-------|
 | C3 alerts (Orange+Red) falling in genuinely-flooded countries | 76 % |
-| Alert rate — flooded vs non-flooded countries | 9.0 % vs 5.0 % |
+| Alert rate, flooded vs non-flooded countries | 9.0 % vs 5.0 % |
 | Confirmed top hotspots (alert rate) | SOM / Deyr 32 %, SSD / Sudd 56 % |
 
 Observations:
 
-- C3's two largest hotspots — Somalia (Deyr) and South Sudan (Sudd, ~300 k
-  affected) — are corroborated by independent ground truth; both were heavily
+- C3's two largest hotspots, Somalia (Deyr) and South Sudan (Sudd, ~300 k
+  affected), are corroborated by independent ground truth; both were heavily
   flagged and both genuinely flooded.
 - KEN / TZA / UGA / BDI show ~0 alerts despite open IFRC appeals, but those
-  appeals are residual from the 2024 long-rains (peak Mar–May), so quiet
+  appeals are residual from the 2024 long-rains (peak Mar-May), so quiet
   November alerts are expected behaviour, not misses.
 - Two residual limitations remain at country resolution: every Red cell carries
   an identical `p_red = 0.39`, so the Bayesian-network posterior saturates and
@@ -397,7 +397,7 @@ Observations:
 
 To validate at the resolution at which the system actually issues alerts, C3 was
 scored against two independent, satellite-derived flood products published on the
-Humanitarian Data Exchange — both public and unauthenticated — reproduced end to
+Humanitarian Data Exchange, both public and unauthenticated,  reproduced end to
 end by `python scripts/satellite_validation.py`:
 
 - **FAO EVE Global Flood Monitoring** (NOAA VIIRS): flooded area and exposed
@@ -407,7 +407,7 @@ end by `python scripts/satellite_validation.py`:
   well-posed precision / recall / AUC panel.
 - **UNOSAT** Sentinel-1 water-extent exposure tables for South Sudan.
 
-Panel — FAO/VIIRS, 105 admin-1 units across 8 countries (flooded ≥ 50 km²):
+Panel - FAO/VIIRS, 105 admin-1 units across 8 countries (flooded ≥ 50 km²):
 
 | Metric | Value |
 |--------|-------|
@@ -430,8 +430,8 @@ The miss profile is far from random. In Somalia the divergence is stark:
 | Togdheer | northern highlands | 13 | 101 | 28 |
 
 C3 systematically overlooked the major riverine floods of the southern Shabelle
-and Juba basins — whose discharge is governed by upstream Ethiopian-highland
-rainfall rather than local precipitation — while sustaining Red alerts over the
+and Juba basins, whose discharge is governed by upstream Ethiopian-highland
+rainfall rather than local precipitation, while sustaining Red alerts over the
 northern highlands, where only marginal inundation occurred. This is a textbook
 expression of the local-rainfall-trigger blind spot documented in
 [`docs/ISSUES.md`](docs/ISSUES.md) (ISSUE-22 to ISSUE-24): the pipeline resolves
@@ -439,10 +439,10 @@ convective and flash flooding but not non-local, catchment-routed riverine flood
 
 South Sudan corroborates the same conclusion from the opposite direction. UNOSAT
 Sentinel-1 confirms flood exposure across all ten states; against this reference
-C3 attains **100 % Yellow-or-higher recall** — it never declares a flooded state
-clear — and **50 % Orange+ recall**, with its strongest alerts correctly
+C3 attains **100 % Yellow-or-higher recall**, it never declares a flooded state
+clear, and **50 % Orange+ recall**, with its strongest alerts correctly
 concentrated over the Sudd and White-Nile corridor (Unity and Warrap 9/10 days;
-Jonglei, Upper Nile and the Bahr-el-Ghazals 7–8/10).
+Jonglei, Upper Nile and the Bahr-el-Ghazals 7-8/10).
 
 The operational takeaway is unambiguous: precision is already production-grade,
 and the path to higher recall runs through an explicit riverine / upstream-routing
@@ -474,13 +474,13 @@ ruff check src/ tests/
   year    = {2026},
   url     = {https://github.com/hashirama21/gik-icechain},
   license = {Apache-2.0},
-  note    = {ECMWF Code for Earth 2026 — Challenge 41, Africa Stream (ArcX)}
+  note    = {ECMWF Code for Earth 2026 - Challenge 41, Africa Stream (ArcX)}
 }
 ```
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE)
+Apache License 2.0 - see [LICENSE](LICENSE)
 
 This project was developed as part of the
 [ECMWF Code for Earth 2026](https://codeforearth.ecmwf.int/) programme,

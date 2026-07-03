@@ -1,4 +1,4 @@
-"""Integration tests for C2 — exceedance probability computation and Zarr output."""
+"""Integration tests for C2 - exceedance probability computation and Zarr output."""
 
 from __future__ import annotations
 

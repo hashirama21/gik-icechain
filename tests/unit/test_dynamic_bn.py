@@ -178,7 +178,7 @@ class TestRunTemporalSequence:
         evidences = [_evidence() for _ in range(3)]
         obs = [30.0, 30.0, 30.0]
         run_temporal_sequence(evidences, built_model, gpm_obs_series=obs, initial_api_mm=0.0)
-        # After 3 days of 30mm: API grows — just check it runs without error
+        # After 3 days of 30mm: API grows - just check it runs without error
 
     def test_prolonged_saturation_amplifies_risk(self, built_model):
         # 10 days of saturated soil → soil_memory activates

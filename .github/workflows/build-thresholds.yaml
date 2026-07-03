@@ -2,7 +2,7 @@ name: Build GPM Thresholds
 
 # Manually-triggered build of the season x ENSO x IOD Gumbel return-period
 # thresholds from GPM IMERG daily (NASA GES DISC). Earthdata credentials come
-# from repository secrets — NEVER commit them to the repo.
+# from repository secrets - NEVER commit them to the repo.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   EARTHDATA_USER       your Earthdata Login username

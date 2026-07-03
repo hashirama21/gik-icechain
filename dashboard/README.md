@@ -1,4 +1,4 @@
-# GIK-IceChain — Dashboard
+# GIK-IceChain - Dashboard
 
 Composant dashboard complet, aligné sur [`../DASHBOARD.md`](DASHBOARD.md).
 Deux surfaces, **un seul contrat de données** alimenté par le pipeline (C1→C2→C3).
@@ -20,10 +20,10 @@ dashboard/
 ## Contrat de données (généré par `data_pipeline/`)
 
 Statique (servi par GitHub Pages depuis `web/public/data/`) :
-- `geojson/{code}.json` — boundaries admin-1 par pays (16 pays), `properties.name`.
-- `{date}/region_risks.json` — `{pcode: {risk_state, risk_label, p_*}}`.
-- `{date}/dependency.json` — par unité : `win[]`, `gev[win][rp]`, `confidence m/51`.
-- `index.json` — dates disponibles + pire risque (calendrier).
+- `geojson/{code}.json` - boundaries admin-1 par pays (16 pays), `properties.name`.
+- `{date}/region_risks.json` - `{pcode: {risk_state, risk_label, p_*}}`.
+- `{date}/dependency.json` - par unité : `win[]`, `gev[win][rp]`, `confidence m/51`.
+- `index.json` - dates disponibles + pire risque (calendrier).
 
 Raster (S3 public + TiTiler) :
 - `cogs/risk_{date}.tif`, `cogs/exceedance_{date}_{win}_{rp}.tif`, `cogs/gpm_{date}.tif`.

@@ -6,7 +6,7 @@ temporal dimension:
   API(t) = observed(t) + decay * API(t-1)
 
 so that soil moisture state carries forward between forecast days.  It also
-tracks ``sat_consecutive_days`` — the number of consecutive days on which
+tracks ``sat_consecutive_days`` - the number of consecutive days on which
 API_State has been Saturated.  This drives the ``Soil_Memory`` BN node that
 distinguishes 15-day saturated soil + 50mm new rainfall from dry soil + 50mm
 (the key scientific distinction added in DBN Innovation 1a).
@@ -50,7 +50,7 @@ def _trend_slope(history: tuple[float, ...]) -> float:
 
     Ordinary linear regression of the GPM values against their day index. A
     positive slope means antecedent rainfall is intensifying. Fewer than two
-    points (or a degenerate x-variance) yields 0.0 — the neutral Stable trend.
+    points (or a degenerate x-variance) yields 0.0 - the neutral Stable trend.
     """
     n = len(history)
     if n < 2:
@@ -98,7 +98,7 @@ def step(
 
     API is advanced via:  API(t+1) = gpm_obs_mm + api_decay * API(t)
     sat_consecutive_days increments when the resulting api_state == 2 (Saturated),
-    resets to 0 otherwise — driving the Soil_Memory BN node.
+    resets to 0 otherwise - driving the Soil_Memory BN node.
     ``gpm_obs_mm`` is appended to a rolling ``trend_window``-day buffer whose
     least-squares slope feeds ``rainfall_trend_slope`` → the Rainfall_Trend node
     (the window includes the current day's observation, consistent with the

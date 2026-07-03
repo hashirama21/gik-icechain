@@ -36,7 +36,7 @@ def _align_threshold_to_forecast(
     fc_lon = next((d for d in forecast.dims if d in ("lon", "longitude")), None)
 
     if not all([thr_lat, thr_lon, fc_lat, fc_lon]):
-        return threshold  # Can't align — return as-is
+        return threshold  # Can't align - return as-is
 
     if (
         thr_lat == fc_lat
@@ -76,10 +76,10 @@ def compute_exceedance_probabilities(
     Args:
         acc_ds:        xr.Dataset produced by ``compute_rolling_accumulations``,
                        containing variable ``tp_{window_h}h`` with dims
-                       (step, number, latitude, longitude) — or equivalent.
+                       (step, number, latitude, longitude) - or equivalent.
         thresholds_ds: xr.Dataset with GEV threshold variable ``rp_{return_period}y``
                        (lat × lon).  Dimension names and grid resolution may
-                       differ from acc_ds — they will be aligned automatically.
+                       differ from acc_ds - they will be aligned automatically.
         window_h:      Accumulation window in hours; selects ``tp_{window_h}h``.
         return_period: Return period in years; selects ``rp_{return_period}y``.
         member_dim:    Name of the ensemble member dimension.
@@ -207,7 +207,7 @@ def compute_tail_ratio(
     tail_quantile: float = 0.95,
     flood_floor_mm: float = 0.0,
 ) -> xr.DataArray:
-    """Worst-world tail ratio — thin alias of :func:`compute_member_ratio`.
+    """Worst-world tail ratio - thin alias of :func:`compute_member_ratio`.
 
     Kept as the named forecast-side input to the tail-aware ``Forecast_Hazard``
     node (``tail_quantile`` defaults to p95). See :func:`compute_member_ratio`
@@ -274,7 +274,7 @@ def compute_ensemble_confidence(
         "long_name": "Ensemble confidence level",
         "flag_values": [0, 1, 2],
         "flag_meanings": "low_confidence medium_confidence high_confidence",
-        "definition": "IQR / max(median, 1 mm) — ICPAC EGU26-18323",
+        "definition": "IQR / max(median, 1 mm) - ICPAC EGU26-18323",
         "window_h": window_h,
     }
     return confidence

@@ -1,4 +1,4 @@
-# `daily_update.yaml` — Configuration Checklist
+# `daily_update.yaml` - Configuration Checklist
 
 Everything required for the daily pipeline workflow to execute end-to-end.
 
@@ -41,11 +41,11 @@ will refuse to start those jobs.
 
 ---
 
-## 3. CLI Flags — Status
+## 3. CLI Flags - Status
 
 All flags used in the workflow are now implemented in `cli.py`.
 
-### C1 — `convert`
+### C1 - `convert`
 
 | Flag | Status | Notes |
 |---|---|---|
@@ -58,7 +58,7 @@ All flags used in the workflow are now implemented in `cli.py`.
 The `--output-json` file is what the workflow reads to extract `commit_hash`
 and pass it downstream via `$GITHUB_OUTPUT`.
 
-### C2 — `exceedance`
+### C2 - `exceedance`
 
 | Flag | Status | Notes |
 |---|---|---|
@@ -67,7 +67,7 @@ and pass it downstream via `$GITHUB_OUTPUT`.
 | `--workers` | done | Overrides `cfg.component2.parallel.max_workers` + Dask client workers |
 | `--profile` | done | Overrides `cfg.component2.active_profile` (flash_flood, medium_range, full) |
 
-### C3 — `risk`
+### C3 - `risk`
 
 | Flag | Status | Notes |
 |---|---|---|
@@ -81,7 +81,7 @@ and pass it downstream via `$GITHUB_OUTPUT`.
 S3 (never committed). It pulls the existing contract + the day's risk from
 `s3://$GIK_BUCKET/`, runs `dashboard.data_pipeline.pipeline contract` + `geojson`, then
 `aws s3 sync`s the result to `s3://$GIK_BUCKET/dashboard-data/`. The web app reads it via
-`NEXT_PUBLIC_DATA_BASE` and `deploy-web.yaml` serves the static site on GitHub Pages —
+`NEXT_PUBLIC_DATA_BASE` and `deploy-web.yaml` serves the static site on GitHub Pages -
 see [`deploy.md` §6](deploy.md). `notify-failure` depends on C1, C2, C3.
 
 ---
@@ -104,9 +104,9 @@ Switching from AWS S3 to MinIO requires **no code changes** and **no new variabl
 You reuse the same 5 secrets with MinIO values and add exactly one extra secret for the
 endpoint URL.
 
-### Complete example — MinIO on `192.168.1.50:9000`
+### Complete example - MinIO on `192.168.1.50:9000`
 
-#### Step 1 — Create the buckets once
+#### Step 1 - Create the buckets once
 
 ```bash
 # Install MinIO Client: https://min.io/docs/minio/linux/reference/minio-mc.html
@@ -117,7 +117,7 @@ mc mb gik/gik-exceedance-zarr    # Exceedance Zarr         (→ GIK_EXCEEDANCE_S
 mc mb gik/gik-data               # Thresholds + risk output (→ GIK_BUCKET)
 ```
 
-#### Step 2 — GitHub Secrets (same 5 names, MinIO values)
+#### Step 2 - GitHub Secrets (same 5 names, MinIO values)
 
 | Secret name | Value for MinIO |
 |---|---|
@@ -127,41 +127,41 @@ mc mb gik/gik-data               # Thresholds + risk output (→ GIK_BUCKET)
 | `GIK_EXCEEDANCE_STORE_URI` | `s3://gik-exceedance-zarr` |
 | `GIK_BUCKET` | `gik-data` |
 
-Add **one extra secret** — the MinIO endpoint:
+Add **one extra secret** - the MinIO endpoint:
 
 | Secret name | Value |
 |---|---|
 | `MINIO_ENDPOINT_URL` | `http://192.168.1.50:9000` |
 
-#### Step 3 — `daily_update.yaml` (already configured)
+#### Step 3 - `daily_update.yaml` (already configured)
 
 `AWS_ENDPOINT_URL` is declared at the top-level `env:` block and reads from
 `MINIO_ENDPOINT_URL`. When the secret is empty it has no effect (standard AWS).
 When set, `IceChainStore` automatically enables `force_path_style` as required by MinIO.
 
-#### Step 4 — Full local run against MinIO
+#### Step 4 - Full local run against MinIO
 
 ```bash
 export AWS_ENDPOINT_URL="http://192.168.1.50:9000"
 export AWS_ACCESS_KEY_ID=""
 export AWS_SECRET_ACCESS_KEY="123"
-export AWS_REGION="us-east-1"          # dummy — required by the AWS SDK
+export AWS_REGION="us-east-1"          # dummy - required by the AWS SDK
 
-# C1 — Ingest
+# C1 - Ingest
 python -m gik_icechain convert \
   --start 2024-10-01 --end 2024-10-01 \
   --output-store  s3://gik-icechain-store \
   --hf-dataset    E4DRR/gik-ecmwf-par \
   --output-json   /tmp/result.json
 
-# C2 — Exceedance
+# C2 - Exceedance
 python -m gik_icechain exceedance \
   --store       s3://gik-icechain-store \
   --output      s3://gik-exceedance-zarr \
   --thresholds  s3://gik-data/cmorph_thresholds/ \
   --start 2024-10-01 --end 2024-10-01
 
-# C3 — Risk
+# C3 - Risk
 python -m gik_icechain risk \
   --exceedance-store s3://gik-exceedance-zarr \
   --output           s3://gik-data/admin1_risk/ \

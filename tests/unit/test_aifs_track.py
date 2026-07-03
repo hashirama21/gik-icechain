@@ -129,7 +129,7 @@ class TestCompareEnsembleSpreads:
         ifs_path = _make_ensemble_zarr(tmp_path, "ifs_ens.zarr", n_members=10)
         aifs_path = _make_ensemble_zarr(tmp_path, "aifs_ens.zarr", n_members=10)
 
-        # Bypass IceChainStore — compute IQR directly from plain Zarr
+        # Bypass IceChainStore - compute IQR directly from plain Zarr
         def _mock_compare(ifs_uri, aifs_uri, **kwargs):
             ifs_ds = xr.open_zarr(ifs_uri, consolidated=False)
             aifs_ds = xr.open_zarr(aifs_uri, consolidated=False)
