@@ -1,8 +1,10 @@
 name: Deploy Dashboard (Next.js)
 
 # Builds the GIK-IceChain dashboard (static export) and publishes it to GitHub
-# Pages. The data contract under web/public/data is expected to be committed by
-# the daily_update workflow (or built here from a committed results/ snapshot).
+# Pages. The per-day data contract is served at runtime from S3 via
+# NEXT_PUBLIC_DATA_BASE (built and published by the daily_update workflow); it is
+# not committed. configure-pages enables Pages (source: GitHub Actions) so the
+# project site is served under /gik-icechain/.
 
 on:
   push:
@@ -35,13 +37,18 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/web/package-lock.json
       - run: npm ci || npm install
+      - name: Configure GitHub Pages (enable + source = Actions)
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Build static export
         env:
           NEXT_PUBLIC_BASE_PATH: /gik-icechain
           NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
           NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
-          # Data contract served from S3 (built + synced by daily_update), never
-          # committed. Falls back to the bundled /data if the var is unset.
+          # Per-day contract fetched at runtime from S3 (published by
+          # daily_update); not committed. If unset, the app falls back to the
+          # bundled /data (empty in CI).
           NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}
         run: npm run build
       - name: Disable Jekyll (serve _next/ underscore dirs verbatim)
