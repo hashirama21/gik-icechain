@@ -49,7 +49,7 @@ class OutputsConfig(BaseModel):
     risk_icechunk_uri: str = ""
     # S3 by default so C3 writes risk JSON (+ boundaries + checkpoint) straight to
     # object storage (no local disk in prod). Override with a local dir for dev.
-    risk_output_dir: str = "s3://gik-icechain/risk-output"
+    risk_output_dir: str = "s3://gik-icechain/admin1_risk"
     dashboard_data_dir: str = "dashboard/web/public/data/"
 
 

@@ -119,12 +119,13 @@ jobs:
           START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('$PROC')-timedelta(14))")
           python scripts/tools.py download-gpm --source chirps --start "$START" --end "$PROC"
       - run: |
+          # S3-native output (no local disk): C3 writes JSON + boundaries +
+          # checkpoint straight to the bucket the dashboard pipeline reads.
           gik-icechain risk \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
-            --output /tmp/admin1_risk/ \
+            --output s3://${{ secrets.GIK_BUCKET }}/admin1_risk \
             --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
             --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
-          aws s3 sync /tmp/admin1_risk/ s3://${{ secrets.GIK_BUCKET }}/admin1_risk/
 
   update-dashboard:
     name: "Dashboard: calendar data"
