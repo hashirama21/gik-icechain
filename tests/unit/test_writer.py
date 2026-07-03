@@ -1,4 +1,4 @@
-"""Unit tests for the exceedance Zarr writer — append schema safety (ISSUE-2)."""
+"""Unit tests for the exceedance Zarr writer - append schema safety (ISSUE-2)."""
 
 from datetime import date
 
@@ -113,7 +113,7 @@ class TestAppendSchemaSafety:
             uri,
             append=False,
         )
-        # New run on a 3-cell latitude grid (bbox extended) — cannot append.
+        # New run on a 3-cell latitude grid (bbox extended) - cannot append.
         new_lat = np.array([0.0, 1.0, 2.0], dtype=np.float32)
         write_exceedance_store(
             {date(2024, 1, 2): _exc_da([6, 12], [2, 5], date(2024, 1, 2), lat=new_lat)},

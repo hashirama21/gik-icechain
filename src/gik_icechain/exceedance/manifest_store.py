@@ -2,7 +2,7 @@
 
 Reads VirtualChunkRefs directly from an IceChunk store (produced by C1),
 coalesces byte ranges, fetches GRIB2 data from S3 in parallel, decodes
-via eccodes, and assembles a concrete xr.Dataset — without any HuggingFace
+via eccodes, and assembles a concrete xr.Dataset - without any HuggingFace
 access and without loading the full global grid.
 """
 
@@ -294,7 +294,7 @@ def _assemble_dataset(
     # Build coordinates from decoded grid shape (not from bbox indices)
     # to guarantee coordinate arrays match actual data dimensions.
     # Real (possibly non-uniform) step hours; when the forecast produced fewer
-    # steps than max_steps, trim the data arrays too — a silent length mismatch
+    # steps than max_steps, trim the data arrays too - a silent length mismatch
     # would otherwise break or misalign the Dataset.
     steps = np.asarray(step_hours, dtype=np.int32)[:max_steps]
     if steps.shape[0] < max_steps:

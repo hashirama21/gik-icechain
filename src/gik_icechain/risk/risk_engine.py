@@ -6,7 +6,7 @@ Precipitation Index (API) and soil-saturation day-count across days, and
 writes one GeoJSON FeatureCollection per day.
 
 All numeric thresholds and initial values are read from GIKConfig
-(configs/default.yaml component3.crma_model / component3.api) — no
+(configs/default.yaml component3.crma_model / component3.api) - no
 hardcoded constants.
 
 NaN values from aggregation are detected and produce risk_state=-1 /
@@ -28,7 +28,6 @@ import hashlib
 import importlib.metadata
 import json
 import math
-import os
 from dataclasses import asdict, replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -45,7 +44,9 @@ from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
 from gik_icechain.risk.dynamic_bn import step as bn_step
 from gik_icechain.risk.geojson_writer import build_score, write_boundaries, write_risk_scores
 from gik_icechain.risk.gpm_loader import load_gpm_daily
+from gik_icechain.risk.riverine import pool_upstream_ratio
 from gik_icechain.shared.regions import COUNTRY_CLUSTER
+from gik_icechain.shared.storage import join_uri, path_exists, read_text, remove_path, write_text
 
 log = structlog.get_logger(__name__)
 
@@ -81,7 +82,7 @@ def run_risk_batch(
     gpm_dir: Path,
     admin_boundaries_path: Path,
     crma_models: dict[EastAfricaCluster, CRMAModel],
-    output_dir: Path,
+    output_dir: str | Path,
     start: date,
     end: date,
     api_decay: float = 0.8,
@@ -96,7 +97,8 @@ def run_risk_batch(
     emdat_path: Path | None = None,
     cpt_source: str = "default",
     config_path: Path | None = None,
-) -> list[Path]:
+    riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
+) -> list[str]:
     """Run CRMA risk inference for all days in [start, end].
 
     Args:
@@ -122,10 +124,12 @@ def run_risk_batch(
     Returns:
         Sorted list of written GeoJSON file paths.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = str(output_dir)
+    # fsspec options for the output location (local path -> ignored; s3:// -> endpoint).
+    out_so = {"endpoint_url": endpoint_url} if endpoint_url else None
 
     admin = gpd.read_file(admin_boundaries_path)
-    write_boundaries(admin, output_dir)
+    write_boundaries(admin, output_dir, storage_options=out_so)
 
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
     exc_ds = xr.open_zarr(exceedance_store_uri, consolidated=False, storage_options=storage_options)
@@ -140,8 +144,10 @@ def run_risk_batch(
         p: {rp: init_state(initial_api_mm) for rp in rp_options} for p in pcode_cluster
     }
 
-    checkpoint_path = output_dir / _CHECKPOINT_FILE
-    bn_states, resume_date = _load_checkpoint(checkpoint_path, bn_states, start, rp_options)
+    checkpoint_path = join_uri(output_dir, _CHECKPOINT_FILE)
+    bn_states, resume_date = _load_checkpoint(
+        checkpoint_path, bn_states, start, rp_options, storage_options=out_so
+    )
 
     # Build run-level metadata written into every daily scores file.
     meta: dict[str, Any] = {
@@ -167,7 +173,7 @@ def run_risk_batch(
         flood_event_days = frozenset(days)
         log.info("emdat_flood_days_loaded", n_days=len(flood_event_days))
 
-    written: list[Path] = []
+    written: list[str] = []
     current = resume_date
     day_count = 0
     while current <= end:
@@ -190,6 +196,8 @@ def run_risk_batch(
             flood_event_days=flood_event_days,
             meta=meta,
             n_members=n_members,
+            riverine_feed=riverine_feed,
+            storage_options=out_so,
         )
         if path is not None:
             written.append(path)
@@ -197,10 +205,10 @@ def run_risk_batch(
         day_count += 1
 
         if checkpoint_interval > 0 and day_count % checkpoint_interval == 0:
-            _save_checkpoint(checkpoint_path, bn_states, current)
+            _save_checkpoint(checkpoint_path, bn_states, current, storage_options=out_so)
 
-    if checkpoint_interval > 0 and checkpoint_path.exists():
-        checkpoint_path.unlink()
+    if checkpoint_interval > 0 and path_exists(checkpoint_path, out_so):
+        remove_path(checkpoint_path, out_so)
 
     log.info("risk_batch_complete", n_days=len(written), start=start, end=end)
     return written
@@ -259,8 +267,12 @@ def _spinup_api_from_gpm(
                 thresholds=model.evidence_thresholds(rp),
             )
             _, bn_states[pcode][rp] = bn_step(
-                state, ev, model,
-                api_decay=api_decay, gpm_obs_mm=gpm_24h, signal_threshold=signal_threshold,
+                state,
+                ev,
+                model,
+                api_decay=api_decay,
+                gpm_obs_mm=gpm_24h,
+                signal_threshold=signal_threshold,
             )
 
 
@@ -272,7 +284,7 @@ def _process_day(
     crma_models: dict[EastAfricaCluster, CRMAModel],
     pcode_cluster: dict[str, EastAfricaCluster],
     unit_by_pcode: dict[str, Any],
-    output_dir: Path,
+    output_dir: str,
     bn_states: dict[str, dict[int, DynamicBNState]],
     api_decay: float,
     signal_threshold: float,
@@ -283,7 +295,9 @@ def _process_day(
     flood_event_days: frozenset[tuple[str, str]] = frozenset(),
     meta: dict | None = None,
     n_members: int = 51,
-) -> Path | None:
+    riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
+    storage_options: dict | None = None,
+) -> str | None:
     rp_options = rp_options or [rp_signal]
     try:
         exc_day = exc_ds.sel(date=pd.Timestamp(day)).load()
@@ -294,8 +308,15 @@ def _process_day(
         # is correctly primed for later days that do have exceedance. This
         # decouples API spin-up (GPM-only, local) from the heavy C2 exceedance.
         _spinup_api_from_gpm(
-            day, gpm_dir, admin, pcode_cluster, crma_models, bn_states,
-            api_decay, signal_threshold, rp_options,
+            day,
+            gpm_dir,
+            admin,
+            pcode_cluster,
+            crma_models,
+            bn_states,
+            api_decay,
+            signal_threshold,
+            rp_options,
         )
         log.info("exceedance_date_missing_apispinup", date=day)
         return None
@@ -303,9 +324,11 @@ def _process_day(
     # Per-RP admin-1 aggregation: hazard (24h/72h/7d) + signal coverage.
     has_tail = "tail_ratio" in exc_day
     has_median = "median_ratio" in exc_day
+    has_riverine = "riverine_ratio" in exc_day
     agg: dict[int, dict[str, pd.Series]] = {}
     tail_agg: dict[int, pd.Series] = {}
     median_agg: dict[int, pd.Series] = {}
+    riverine_agg: dict[int, pd.Series] = {}
 
     def _ratio_agg(var: str, rp: int) -> pd.Series | None:
         """max over the 24h/72h windows of the admin-1 aggregated member ratio
@@ -314,7 +337,9 @@ def _process_day(
             grids = [
                 aggregate_to_admin1(
                     exc_day[var].sel(window=wh, return_period=rp),
-                    admin, stat=hazard_stat, min_coverage=min_coverage,
+                    admin,
+                    stat=hazard_stat,
+                    min_coverage=min_coverage,
                 )
                 for wh in (24, 72)
             ]
@@ -342,6 +367,15 @@ def _process_day(
             tail_agg[rp] = s
         if has_median and (s := _ratio_agg("median_ratio", rp)) is not None:
             median_agg[rp] = s
+        if has_riverine and (s := _ratio_agg("riverine_ratio", rp)) is not None:
+            riverine_agg[rp] = s
+    # Riverine feed: pool upstream tail ratios into each downstream unit so
+    # catchment-routed floods escalate hazard even at ~0 local rainfall.
+    if riverine_feed is not None:
+        umap, atten, agg_mode = riverine_feed
+        for rp in rp_options:
+            if rp in tail_agg:
+                riverine_agg[rp] = pool_upstream_ratio(tail_agg[rp], umap, atten, agg_mode)
     if rp_signal not in agg:
         log.warning("primary_rp_missing", date=day, rp=rp_signal)
         return None
@@ -360,10 +394,13 @@ def _process_day(
         return val if math.isfinite(val) else default
 
     def _slim(result: dict) -> dict:
-        return {
+        slim = {
             k: result[k]
             for k in ("risk_state", "risk_label", "p_green", "p_yellow", "p_orange", "p_red")
         }
+        if "severity_score" in result:
+            slim["severity_score"] = result["severity_score"]
+        return slim
 
     scores: dict[str, dict] = {}
     for pcode, cluster in pcode_cluster.items():
@@ -396,6 +433,7 @@ def _process_day(
                 continue
 
             tail_ratio = _finite(tail_agg[rp], pcode) if rp in tail_agg else 0.0
+            riverine_ratio = _finite(riverine_agg[rp], pcode) if rp in riverine_agg else 0.0
             ev = CRMAEvidence(
                 exceedance_prob_24h=p24,
                 exceedance_prob_72h=p72,
@@ -406,6 +444,7 @@ def _process_day(
                 consecutive_signal_days=state.consecutive_days,
                 sat_consecutive_days=state.sat_consecutive_days,
                 forecast_tail_ratio=tail_ratio,
+                riverine_ratio=riverine_ratio,
                 gpm_quality=quality,
                 gpm_missing=gpm_missing,
                 rp_years=rp,
@@ -459,6 +498,9 @@ def _process_day(
         p24 = primary_ev.exceedance_prob_24h
         scores[pcode]["ensemble_spread_24h"] = round(math.sqrt(p24 * (1.0 - p24) / n_members), 4)
         scores[pcode]["forecast_tail_ratio"] = round(primary_ev.forecast_tail_ratio, 3)
+        scores[pcode]["riverine_ratio"] = round(primary_ev.riverine_ratio, 3)
+        if primary_result is not None and "severity_score" in primary_result:
+            scores[pcode]["severity_score"] = round(primary_result["severity_score"], 3)
         # Rainfall_Trend state (0=Decreasing, 1=Stable, 2=Increasing) from the
         # state-overridden evidence the BN actually saw (primary_ev predates the
         # in-step slope injection, so read the discretised state off the result).
@@ -470,7 +512,7 @@ def _process_day(
         # Per-member storyline: risk_state is the worst world (p95 tail-aware).
         # Re-run the BN on the *median* world (p50 member drives the forecast
         # hazard, observations unchanged) and report it + the worst−median
-        # spread — how much worse the tail is than the central plausible case.
+        # spread - how much worse the tail is than the central plausible case.
         if (
             has_median
             and primary_result is not None
@@ -490,7 +532,9 @@ def _process_day(
             scores[pcode]["storyline_median_state"] = median_state
             scores[pcode]["storyline_spread"] = max(0, worst_state - median_state)
 
-    out_path = write_risk_scores(day, scores, output_dir, meta=meta)
+    out_path = write_risk_scores(
+        day, scores, output_dir, meta=meta, storage_options=storage_options
+    )
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
 
@@ -499,11 +543,12 @@ _CHECKPOINT_VERSION = 3  # v3 adds DynamicBNState.gpm_history (Rainfall_Trend)
 
 
 def _save_checkpoint(
-    path: Path,
+    uri: str,
     bn_states: dict[str, dict[int, DynamicBNState]],
     next_date: date,
+    storage_options: dict | None = None,
 ) -> None:
-    """Serialise per-RP ``bn_states`` to JSON for crash recovery."""
+    """Serialise per-RP ``bn_states`` to JSON for crash recovery (local path or URI)."""
     payload = {
         "version": _CHECKPOINT_VERSION,
         "next_date": next_date.isoformat(),
@@ -512,10 +557,10 @@ def _save_checkpoint(
             for pcode, by_rp in bn_states.items()
         },
     }
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload))
-    os.replace(tmp, path)  # atomic on POSIX and Windows NTFS
-    log.debug("checkpoint_saved", path=str(path), next_date=next_date.isoformat())
+    # Single-object write: atomic per object on S3; good enough for a periodic,
+    # resumable checkpoint locally.
+    write_text(uri, json.dumps(payload), storage_options)
+    log.debug("checkpoint_saved", path=uri, next_date=next_date.isoformat())
 
 
 def _state_from_dict(s: dict) -> DynamicBNState:
@@ -530,21 +575,23 @@ def _state_from_dict(s: dict) -> DynamicBNState:
 
 
 def _load_checkpoint(
-    path: Path,
+    uri: str,
     default_states: dict[str, dict[int, DynamicBNState]],
     default_start: date,
     rp_options: list[int],
+    storage_options: dict | None = None,
 ) -> tuple[dict[str, dict[int, DynamicBNState]], date]:
     """Load checkpoint if present and return (bn_states, resume_date).
 
     Version-1 checkpoints (one flat state per pcode, pre-dating per-RP states)
     are migrated by seeding every RP with the same state.
     """
-    if not path.exists():
+    raw = read_text(uri, storage_options)
+    if raw is None:
         return default_states, default_start
 
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(raw)
         resume_date = date.fromisoformat(data["next_date"])
         if resume_date <= default_start:
             return default_states, default_start
@@ -567,7 +614,7 @@ def _load_checkpoint(
 
         log.info(
             "checkpoint_loaded",
-            path=str(path),
+            path=uri,
             resume_date=resume_date.isoformat(),
             n_units=len(states),
         )

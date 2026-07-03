@@ -1,7 +1,7 @@
 """Unit tests for season x ENSO x IOD Gumbel thresholds (GPM seasonal builder).
 
 Uses synthetic daily precipitation (no GPM download) to verify that seasonal
-block-maxima stratification produces distinct thresholds per season — the core
+block-maxima stratification produces distinct thresholds per season - the core
 ISSUE-20 fix (OND short rains must not be averaged with MAM long rains).
 """
 
@@ -68,7 +68,7 @@ def test_classify_enso_iod_per_year_csv(tmp_path):
 
 
 def test_ond_threshold_exceeds_mam(tmp_path):
-    """OND (wet) thresholds must be higher than MAM (dry) — seasonal stratification."""
+    """OND (wet) thresholds must be higher than MAM (dry) - seasonal stratification."""
     da = _synthetic_daily(ond_scale=30.0, mam_scale=10.0)
     idx = _neutral_index_csv(tmp_path)
     written = build_seasonal_thresholds(

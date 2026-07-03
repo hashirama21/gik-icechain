@@ -187,7 +187,7 @@ def download_gpm_ea(
     (OPeNDAP is I/O-bound). Saved as
     ``3B-DAY.MS.MRG.3IMERG.YYYYMMDD-S000000-E235959.V07B.nc4``; skips existing
     files unless *force* (so the download is resumable). Validates HDF5 magic
-    bytes — a returned HTML page means the Earthdata "NASA GESDISC DATA ARCHIVE"
+    bytes - a returned HTML page means the Earthdata "NASA GESDISC DATA ARCHIVE"
     app is not authorised (Earthdata profile -> Applications -> Authorized Apps).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -273,9 +273,9 @@ def load_gpm_daily_ea(paths: list[Path]) -> xr.DataArray:
     (time, lon, lat) plus 1-D ``lat``/``lon``.
 
     UNIT: verified against real files, ``precipitation`` units = ``mm/day``
-    (NOT a rate) — magnitudes max ~338, p99 ~31 mm/day. The conversion is
+    (NOT a rate) - magnitudes max ~338, p99 ~31 mm/day. The conversion is
     units-aware: only an ``mm/hr`` source is scaled by 24. (An earlier x24
-    assumption would have inflated thresholds ~24x — same class as the tp
+    assumption would have inflated thresholds ~24x - same class as the tp
     m/mm bug, ISSUE-14.)
     """
     arrays: list[xr.DataArray] = []

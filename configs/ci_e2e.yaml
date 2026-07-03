@@ -1,4 +1,4 @@
-# CI E2E isolation config — thin override of configs/default.yaml (deep-merged).
+# CI E2E isolation config - thin override of configs/default.yaml (deep-merged).
 # Only the MinIO store targets differ, so the manual E2E workflow can run any
 # date without writing to the shared gik-icechain-store / exceedance-zarr.
 # Credentials + endpoint still come from the environment (AWS_* secrets in CI).

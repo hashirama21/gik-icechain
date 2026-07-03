@@ -1,4 +1,4 @@
-"""Dashboard data builder — turns pipeline ``results/`` + the C2 exceedance Zarr
+"""Dashboard data builder - turns pipeline ``results/`` + the C2 exceedance Zarr
 into the static contract (web/public/data) and COG/STAC assets (web/public).
 
 Commands:

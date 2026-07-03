@@ -1,4 +1,4 @@
-"""Integration tests for C3 — CRMA risk inference and GeoJSON output."""
+"""Integration tests for C3 - CRMA risk inference and GeoJSON output."""
 
 from __future__ import annotations
 

@@ -157,7 +157,7 @@ def fetch_coalesced_ranges(
     ``obstore.get_ranges`` multi-range request per file, which batches and
     coalesces them at the HTTP layer. Because each ECMWF GRIB2 step-file holds
     all 51 ensemble members, this collapses ~1500 per-chunk ``get_range`` calls
-    into ~30 per-file requests — the request reduction the adjacency-only
+    into ~30 per-file requests - the request reduction the adjacency-only
     coalescing never delivered (members are not byte-adjacent).
 
     Uses ``obstore.store.S3Store`` with ``skip_signature=True`` (anonymous,
@@ -197,7 +197,7 @@ def fetch_coalesced_ranges(
             )
         return _stores[bucket]
 
-    # Group coalesced ranges by file — one multi-range request per file.
+    # Group coalesced ranges by file - one multi-range request per file.
     by_uri: dict[str, list[CoalescedRange]] = {}
     for cr in coalesced:
         by_uri.setdefault(cr.uri, []).append(cr)

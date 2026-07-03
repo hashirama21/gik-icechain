@@ -5,7 +5,7 @@ labeled ground truth via Maximum Likelihood Estimation with Laplace smoothing.
 
 Positive samples: EM-DAT flood event days → Risk_State = Red (3).
 Negative samples: randomly drawn non-event days, labeled with the alert level
-implied by the forecast hazard (0..2) — a high-hazard day without a flood is a
+implied by the forecast hazard (0..2) - a high-hazard day without a flood is a
 legitimate Orange (probabilistic warning that did not verify), so the Orange
 boundary stays learnable.
 Root-node CPTs (expert priors) are left unchanged.
@@ -287,7 +287,7 @@ def build_training_dataset(
             thresholds=thresholds or EvidenceThresholds(),
         )
         # Negative label: Green (0) by default. No EM-DAT record means no
-        # documented flood — the model should learn to predict low risk for
+        # documented flood - the model should learn to predict low risk for
         # these inputs. Using forecast_hazard_state as a label was circular
         # (input reflected back as output) and prevented learning the true
         # Orange/Red boundary from flood occurrence data.
@@ -295,7 +295,7 @@ def build_training_dataset(
         if evidence.forecast_hazard_state == 2 and evidence.gpm_obs_24h >= (
             evidence.thresholds.gpm_normal_mmday
         ):
-            risk_label = 1  # Yellow — high hazard signal but no flood
+            risk_label = 1  # Yellow - high hazard signal but no flood
         rows.append(
             _evidence_row(
                 evidence,
@@ -328,7 +328,7 @@ def emdat_severity_label(
 ) -> int:
     """Map an EM-DAT event to a graded Risk_State label from its impact.
 
-    Red (3) for major disasters, Orange (2) for moderate, Yellow (1) otherwise —
+    Red (3) for major disasters, Orange (2) for moderate, Yellow (1) otherwise -
     so positives populate the intermediate Risk_State rows instead of collapsing
     every flood to Red. Missing impact counts are treated as 0 (-> Yellow).
     """
@@ -368,7 +368,7 @@ def build_training_dataset_from_gpm(
     Args:
         admin_gdf: Admin-1 GeoDataFrame with an ``admin1_pcode`` column.
         gpm_dir:   Directory of GPM IMERG daily files (data-complete window).
-        crma:      Built CRMAModel — supplies thresholds and O(1) inference.
+        crma:      Built CRMAModel - supplies thresholds and O(1) inference.
     """
     import math
     from datetime import timedelta
@@ -479,7 +479,7 @@ def refine_cpts_with_emdat(
 ) -> None:
     """Refine the Risk_State CPT in-place using MLE on the EM-DAT training dataset.
 
-    Only the Risk_State leaf node is updated — root node priors are kept
+    Only the Risk_State leaf node is updated - root node priors are kept
     as the expert elicitation values. Rebuilds the inference engine after
     updating the CPD so the wrapper is immediately usable.
 
@@ -553,7 +553,7 @@ def dirichlet_partial_pool(
 
     A cluster with no data recovers the global CPT exactly; a cluster with many
     events follows its own empirical CPT. This is the hierarchical refinement the
-    mentor's roadmap flags as a future upgrade — only our multi-cluster EM-DAT
+    mentor's roadmap flags as a future upgrade - only our multi-cluster EM-DAT
     corpus can fit it.
     """
     posterior = pool_strength * global_probs + cluster_counts

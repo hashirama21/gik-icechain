@@ -1,6 +1,6 @@
 """Idempotent GRIB codec registration for numcodecs + Zarr v3.
 
-Must be called once per process — required in multiprocessing workers
+Must be called once per process - required in multiprocessing workers
 since codec registries are not inherited across fork.
 """
 

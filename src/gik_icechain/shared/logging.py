@@ -15,7 +15,7 @@ def configure_logging(level: str = "INFO", fmt: str = "json") -> None:
 
     Args:
         level: Standard Python log level name (DEBUG, INFO, WARNING, ERROR).
-        fmt:   Output format — ``"json"`` for machine-readable production logs,
+        fmt:   Output format - ``"json"`` for machine-readable production logs,
                ``"console"`` for human-readable development output.
     """
     log_level = getattr(logging, level.upper(), logging.INFO)

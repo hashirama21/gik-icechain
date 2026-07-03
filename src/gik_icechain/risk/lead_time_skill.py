@@ -1,4 +1,4 @@
-"""As-of-date skill curves — early-warning skill as a function of lead time.
+"""As-of-date skill curves - early-warning skill as a function of lead time.
 
 Every daily batch is an IceChunk snapshot (C1 time-travel), so the per-forecast-
 date risk scores are an honest **as-of-date** decision record: what the system
@@ -10,12 +10,12 @@ For each flood event onset ``T0`` (per admin-1 unit), it reads the risk signal
 from the forecast issued ``L`` days earlier (date ``T0 - L``) and aggregates,
 per lead ``L``:
 
-- **recall@tier** — the share of events already flagged at ``risk_state >= tier``
+- **recall@tier** - the share of events already flagged at ``risk_state >= tier``
   ``L`` days ahead (the early-warning detection rate);
-- **mean trigger** — the mean cumulative posterior ``P(>=tier)`` ``L`` days ahead.
+- **mean trigger** - the mean cumulative posterior ``P(>=tier)`` ``L`` days ahead.
 
-It answers the Challenge-41 question directly — *how many days ahead could we
-have acted?* — and is methodologically clean precisely because the versioned
+It answers the Challenge-41 question directly - *how many days ahead could we
+have acted?* - and is methodologically clean precisely because the versioned
 store guarantees each day's score used only that day's information. A
 non-versioned pipeline cannot make that guarantee.
 """

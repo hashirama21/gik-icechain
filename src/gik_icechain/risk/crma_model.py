@@ -40,7 +40,7 @@ class EastAfricaCluster(StrEnum):
     NILE_BASIN = "nile_basin"  # South Sudan, Sudan, N. Uganda
 
 
-# Module-level default weights — kept for backward-compat imports in tests.
+# Module-level default weights - kept for backward-compat imports in tests.
 # CRMAModel overrides these with values from CRMAModelConfig at build() time.
 _CLUSTER_WEIGHTS: dict[str, dict[str, float]] = {
     EastAfricaCluster.EQUATORIAL_EAST: {"forecast": 2.0, "obs": 1.5, "api": 1.5},
@@ -77,7 +77,7 @@ NODE_CARDS: dict[str, int] = {
     "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
 
-# Ordered parent dimensions of Compound_Risk — defines the lookup table axis order.
+# Ordered parent dimensions of Compound_Risk - defines the lookup table axis order.
 # Rainfall_Trend is appended last so the legacy axis order is unchanged.
 _COMPOUND_PARENTS = [
     "Forecast_Hazard",
@@ -159,6 +159,17 @@ def _dist_of_max(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     return out
 
 
+def _ratio_band(r: float, medium: float, high: float, extreme: float) -> int:
+    """Band a hazard ratio into 0/1/2/3 by ascending thresholds."""
+    if r >= extreme:
+        return 3
+    if r >= high:
+        return 2
+    if r >= medium:
+        return 1
+    return 0
+
+
 def _cost_loss_state(
     probs: np.ndarray, tau_yellow: float, tau_orange: float, tau_red: float
 ) -> int:
@@ -173,7 +184,7 @@ def _cost_loss_state(
         else Green
 
     For anticipatory action C/L < 0.5, so triggers fire below the argmax's
-    implicit ~0.5 — lifting recall / lead time at a controlled false-alarm
+    implicit ~0.5 - lifting recall / lead time at a controlled false-alarm
     cost (Murphy 1977; Coughlan de Perez et al. 2015). Checked most-severe
     first; with tau_yellow ≤ tau_orange ≤ tau_red the result is well-ordered.
     """
@@ -189,9 +200,51 @@ def _cost_loss_state(
     return 0
 
 
+def severity_index(evidence: CRMAEvidence, cfg: CRMAModelConfig) -> float:
+    """Continuous [0, 1] flood-severity blend from the *raw* (pre-discretization) evidence.
+
+    The discrete ``Risk_State`` CPT collapses continuous forecast magnitude into
+    a handful of ``p_red`` values, so alerts of very different intensity share
+    the same posterior. This monotone blend of max exceedance probability,
+    ensemble tail ratio, spatial coverage and API saturation restores a
+    within-tier ordering for ranking and dashboards. Non-finite drivers
+    contribute 0; weights are read from ``cfg.severity`` and normalised here.
+    """
+
+    def _clip01(x: float) -> float:
+        return 0.0 if not math.isfinite(x) else min(max(x, 0.0), 1.0)
+
+    excs = [
+        e
+        for e in (
+            evidence.exceedance_prob_24h,
+            evidence.exceedance_prob_72h,
+            evidence.exceedance_prob_7d,
+        )
+        if math.isfinite(e)
+    ]
+    exc = _clip01(max(excs)) if excs else 0.0
+    if cfg.riverine_extreme_ratio > 0 and math.isfinite(evidence.riverine_ratio):
+        exc = max(exc, _clip01(evidence.riverine_ratio / cfg.riverine_extreme_ratio))
+    tail = 0.0
+    if cfg.tail_extreme_ratio > 0 and math.isfinite(evidence.forecast_tail_ratio):
+        tail = _clip01(evidence.forecast_tail_ratio / cfg.tail_extreme_ratio)
+    spatial = _clip01(evidence.spatial_coverage_fraction)
+    denom = max(cfg.api_threshold_saturated_mm - cfg.api_threshold_normal_mm, 1e-9)
+    api = _clip01((evidence.api_mm - cfg.api_threshold_normal_mm) / denom)
+
+    s = cfg.severity
+    weights = (s.w_exceedance, s.w_tail, s.w_spatial, s.w_api)
+    values = (exc, tail, spatial, api)
+    total = sum(weights)
+    if total <= 0:
+        return 0.0
+    return float(sum(w * v for w, v in zip(weights, values, strict=True)) / total)
+
+
 @dataclass
 class EvidenceThresholds:
-    """Discretization thresholds for CRMAEvidence — instance fields (thread-safe).
+    """Discretization thresholds for CRMAEvidence - instance fields (thread-safe).
 
     Defaults match configs/default.yaml (component3.crma_model).
     Use CRMAModel.make_evidence() to get instances pre-loaded from config.
@@ -215,6 +268,13 @@ class EvidenceThresholds:
     tail_medium_ratio: float = 0.80
     tail_high_ratio: float = 1.00
     tail_extreme_ratio: float = 1.30
+    # Riverine-aware Forecast_Hazard: escalate on the upstream/riverine ratio even
+    # when local exceedance is ~0 (catchment-routed floods). Off by default.
+    riverine_aware_hazard: bool = False
+    riverine_medium_ratio: float = 0.80
+    riverine_high_ratio: float = 1.00
+    riverine_extreme_ratio: float = 1.30
+    sigma_riverine: float = 0.07
     # Gaussian soft-binning (virtual evidence). When False, evidence is hard.
     # Each sigma is a bandwidth in the node's native units; 0 → hard for that node.
     soft_evidence: bool = False
@@ -237,7 +297,7 @@ class CRMAEvidence:
     period the caller selected (``rp_years``). Discretization into the
     Forecast_Hazard node is calibrated per return period via
     ``thresholds.hazard_medium_threshold`` / ``hazard_high_threshold``
-    (see CRMAModelConfig.hazard_thresholds_by_rp) — a 2yr exceedance is
+    (see CRMAModelConfig.hazard_thresholds_by_rp) - a 2yr exceedance is
     structurally higher than a 5yr one, so each RP gets its own boundaries.
 
     All discretization thresholds are grouped in ``thresholds``
@@ -256,6 +316,9 @@ class CRMAEvidence:
     # Possible-worlds tail signal: p95 member accumulation / GEV return level
     # (max over the 24h/72h windows). 0.0 = no tail signal / tail-risk disabled.
     forecast_tail_ratio: float = 0.0
+    # Upstream/riverine hazard ratio (routed discharge or upstream rainfall /
+    # flood-return level). 0.0 = no signal. See riverine_aware_hazard.
+    riverine_ratio: float = 0.0
     # 7-day IMERG accumulation linear slope (mm/day). 0.0 = Stable (neutral):
     # an intensifying antecedent trend escalates risk, a weakening one dampens.
     rainfall_trend_slope: float = 0.0
@@ -289,7 +352,7 @@ class CRMAEvidence:
           GEV threshold (``exceedance_prob_*``). Strong when the ensemble agrees.
         - **Tail (possible-worlds)**: the high-quantile member accumulation as a
           ratio to the return level (``forecast_tail_ratio``). Strong when a
-          narrow but extreme tail exists even if the mean fraction is ~0 — the
+          narrow but extreme tail exists even if the mean fraction is ~0 - the
           convective wet-tail an ensemble-mean trigger is blind to.
 
         Taking the max means either an agreeing ensemble *or* a credible extreme
@@ -306,27 +369,35 @@ class CRMAEvidence:
         else:
             frac_state = 0
 
-        if not t.tail_aware_hazard:
-            return frac_state
-
-        r = self.forecast_tail_ratio
-        if r >= t.tail_extreme_ratio:
-            tail_state = 3
-        elif r >= t.tail_high_ratio:
-            tail_state = 2
-        elif r >= t.tail_medium_ratio:
-            tail_state = 1
-        else:
-            tail_state = 0
-
-        return max(frac_state, tail_state)
+        state = frac_state
+        if t.tail_aware_hazard:
+            state = max(
+                state,
+                _ratio_band(
+                    self.forecast_tail_ratio,
+                    t.tail_medium_ratio,
+                    t.tail_high_ratio,
+                    t.tail_extreme_ratio,
+                ),
+            )
+        if t.riverine_aware_hazard:
+            state = max(
+                state,
+                _ratio_band(
+                    self.riverine_ratio,
+                    t.riverine_medium_ratio,
+                    t.riverine_high_ratio,
+                    t.riverine_extreme_ratio,
+                ),
+            )
+        return state
 
     @property
     def obs_antecedent_state(self) -> int:
         """0=Below normal, 1=Normal, 2=Above normal.
 
         When the GPM observation is missing, return Normal (neutral) instead of
-        deriving "Below normal" from a placeholder 0 mm — an absent observation
+        deriving "Below normal" from a placeholder 0 mm - an absent observation
         is not evidence of a dry day.
         """
         if self.gpm_missing:
@@ -425,14 +496,22 @@ class CRMAEvidence:
             [t.hazard_medium_threshold, t.hazard_high_threshold, t.hazard_extreme_threshold],
             t.sigma_forecast,
         )
-        if not t.tail_aware_hazard:
-            return frac
-        tail = _gaussian_soft_bin(
-            self.forecast_tail_ratio,
-            [t.tail_medium_ratio, t.tail_high_ratio, t.tail_extreme_ratio],
-            t.sigma_tail,
-        )
-        return _dist_of_max(frac, tail)
+        dist = frac
+        if t.tail_aware_hazard:
+            tail = _gaussian_soft_bin(
+                self.forecast_tail_ratio,
+                [t.tail_medium_ratio, t.tail_high_ratio, t.tail_extreme_ratio],
+                t.sigma_tail,
+            )
+            dist = _dist_of_max(dist, tail)
+        if t.riverine_aware_hazard:
+            riv = _gaussian_soft_bin(
+                self.riverine_ratio,
+                [t.riverine_medium_ratio, t.riverine_high_ratio, t.riverine_extreme_ratio],
+                t.sigma_riverine,
+            )
+            dist = _dist_of_max(dist, riv)
+        return dist
 
     def obs_antecedent_dist(self) -> np.ndarray:
         t = self.thresholds
@@ -458,9 +537,7 @@ class CRMAEvidence:
         t = self.thresholds
         if not t.soft_evidence:
             return self._onehot(self.api_state, 3)
-        return _gaussian_soft_bin(
-            self.api_mm, [t.api_normal_mm, t.api_saturated_mm], t.sigma_api
-        )
+        return _gaussian_soft_bin(self.api_mm, [t.api_normal_mm, t.api_saturated_mm], t.sigma_api)
 
     def rainfall_trend_dist(self) -> np.ndarray:
         t = self.thresholds
@@ -504,9 +581,9 @@ class CRMAModel:
 
         self.cluster = cluster
         self._model: Any = None  # DiscreteBayesianNetwork
-        self._dbn: Any = None  # DynamicBayesianNetwork — built lazily
-        self._dbn_inference: Any = None  # DBNInference — built lazily
-        # Shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) — O(1) single-step inference
+        self._dbn: Any = None  # DynamicBayesianNetwork - built lazily
+        self._dbn_inference: Any = None  # DBNInference - built lazily
+        # Shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) - O(1) single-step inference
         self._lookup_table: np.ndarray | None = None
         self._cpt_path = cpt_path
         self._cfg = crma_cfg or self._default_cfg()
@@ -549,6 +626,11 @@ class CRMAModel:
             tail_medium_ratio=cfg.tail_medium_ratio,
             tail_high_ratio=cfg.tail_high_ratio,
             tail_extreme_ratio=cfg.tail_extreme_ratio,
+            riverine_aware_hazard=cfg.riverine_aware_hazard,
+            riverine_medium_ratio=cfg.riverine_medium_ratio,
+            riverine_high_ratio=cfg.riverine_high_ratio,
+            riverine_extreme_ratio=cfg.riverine_extreme_ratio,
+            sigma_riverine=cfg.sigma_riverine,
             soft_evidence=cfg.soft_evidence.enabled,
             sigma_forecast=cfg.soft_evidence.sigma_forecast,
             sigma_tail=cfg.soft_evidence.sigma_tail,
@@ -585,7 +667,7 @@ class CRMAModel:
     def build(self) -> None:
         """Build the static BN and pre-compute the O(1) lookup table.
 
-        The DBN for infer_sequence() is NOT built here — it is constructed
+        The DBN for infer_sequence() is NOT built here - it is constructed
         lazily on first call via _ensure_dbn(), since infer() (lookup table)
         is the only path used in production batch processing.
         """
@@ -667,13 +749,14 @@ class CRMAModel:
             obs["Soil_Memory"],
             obs["Rainfall_Trend"],
         ]
-        risk_state = self._decide_risk_state(probs)
-        return self._format_result(risk_state, probs, obs)
+        sev = self._severity(evidence)
+        risk_state = self._decide_risk_state(probs, sev)
+        return self._format_result(risk_state, probs, obs, sev)
 
     def _infer_soft(self, evidence: CRMAEvidence) -> dict[str, Any]:
         """Soft-evidence inference: weighted marginal of the lookup table.
 
-        ``P(risk) = Σ_states Π_k p_k(state) · P(risk | states)`` — contract each
+        ``P(risk) = Σ_states Π_k p_k(state) · P(risk | states)`` - contract each
         parent axis of the lookup table with that parent's soft probability
         vector. Under one-hot vectors this equals the hard lookup exactly.
         """
@@ -683,8 +766,9 @@ class CRMAModel:
         for node in _COMPOUND_PARENTS:
             res = np.tensordot(soft[node], res, axes=([0], [0]))
         probs = res  # shape (N_RISK_LEVELS,)
-        risk_state = self._decide_risk_state(probs)
-        return self._format_result(risk_state, probs, evidence.to_obs_dict())
+        sev = self._severity(evidence)
+        risk_state = self._decide_risk_state(probs, sev)
+        return self._format_result(risk_state, probs, evidence.to_obs_dict(), sev)
 
     def infer_sequence(
         self,
@@ -724,8 +808,9 @@ class CRMAModel:
         out: list[dict[str, Any]] = []
         for t, ev in enumerate(evidence_sequence):
             probs = results_raw[("Risk_State", t)].values
-            risk_state = self._decide_risk_state(probs)
-            out.append(self._format_result(risk_state, probs, ev.to_obs_dict()))
+            sev = self._severity(ev)
+            risk_state = self._decide_risk_state(probs, sev)
+            out.append(self._format_result(risk_state, probs, ev.to_obs_dict(), sev))
         return out
 
     def _build_lookup_table(self, cpd_compound: Any, cpd_risk: Any) -> np.ndarray:
@@ -758,22 +843,39 @@ class CRMAModel:
             evidence_card=list(cpd.cardinality[1:]) if parents else None,
         )
 
-    def _decide_risk_state(self, probs: np.ndarray) -> int:
+    def _decide_risk_state(self, probs: np.ndarray, severity: float | None = None) -> int:
         """Map a risk posterior to a label.
 
         Cost-loss tiering when ``cost_loss.enabled`` (highest tier whose
         cumulative posterior reaches its C/L ratio), otherwise argmax. Under
         the default (disabled) config this is exactly ``argmax(probs)``.
+
+        When ``cost_loss.severity_red_split`` > 0 and a continuous ``severity``
+        is supplied, a saturated Red (posterior-driven) is demoted to Orange
+        unless its magnitude reaches the split - decoupling the tier from the
+        flat ``p_red`` (roadmap Item 3).
         """
         cl = self._cfg.cost_loss
-        if cl.enabled:
-            return _cost_loss_state(probs, cl.tau_yellow, cl.tau_orange, cl.tau_red)
-        return int(np.argmax(probs))
+        if not cl.enabled:
+            return int(np.argmax(probs))
+        state = _cost_loss_state(probs, cl.tau_yellow, cl.tau_orange, cl.tau_red)
+        if (
+            state == 3
+            and cl.severity_red_split > 0.0
+            and severity is not None
+            and severity < cl.severity_red_split
+        ):
+            return 2  # demote low-magnitude Red to Orange
+        return state
 
     def _format_result(
-        self, risk_state: int, probs: np.ndarray, obs: dict[str, int]
+        self,
+        risk_state: int,
+        probs: np.ndarray,
+        obs: dict[str, int],
+        severity: float | None = None,
     ) -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "risk_state": risk_state,
             "risk_label": RISK_LEVELS[risk_state],
             "p_green": float(probs[0]),
@@ -782,6 +884,13 @@ class CRMAModel:
             "p_red": float(probs[3]),
             "evidence": obs,
         }
+        if severity is not None:
+            result["severity_score"] = float(severity)
+        return result
+
+    def _severity(self, evidence: CRMAEvidence) -> float | None:
+        """Continuous severity for this evidence, or None when disabled."""
+        return severity_index(evidence, self._cfg) if self._cfg.severity.enabled else None
 
     def _build_cpds(self) -> list[Any]:
         """Return TabularCPD objects for the static BN, all values from config."""
@@ -826,7 +935,7 @@ class CRMAModel:
     def _build_compound_risk_cpd(self, cfg: CRMAModelConfig) -> Any:
         """Build the Compound_Risk CPT from a config-driven rule-based risk score.
 
-        Each parent state contributes additively (0–10 scale).
+        Each parent state contributes additively (0-10 scale).
         Data_Confidence dampens by [0.5, 0.8, 1.0] to reflect uncertainty.
         Soil_Memory selects between two CPT bucket sets:
           - fresh (soil_memory=0): standard thresholds
@@ -849,7 +958,7 @@ class CRMAModel:
 
         fresh_thr = cfg.compound_score_thresholds.fresh  # [low, mid, high]
         prol_thr = cfg.compound_score_thresholds.prolonged
-        # Data_Confidence dampening [Low, Medium, High] — config-driven so the
+        # Data_Confidence dampening [Low, Medium, High] - config-driven so the
         # common Medium case for precip ensembles does not veto strong signals.
         damping = list(cfg.confidence_damping)
 
@@ -859,7 +968,14 @@ class CRMAModel:
         cpt = np.zeros((4, n_combinations))
         for idx in range(n_combinations):
             (
-                f_haz, obs_ant, t_persist, spatial, confidence, api, soil_mem, trend,
+                f_haz,
+                obs_ant,
+                t_persist,
+                spatial,
+                confidence,
+                api,
+                soil_mem,
+                trend,
             ) = self._idx_to_states(idx, _PARENT_CARDS)
 
             # Data_Confidence dampens only the observation branch, not forecast.

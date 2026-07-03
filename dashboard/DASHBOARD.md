@@ -1,4 +1,4 @@
-# GIK-IceChain — Dashboard Component Architecture
+# GIK-IceChain - Dashboard Component Architecture
 
 > Design de référence du composant *dashboard*, aligné sur les livrables
 > exigés par la proposition Code-for-Earth (calendar-map + **VEDA-UI MDX
@@ -19,7 +19,7 @@ pas concurrents : ce sont les deux livrables, alimentés par le même pipeline.
 ## Architecture cible
 
 ```
-                 PIPELINE (C1→C2→C3)  — déjà fonctionnel
+                 PIPELINE (C1→C2→C3)  - déjà fonctionnel
    IceChunk store ──► C2 exceedance Zarr ──► C3 risk GeoJSON + risk_scores.json
                                  │                        │
                                  ▼                        ▼
@@ -49,8 +49,8 @@ facturé à l'invocation (≈ 0 € au repos).
 
 | Couche (template.mdx) | Source pipeline | Producteur | Statut |
 |---|---|---|---|
-| `risk-state` (COG 0–3, colormap `risk_levels`) | `risk_scores.json` → `rasterise_risk_geojson` | `generate_storymaps.py` | existe, à brancher |
-| `exceedance-24h` (COG 0–1, `ylorrd`) | C2 Zarr `exceedance_prob[win,rp]` | export Zarr→COG par win×rp | **à ajouter** |
+| `risk-state` (COG 0-3, colormap `risk_levels`) | `risk_scores.json` → `rasterise_risk_geojson` | `generate_storymaps.py` | existe, à brancher |
+| `exceedance-24h` (COG 0-1, `ylorrd`) | C2 Zarr `exceedance_prob[win,rp]` | export Zarr→COG par win×rp | **à ajouter** |
 | GPM IMERG observé | `data/gpm_imerg/{date}` → COG | export → COG | **à ajouter** |
 | EM-DAT overlays | `data/emdat/east_africa_floods.csv` → GeoJSON | léger | facile |
 | Admin-1 vecteur (shell A) | `admin1_boundaries.geojson` | découpe par `country` | facile |
@@ -69,7 +69,7 @@ facturé à l'invocation (≈ 0 € au repos).
 ```
 
 `admin1_boundaries.geojson` (source `data/admin_boundaries/east_africa_admin1.geojson`) :
-FeatureCollection, **238 unités, 16 pays** — KEN(47), TZA(30), SYC(26), MDG(22),
+FeatureCollection, **238 unités, 16 pays** - KEN(47), TZA(30), SYC(26), MDG(22),
 SDN(19), BDI(18), SOM(18), ETH(11), SSD(10), ZMB(10), ERI(6), DJI(6), RWA(5),
 UGA(4), COM(3), MWI(3). *(Les anciens `results/` à 155 unités/10 pays sont périmés.)*
 
@@ -99,8 +99,8 @@ Contrat attendu par le template v4 (aujourd'hui synthétique via `Math.random()`
 
 ## Décisions par défaut
 
-- **Risque = 4 classes canoniques** (Green/Yellow/Orange/Red) — c'est ce qu'exigent
-  les artefacts VEDA déjà écrits (`risk_levels` 0–3, MDX `rescale "0,3"`). L'affichage
+- **Risque = 4 classes canoniques** (Green/Yellow/Orange/Red) - c'est ce qu'exigent
+  les artefacts VEDA déjà écrits (`risk_levels` 0-3, MDX `rescale "0,3"`). L'affichage
   7-tons du v4 est dérivé de `p_red/p_orange` ; la vérité COG/storymap reste 4.
 - **Couverture pays** : le pipeline couvre **16 pays / 238 unités** (dont SDN,
   MDG, COM, SYC, MWI, ZMB). Le template v4 n'en liste que **11** → **étendre le
@@ -129,7 +129,7 @@ VEDA-UI et TiTiler sont **découplés** (voir section dédiée du design) :
 
 ## Blocage connu
 
-Run E2E 2025-11-19 : C1 ✅ + C2-compute ✅, échec à la **persistance C2** —
+Run E2E 2025-11-19 : C1 ✅ + C2-compute ✅, échec à la **persistance C2** -
 `latitude 149 ≠ 159` (store MinIO `exceedance-zarr` écrit avec une bbox différente,
 résidu stale). Correctif : pointer `outputs.exceedance_store_uri` sur un chemin neuf
 ou vider l'ancien store. N'empêche pas la Phase 1 (basée sur `results/` existant).

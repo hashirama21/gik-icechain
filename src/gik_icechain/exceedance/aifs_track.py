@@ -1,4 +1,4 @@
-"""AIFS vs IFS ensemble comparison — Innovation 4.
+"""AIFS vs IFS ensemble comparison - Innovation 4.
 
 Computes delta exceedance probabilities, ensemble spread ratios, and
 seasonal stratifications between the IFS and AIFS parallel tracks.

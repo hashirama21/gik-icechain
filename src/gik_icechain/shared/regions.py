@@ -1,4 +1,4 @@
-"""East Africa spatial definitions — bounding boxes, country codes, admin loaders."""
+"""East Africa spatial definitions - bounding boxes, country codes, admin loaders."""
 
 from __future__ import annotations
 
@@ -40,18 +40,18 @@ EAST_AFRICA_COUNTRIES_ISO3: frozenset[str] = frozenset(
 # Madagascar (UN Geoscheme). Source: ICPAC E4DRR regional classification (2024).
 COUNTRY_CLUSTER: dict[str, str] = {
     "BDI": "equatorial_east",
-    "COM": "equatorial_east",   # Comoros — Indian Ocean island
+    "COM": "equatorial_east",   # Comoros - Indian Ocean island
     "DJI": "horn_arid",
     "ERI": "horn_arid",
     "ETH": "great_rift",
     "KEN": "equatorial_east",
-    "MDG": "equatorial_east",   # Madagascar — Indian Ocean island
+    "MDG": "equatorial_east",   # Madagascar - Indian Ocean island
     "MWI": "great_rift",        # placeholder cluster (no SADC cluster yet)
     "RWA": "equatorial_east",
-    "SDN": "nile_basin",        # Sudan — Nile Basin, critical for flood risk
+    "SDN": "nile_basin",        # Sudan - Nile Basin, critical for flood risk
     "SOM": "horn_arid",
     "SSD": "nile_basin",
-    "SYC": "equatorial_east",   # Seychelles — Indian Ocean island
+    "SYC": "equatorial_east",   # Seychelles - Indian Ocean island
     "TZA": "equatorial_east",
     "UGA": "equatorial_east",
     "ZMB": "great_rift",

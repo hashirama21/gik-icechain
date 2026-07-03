@@ -20,7 +20,7 @@ import xarray as xr
 
 log = structlog.get_logger(__name__)
 
-# API discretisation thresholds (mm) — White et al. (2021), Nzoia basin
+# API discretisation thresholds (mm) - White et al. (2021), Nzoia basin
 _API_DRY_THRESHOLD = 30.0
 _API_SATURATED_THRESHOLD = 80.0
 
@@ -118,7 +118,7 @@ def compute_api_series(
 
     Args:
         gpm_ds:     Dataset with *precip_var* as (time, lat, lon).
-        decay:      Exponential decay factor (0–1); default 0.8.
+        decay:      Exponential decay factor (0-1); default 0.8.
         initial_mm: API value for the step before the first observation.
         precip_var: Name of the precipitation variable in *gpm_ds*.
 

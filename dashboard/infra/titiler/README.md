@@ -1,8 +1,8 @@
-# TiTiler — raster tiling for GIK-IceChain storymaps
+# TiTiler - raster tiling for GIK-IceChain storymaps
 
 TiTiler turns the COGs produced by `data_pipeline/pipeline.py cogs` into on-the-fly
 `{z}/{x}/{y}` tiles consumed by MapLibre in the storymaps. **Only raster layers**
-(exceedance, GPM) go through TiTiler — the admin-1 risk shell is vector GeoJSON.
+(exceedance, GPM) go through TiTiler - the admin-1 risk shell is vector GeoJSON.
 
 ## Local development
 
@@ -23,7 +23,7 @@ open "http://localhost:8000/cog/viewer?url=/data/cogs/risk_2025-11-19.tif"
 
 Point the frontend at it with `NEXT_PUBLIC_TITILER_BASE=http://localhost:8000`.
 
-## Production (AWS Lambda) — zero idle cost
+## Production (AWS Lambda) - zero idle cost
 
 Config lives in [`../../storymaps/titiler_config.yaml`](../../storymaps/titiler_config.yaml)
 (Lambda `gik-icechain-titiler`, GDAL layer, COG bucket `gik-icechain-cogs`,

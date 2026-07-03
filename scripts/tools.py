@@ -236,7 +236,7 @@ def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
 
 
 def _download_chirps(output_dir: Path, start: date, end: date) -> None:
-    """Download CHIRPS v2.0 daily Africa rainfall — no authentication required.
+    """Download CHIRPS v2.0 daily Africa rainfall - no authentication required.
 
     CHIRPS (Climate Hazards Group InfraRed Precipitation with Station data)
     offers 0.05 degree daily rainfall for Africa.  Files are converted to
@@ -268,7 +268,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
         url = f"{base}/{current.year}/{tif_name}"
 
         tmp_gz_path = Path(tempfile.mktemp(suffix=".tif.gz"))
-        # Remove ".gz" to get ".tif" — avoid double-extension on Windows
+        # Remove ".gz" to get ".tif" - avoid double-extension on Windows
         tmp_tif = tmp_gz_path.parent / tmp_gz_path.name[:-3]
         try:
             with _urlopen(url, timeout=60) as resp:
@@ -282,7 +282,7 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
             with xr.open_dataset(tmp_tif, engine="rasterio") as ds_raw:
                 precip = ds_raw["band_data"].isel(band=0).drop_vars("band", errors="ignore")
 
-                # rasterio uses 'y'/'x'; CHIRPS uses 'lat'/'lon' — normalise both
+                # rasterio uses 'y'/'x'; CHIRPS uses 'lat'/'lon' - normalise both
                 lat_name = next((c for c in precip.dims if "lat" in c.lower() or c == "y"), None)
                 lon_name = next((c for c in precip.dims if "lon" in c.lower() or c == "x"), None)
                 rename = {}
@@ -397,16 +397,16 @@ def download_gpm(
     Two sources are available:
 
     chirps (default, no authentication):
-      CHIRPS v2.0 — 0.05 deg daily Africa rainfall, freely available.
+      CHIRPS v2.0 - 0.05 deg daily Africa rainfall, freely available.
       Files saved as GPM-compatible nc4 so gpm_loader.py reads them.
 
     nasa (requires free Earthdata account):
-      GPM IMERG V07B Final Run — 0.1 deg global, official NASA product.
+      GPM IMERG V07B Final Run - 0.1 deg global, official NASA product.
       Register at https://urs.earthdata.nasa.gov/home then set:
         export EARTHDATA_USER=<user>
         export EARTHDATA_PASSWORD=<pass>
 
-    Example — OND 2024 wet season:
+    Example - OND 2024 wet season:
       python scripts/tools.py download-gpm --start 2024-10-01 --end 2024-10-07
     """
     s, e = date.fromisoformat(start), date.fromisoformat(end)
@@ -573,7 +573,7 @@ def download_thresholds(
     produces the individual ``thresholds_*.nc`` files that
     ``AdaptiveGEVThresholds.load()`` expects.
 
-    Idempotent — skips if threshold files already exist.
+    Idempotent - skips if threshold files already exist.
     """
     import numpy as np
     import xarray as xr
@@ -595,10 +595,10 @@ def download_thresholds(
 
     # ENSO/IOD-stratified Method-of-Moments Gumbel fit on the per-year annual
     # maxima (`annual_maxima`: duration × year × lat × lon). Season is NOT
-    # stratified — annual maxima conflate seasons (one max per year) — so the
+    # stratified - annual maxima conflate seasons (one max per year) - so the
     # four season files for a given (enso, iod) are identical by construction.
     # This delivers genuinely phase-varying thresholds (was 36 identical copies
-    # before — Innovation 2 was cosmetic). See ISSUE-20.
+    # before - Innovation 2 was cosmetic). See ISSUE-20.
     target_lat = np.arange(-14.0, 25.0, 1.0)
     target_lon = np.arange(20.0, 54.0, 1.0)
     euler = 0.5772156649015329  # Euler-Mascheroni (Gumbel mean offset)
@@ -1037,7 +1037,7 @@ def validate_emdat(
     if event_level:
         ev = _event_level_metrics(risk_dir, lead_days, start, end)
         typer.echo(
-            f"\nEvent-level early detection (lead={lead_days}d) — "
+            f"\nEvent-level early detection (lead={lead_days}d) - "
             "contiguous EM-DAT runs per unit collapsed to one event:"
         )
         typer.echo(
@@ -1132,7 +1132,7 @@ def skill_vs_lead(
     """As-of-date early-warning skill vs forecast lead time, against EM-DAT.
 
     For each EM-DAT flood onset, reads the risk signal from the forecast issued L
-    days earlier and reports recall@tier and mean trigger probability per lead —
+    days earlier and reports recall@tier and mean trigger probability per lead -
     "how many days ahead could we have acted?". Honest because every daily batch
     is an IceChunk snapshot (no future leakage).
     """

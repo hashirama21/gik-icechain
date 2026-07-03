@@ -576,7 +576,7 @@ class TestEscalationLevers:
     def test_decoupling_boundary_diverges(self, make_evidence):
         """At a bucket boundary, a strong forecast under missing GPM (Low
         confidence) must survive when decoupled but is damped down under the
-        legacy whole-score coupling — the only case where #3 is observable."""
+        legacy whole-score coupling - the only case where #3 is observable."""
         from gik_icechain.shared.config import CRMAModelConfig
 
         kwargs = dict(

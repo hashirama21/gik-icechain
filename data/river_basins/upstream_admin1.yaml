@@ -1,0 +1,42 @@
+# Admin-1 river topology for the riverine-hazard feed (roadmap Item 1).
+#
+# Maps each flood-prone downstream admin-1 unit to the upstream units whose
+# forecast rainfall routes into it. The riverine feed pools the upstream
+# forecast intensity (tail ratio) into the downstream unit's riverine_ratio,
+# so catchment-routed floods escalate Forecast_Hazard even when local rainfall
+# is ~0 (the Shabelle/Juba/Sudd misses identified in docs/C3_VALIDATION_FINDINGS).
+#
+# Keys use the pipeline unit format ISO_<geoBoundaries name, truncated to 20>.
+# Curated for the major, well-established East African river systems; extend as
+# GloFAS/HydroBASINS topology becomes available.
+
+# --- Shabelle (Ethiopian highlands -> Somalia) ---
+SOM_Hiiraan: [ETH_Oromia, ETH_Somali]
+SOM_Middle Shebelle: [ETH_Oromia, ETH_Somali, SOM_Hiiraan]
+SOM_Lower Shebelle: [ETH_Oromia, ETH_Somali, SOM_Hiiraan, SOM_Middle Shebelle]
+SOM_Banadir: [ETH_Oromia, SOM_Hiiraan, SOM_Middle Shebelle]
+
+# --- Juba (Ethiopian highlands -> Somalia) ---
+SOM_Gedo: [ETH_Oromia, ETH_SNNPR]
+SOM_Middle Juba: [ETH_Oromia, ETH_SNNPR, SOM_Gedo]
+SOM_Lower Juba: [ETH_Oromia, ETH_SNNPR, SOM_Gedo, SOM_Middle Juba]
+
+# --- White Nile / Sudd (Ethiopia + Uganda -> South Sudan) ---
+SSD_Upper Nile: [ETH_Gambela, ETH_Beneshangul Gumu, ETH_Oromia]
+SSD_Central Equatoria: [UGA_Western Region, UGA_Central Region]
+SSD_Jonglei: [UGA_Western Region, SSD_Central Equatoria]
+SSD_Unity: [SSD_Warrap, SSD_Lakes]
+SSD_Lakes: [UGA_Western Region]
+
+# --- Blue Nile / main Nile (Ethiopia + South Sudan -> Sudan) ---
+SDN_Blue Nile: [ETH_Amhara, ETH_Beneshangul Gumu]
+SDN_Sennar: [ETH_Amhara, SDN_Blue Nile]
+SDN_Gezira: [ETH_Amhara, SDN_Blue Nile, SDN_Sennar]
+SDN_White Nile: [SSD_Upper Nile, SSD_Jonglei]
+SDN_Khartoum: [ETH_Amhara, SDN_Blue Nile, SDN_White Nile, SDN_Gezira]
+SDN_River Nile: [SDN_Khartoum, ETH_Amhara]
+SDN_Northern: [SDN_River Nile, SDN_Khartoum]
+
+# --- Tana (Kenya highlands -> coast) ---
+KEN_Tana River: [KEN_Nyeri, "KEN_Murang'a", KEN_Kirinyaga, KEN_Embu, KEN_Meru]
+KEN_Garissa: [KEN_Tana River, KEN_Nyeri, "KEN_Murang'a", KEN_Kirinyaga, KEN_Embu, KEN_Meru]

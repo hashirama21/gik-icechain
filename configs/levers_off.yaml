@@ -1,0 +1,10 @@
+# Baseline: disable the roadmap levers to isolate their effect on the 31-day run.
+component3:
+  crma_model:
+    severity:
+      enabled: false
+    cost_loss:
+      severity_red_split: 0.0
+    riverine_aware_hazard: false
+  riverine:
+    enabled: false

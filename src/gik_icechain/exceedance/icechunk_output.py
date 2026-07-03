@@ -1,14 +1,14 @@
 """Versioned IceChunk store for computed decision artefacts.
 
 Unlike the C1 virtual store (manifests pointing to raw GRIB2 on S3), this
-store holds the actual computed values — exceedance probabilities and ensemble
-confidence — with IceChunk time-travel semantics.
+store holds the actual computed values - exceedance probabilities and ensemble
+confidence - with IceChunk time-travel semantics.
 
 Each daily commit creates a snapshot tagged ``YYYY-MM-DD``, enabling queries
 like ``store.checkout_as_of(date(2023, 10, 25))`` to retrieve the exceedance
 probabilities that were computed with the data available on that date.
 
-No virtual chunk credentials are needed — this stores native Zarr arrays.
+No virtual chunk credentials are needed - this stores native Zarr arrays.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class DecisionStore:
         ``ancestry`` yields snapshots newest-first, so the first one seen per
         ``forecast_date`` is its most recent (re-)ingest. IceChunk tags are
         immutable and non-reusable, so a re-committed date keeps a stale tag but
-        advances the branch — only ancestry reflects the fresh snapshot.
+        advances the branch - only ancestry reflects the fresh snapshot.
         """
         if self._repo is None:
             raise RuntimeError("Store not opened. Call create_or_open() first.")

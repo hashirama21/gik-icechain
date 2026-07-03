@@ -1,4 +1,4 @@
-"""Backfill the ECMWF archive gap (May 2023 – Feb 2024) via parallel Cloud Run.
+"""Backfill the ECMWF archive gap (May 2023 - Feb 2024) via parallel Cloud Run.
 
 The GIK HuggingFace dataset was initially seeded from March 2024 onwards.
 This module identifies the missing days, downloads the corresponding GRIB2

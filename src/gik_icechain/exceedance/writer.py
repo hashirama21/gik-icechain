@@ -4,15 +4,15 @@ Output Zarr schema::
 
     dimensions: (date, latitude, longitude, window, return_period)
     variables:
-        exceedance_prob      — float32 in [0, 1]
-        ensemble_confidence  — int8 in {0=Low, 1=Medium, 2=High}
+        exceedance_prob      - float32 in [0, 1]
+        ensemble_confidence  - int8 in {0=Low, 1=Medium, 2=High}
                                derived from inter-member IQR/median (24h window)
     coords:
-        date          — datetime64[D]
-        latitude      — float32, degrees N
-        longitude     — float32, degrees E
-        window        — int16, accumulation window in hours
-        return_period — int16, return period in years
+        date          - datetime64[D]
+        latitude      - float32, degrees N
+        longitude     - float32, degrees E
+        window        - int16, accumulation window in hours
+        return_period - int16, return period in years
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def write_exceedance_store(
                          as exceedance). Written as the variable ``tail_ratio``
                          (the possible-worlds tail / worst-world signal).
         median_dict:     Optional mapping forecast date → median_ratio DataArray
-                         (same dims). Written as ``median_ratio`` — the p50
+                         (same dims). Written as ``median_ratio`` - the p50
                          member world for the per-member storyline.
     """
     if not exceedance_dict:
@@ -197,12 +197,12 @@ def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset
 
     Appending along ``date`` requires every other dimension to match the store
     exactly. When a run produces a different set of accumulation windows or
-    return periods (e.g. a 3 h window skipped on 6-hourly data — 6 windows vs
+    return periods (e.g. a 3 h window skipped on 6-hourly data - 6 windows vs
     the store's 7), a naive ``to_zarr(append_dim="date")`` raises a cryptic
     shape error and can corrupt the store.
 
     This reindexes *new_ds* onto the store's ``window``/``return_period``
-    coordinates — NaN-filling values the run did not produce — and fails loudly
+    coordinates - NaN-filling values the run did not produce - and fails loudly
     if the run introduces *new* coordinate values the store cannot represent.
     """
     for dim in ("window", "return_period"):
@@ -252,7 +252,7 @@ def _build_dataset(
             ds["tail_ratio"].attrs = {
                 "long_name": "Forecast tail ratio (pXX member accumulation / GEV return level)",
                 "units": "1",
-                "definition": "possible-worlds tail signal — see exceedance.compute_tail_ratio",
+                "definition": "possible-worlds tail signal - see exceedance.compute_tail_ratio",
             }
     if median_dict:
         median_arrays = [median_dict[d] for d in sorted_dates if d in median_dict]
@@ -262,7 +262,7 @@ def _build_dataset(
             ds["median_ratio"].attrs = {
                 "long_name": "Median member ratio (p50 member accumulation / GEV return level)",
                 "units": "1",
-                "definition": "median-world storyline signal — see exceedance.compute_member_ratio",
+                "definition": "median-world storyline signal - see exceedance.compute_member_ratio",
             }
     if confidence_dict:
         conf_arrays = [confidence_dict[d] for d in sorted_dates if d in confidence_dict]
@@ -273,6 +273,6 @@ def _build_dataset(
                 "long_name": "Ensemble confidence level (24h window)",
                 "flag_values": [0, 1, 2],
                 "flag_meanings": "low_confidence medium_confidence high_confidence",
-                "definition": "IQR/max(median,1mm) — ICPAC EGU26-18323",
+                "definition": "IQR/max(median,1mm) - ICPAC EGU26-18323",
             }
     return ds

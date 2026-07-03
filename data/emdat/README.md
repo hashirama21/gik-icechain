@@ -19,5 +19,5 @@ pcodes, and overwrite `east_africa_floods.csv`.
 
 ## Schema (columns required by the loader)
 `DisNo., Disaster Type, ISO, Country, Admin1, Admin1 Code, Start Date,
-End Date, Total Deaths, No. Affected` — one row per (event × admin-1 unit);
+End Date, Total Deaths, No. Affected` - one row per (event × admin-1 unit);
 rows of the same event share `DisNo.`.

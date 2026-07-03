@@ -1,4 +1,4 @@
-"""Integration tests for C1 — GIK Parquet → IceChunk virtual store."""
+"""Integration tests for C1 - GIK Parquet → IceChunk virtual store."""
 
 from __future__ import annotations
 
