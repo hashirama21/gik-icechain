@@ -3,8 +3,8 @@
 Output layout::
 
     output_dir/
-        admin1_boundaries.geojson          # written once — 16 MB geometries
-        2025-01-01_risk_scores.json        # written daily — ~44 KB scores only
+        admin1_boundaries.geojson          # written once - 16 MB geometries
+        2025-01-01_risk_scores.json        # written daily - ~44 KB scores only
         2025-01-02_risk_scores.json
         ...
 """
@@ -18,27 +18,30 @@ from typing import Any
 
 import structlog
 
+from gik_icechain.shared.storage import join_uri, path_exists, write_text
+
 log = structlog.get_logger(__name__)
 
 _EAHW_RISK_LABELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red"}
 _EAHW_HAZARD_TYPE = "Flood"
 
 
-def write_boundaries(admin: Any, output_dir: Path) -> Path:
-    """Write admin-1 boundary GeoJSON once into *output_dir*.
+def write_boundaries(admin: Any, output_dir: str, storage_options: dict | None = None) -> str:
+    """Write admin-1 boundary GeoJSON once under *output_dir* (local path or URI).
 
     Skips if the file already exists so subsequent daily runs are idempotent.
 
     Args:
-        admin:      GeoDataFrame from the admin-1 boundaries file.
-        output_dir: Directory that holds all C3 outputs.
+        admin:           GeoDataFrame from the admin-1 boundaries file.
+        output_dir:      Directory or S3 URI that holds all C3 outputs.
+        storage_options: fsspec options (e.g. ``{"endpoint_url": ...}``) for S3.
 
     Returns:
-        Path to the written (or existing) boundaries file.
+        URI of the written (or existing) boundaries file.
     """
-    out_path = output_dir / "admin1_boundaries.geojson"
-    if out_path.exists():
-        return out_path
+    out_uri = join_uri(output_dir, "admin1_boundaries.geojson")
+    if path_exists(out_uri, storage_options):
+        return out_uri
 
     features = [
         {
@@ -52,36 +55,39 @@ def write_boundaries(admin: Any, output_dir: Path) -> Path:
         }
         for _, row in admin.iterrows()
     ]
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
-    log.info("boundaries_written", path=str(out_path), n_units=len(features))
-    return out_path
+    write_text(
+        out_uri, json.dumps({"type": "FeatureCollection", "features": features}), storage_options
+    )
+    log.info("boundaries_written", path=out_uri, n_units=len(features))
+    return out_uri
 
 
 def write_risk_scores(
     day: date,
     scores: dict[str, dict],
-    output_dir: Path,
+    output_dir: str,
     meta: dict | None = None,
-) -> Path:
-    """Write lightweight per-day risk scores (no geometry).
+    storage_options: dict | None = None,
+) -> str:
+    """Write lightweight per-day risk scores (no geometry) under *output_dir*.
 
     Args:
-        day:        Forecast date.
-        scores:     Mapping pcode → score dict from :func:`build_score`.
-        output_dir: Output directory.
-        meta:       Optional pipeline metadata (version, config hash, etc.).
+        day:             Forecast date.
+        scores:          Mapping pcode → score dict from :func:`build_score`.
+        output_dir:      Output directory or S3 URI.
+        meta:            Optional pipeline metadata (version, config hash, etc.).
+        storage_options: fsspec options for S3.
 
     Returns:
-        Path to the written scores file.
+        URI of the written scores file.
     """
-    out_path = output_dir / f"{day.isoformat()}_risk_scores.json"
+    out_uri = join_uri(output_dir, f"{day.isoformat()}_risk_scores.json")
     payload: dict = {"date": day.isoformat(), "units": scores}
     if meta:
         payload["meta"] = meta
-    out_path.write_text(json.dumps(payload))
-    log.info("risk_scores_written", date=day, n_units=len(scores), path=str(out_path))
-    return out_path
+    write_text(out_uri, json.dumps(payload), storage_options)
+    log.info("risk_scores_written", date=day, n_units=len(scores), path=out_uri)
+    return out_uri
 
 
 def build_score(
@@ -91,7 +97,7 @@ def build_score(
     emdat_flood_match: bool = False,
     risk_by_rp: dict[str, dict] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Build a (pcode, score_dict) pair from CRMA inference outputs — no geometry.
+    """Build a (pcode, score_dict) pair from CRMA inference outputs - no geometry.
 
     Args:
         unit:              pandas Series row from the admin-1 GeoDataFrame.

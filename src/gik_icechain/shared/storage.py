@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,9 +17,68 @@ try:
         wait=wait_exponential(multiplier=1, min=2, max=30),
     )
 except ImportError:
-    # tenacity not installed — fall back to no-op decorator
+    # tenacity not installed - fall back to no-op decorator
     def _s3_retry(fn):  # type: ignore[misc]
         return fn
+
+
+def _fs_and_path(uri: str, storage_options: dict | None = None):
+    """Resolve an fsspec filesystem + path for a local path or remote URI."""
+    import fsspec
+
+    return fsspec.core.url_to_fs(str(uri), **(storage_options or {}))
+
+
+def is_remote_uri(uri: str) -> bool:
+    """True for a remote URI (``s3://``, ``gs://`` …), False for a local path."""
+    s = str(uri)
+    return "://" in s and not s.startswith("file://")
+
+
+def join_uri(base: str, *parts: str) -> str:
+    """Join path parts under a local path or remote URI (POSIX separators)."""
+    joined = str(base).rstrip("/")
+    for part in parts:
+        joined = f"{joined}/{str(part).strip('/')}"
+    return joined
+
+
+def write_text(uri: str, data: str, storage_options: dict | None = None) -> str:
+    """Write *data* to a local path or remote URI, creating parent dirs.
+
+    Path-agnostic via fsspec: the same call writes ``results/x.json`` locally or
+    ``s3://bucket/x.json`` in production. Returns the URI written.
+    """
+    fs, path = _fs_and_path(uri, storage_options)
+    parent = path.rsplit("/", 1)[0] if "/" in path.replace("\\", "/") else ""
+    if parent:
+        with contextlib.suppress(FileExistsError, NotImplementedError):
+            fs.makedirs(parent, exist_ok=True)
+    with fs.open(path, "w") as f:
+        f.write(data)
+    return str(uri)
+
+
+def read_text(uri: str, storage_options: dict | None = None) -> str | None:
+    """Read text from a local path or remote URI; return None if it doesn't exist."""
+    fs, path = _fs_and_path(uri, storage_options)
+    if not fs.exists(path):
+        return None
+    with fs.open(path, "r") as f:
+        return str(f.read())
+
+
+def path_exists(uri: str, storage_options: dict | None = None) -> bool:
+    """True if the local path or remote URI exists."""
+    fs, path = _fs_and_path(uri, storage_options)
+    return bool(fs.exists(path))
+
+
+def remove_path(uri: str, storage_options: dict | None = None) -> None:
+    """Best-effort delete of a local path or remote URI (no error if absent)."""
+    fs, path = _fs_and_path(uri, storage_options)
+    with contextlib.suppress(FileNotFoundError):
+        fs.rm(path)
 
 
 def get_s3_filesystem(
@@ -28,7 +88,7 @@ def get_s3_filesystem(
     """Return a configured S3FileSystem.
 
     Args:
-        no_sign: If True, use unsigned (public bucket) access — no credentials.
+        no_sign: If True, use unsigned (public bucket) access - no credentials.
         region:  AWS region for the bucket.
     """
     import s3fs

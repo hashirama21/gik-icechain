@@ -12,6 +12,7 @@ Entry points:
 from __future__ import annotations
 
 import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
@@ -42,9 +43,10 @@ def _parse_date(value: str) -> date:
     except ValueError:
         raise typer.BadParameter(f"Date must be YYYY-MM-DD, got: {value!r}") from None
 
+
 app = typer.Typer(
     name="gik-icechain",
-    help="GIK-IceChain v2.0 — zero-cost flood risk pipeline for East Africa.",
+    help="GIK-IceChain v2.0 - zero-cost flood risk pipeline for East Africa.",
     no_args_is_help=True,
 )
 
@@ -139,7 +141,9 @@ def _run_convert_aifs(cfg: GIKConfig, start: date, end: date) -> str:
             except Exception:
                 log.warning(
                     "aifs_ingest_failed",
-                    date=current.isoformat(), run_hour=run_hour, exc_info=True,
+                    date=current.isoformat(),
+                    run_hour=run_hour,
+                    exc_info=True,
                 )
         current += timedelta(days=1)
 
@@ -167,7 +171,7 @@ def _subset_to_bbox(
 
     lat_vals = ds[lat_name].values
     if float(lat_vals.max()) <= nlat:
-        # Integer indices — convert geographic bounds to index bounds.
+        # Integer indices - convert geographic bounds to index bounds.
         # Infer grid: 0.25° global grid (721×1440) or similar.
         dlat = 180.0 / (nlat - 1)
         dlon = 360.0 / nlon
@@ -180,11 +184,12 @@ def _subset_to_bbox(
         # Reassign real geographic coordinate values so downstream operations
         # (regionmask, threshold alignment) work in degrees, not integer indices.
         import numpy as np
+
         real_lats = 90.0 - (i_min + np.arange(subset.sizes[lat_name])) * dlat
         real_lons = (j_min + np.arange(subset.sizes[lon_name])) * dlon
         return subset.assign_coords({lat_name: real_lats, lon_name: real_lons})
 
-    # Proper geographic coordinates — use .sel()
+    # Proper geographic coordinates - use .sel()
     if float(lat_vals[0]) > float(lat_vals[-1]):
         return ds.sel({lat_name: slice(lat_max, lat_min), lon_name: slice(lon_min, lon_max)})
     return ds.sel({lat_name: slice(lat_min, lat_max), lon_name: slice(lon_min, lon_max)})
@@ -328,14 +333,8 @@ def _process_exceedance_day(args: dict) -> dict:
                 step_resolution_h=args.get("step_resolution_h", 6),
                 step_buffer=args.get("step_buffer", 1),
                 bbox=bbox,
-                max_gap_bytes=(
-                    args.get("max_gap_bytes", 65536) if coalescing else 0
-                ),
-                max_merged_bytes=(
-                    args.get("max_merged_bytes", 5242880)
-                    if coalescing
-                    else 0
-                ),
+                max_gap_bytes=(args.get("max_gap_bytes", 65536) if coalescing else 0),
+                max_merged_bytes=(args.get("max_merged_bytes", 5242880) if coalescing else 0),
                 fetch_workers=args.get("fetch_workers", 8),
                 min_members=args.get("min_members", 10),
                 s3_region=args.get("s3_region", "eu-central-1"),
@@ -354,7 +353,7 @@ def _process_exceedance_day(args: dict) -> dict:
                 }
             day_ds = day_ds[available]
 
-            # Dimension 2: Step slicing — only load steps needed for max window
+            # Dimension 2: Step slicing - only load steps needed for max window
             if max_steps is not None and "step" in day_ds.dims:
                 n_steps = day_ds.sizes["step"]
                 if max_steps < n_steps:
@@ -369,9 +368,9 @@ def _process_exceedance_day(args: dict) -> dict:
         return {"date_str": date_str, "success": False, "error": str(exc)[:200]}
 
     thresholds = AdaptiveGEVThresholds.load(Path(args["thresholds_path"]))
-    enso_iod = pd.read_csv(
-        args["enso_iod_path"], parse_dates=["date"]
-    ).set_index("date").sort_index()
+    enso_iod = (
+        pd.read_csv(args["enso_iod_path"], parse_dates=["date"]).set_index("date").sort_index()
+    )
     mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
 
     # IFS tp is decoded in metres; CMORPH thresholds are in mm. Scale the precip
@@ -401,27 +400,41 @@ def _process_exceedance_day(args: dict) -> dict:
                 floor = float(floor_map.get(w, floor_map.get(str(w), 0.0)))
                 thr_ds = xr.Dataset({f"rp_{rp}y": thr})
                 day_results[(w, rp)] = compute_exceedance_probabilities(
-                    acc_ds, thr_ds,
-                    window_h=w, return_period=rp, member_dim=member_dim,
+                    acc_ds,
+                    thr_ds,
+                    window_h=w,
+                    return_period=rp,
+                    member_dim=member_dim,
                     flood_floor_mm=floor,
                 )
                 if tail_enabled:
                     # Storyline ladder: p95 = worst world (tail-aware hazard),
                     # p50 = median world (storyline central case).
                     tail_results[(w, rp)] = compute_tail_ratio(
-                        acc_ds, thr_ds,
-                        window_h=w, return_period=rp, member_dim=member_dim,
-                        tail_quantile=tail_quantile, flood_floor_mm=floor,
+                        acc_ds,
+                        thr_ds,
+                        window_h=w,
+                        return_period=rp,
+                        member_dim=member_dim,
+                        tail_quantile=tail_quantile,
+                        flood_floor_mm=floor,
                     )
                     median_results[(w, rp)] = compute_member_ratio(
-                        acc_ds, thr_ds,
-                        window_h=w, return_period=rp, member_dim=member_dim,
-                        quantile=0.5, flood_floor_mm=floor,
+                        acc_ds,
+                        thr_ds,
+                        window_h=w,
+                        return_period=rp,
+                        member_dim=member_dim,
+                        quantile=0.5,
+                        flood_floor_mm=floor,
                     )
             except Exception as exc:
                 log.warning(
                     "exceedance_window_rp_failed",
-                    window_h=w, return_period=rp, date=date_str, error=str(exc),
+                    window_h=w,
+                    return_period=rp,
+                    date=date_str,
+                    error=str(exc),
                 )
                 continue
 
@@ -640,7 +653,8 @@ def _run_exceedance(
             median_results[day] = mds["median_ratio"]
 
     write_exceedance_store(
-        results, output_uri,
+        results,
+        output_uri,
         chunks=dict(cfg.component2.output_chunks),
         append=True,
         confidence_dict=confidence_results or None,
@@ -677,10 +691,10 @@ def _run_exceedance(
 def _run_risk(
     cfg: GIKConfig,
     exc_uri: str,
-    output: Path,
+    output: str,
     start: date,
     end: date,
-) -> list[Path]:
+) -> list[str]:
     from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
     from gik_icechain.risk.risk_engine import run_risk_batch
 
@@ -700,6 +714,17 @@ def _run_risk(
     emdat_path = Path(cfg.sources.emdat_path) if cfg.sources.emdat_path else None
 
     crma_cfg = cfg.component3.crma_model
+    riverine_feed = None
+    riv = cfg.component3.riverine
+    if riv.enabled:
+        from gik_icechain.risk.riverine import load_upstream_map
+
+        map_path = Path(riv.upstream_map_path)
+        if map_path.exists():
+            riverine_feed = (load_upstream_map(map_path), riv.attenuation, riv.aggregate)
+        else:
+            log.warning("riverine_map_missing", path=str(map_path))
+
     return run_risk_batch(
         exceedance_store_uri=exc_uri,
         gpm_dir=Path(cfg.sources.gpm_imerg_path),
@@ -715,9 +740,12 @@ def _run_risk(
         rp_signal_options=crma_cfg.rp_signal_options,
         hazard_stat=cfg.component3.aggregation.method,
         min_coverage=cfg.component3.aggregation.min_coverage_fraction,
-        endpoint_url=cfg.outputs.endpoint_url or None,
+        # Resolve the S3 endpoint from config or the AWS_ENDPOINT_URL env so an
+        # s3:// output (prod) reaches MinIO, not the default AWS endpoint.
+        endpoint_url=cfg.outputs.endpoint_url or os.environ.get("AWS_ENDPOINT_URL") or None,
         emdat_path=emdat_path,
         cpt_source="refined" if use_refined else "default",
+        riverine_feed=riverine_feed,
     )
 
 
@@ -737,7 +765,9 @@ def convert(
     ] = "append",
     output_json: Annotated[
         Path | None,
-        typer.Option("--output-json", help="Write ingest result JSON (commit_hash, processed_date)."),  # noqa: E501
+        typer.Option(
+            "--output-json", help="Write ingest result JSON (commit_hash, processed_date)."
+        ),
     ] = None,
 ) -> None:
     """Ingest ECMWF IFS ensemble GRIB2 files into an IceChunk virtual store (C1)."""
@@ -795,21 +825,23 @@ def convert_aifs(
         _exit_on_error("convert-aifs", exc)
 
     typer.echo(
-        f"AIFS convert complete: {s} → {e}  "
-        f"commit={commit_hash[:12] if commit_hash else 'none'}"
+        f"AIFS convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}"
     )
 
 
 @app.command()
 def compare(
     ifs_store: Annotated[
-        str, typer.Option("--ifs-store", help="IFS exceedance Zarr store URI."),
+        str,
+        typer.Option("--ifs-store", help="IFS exceedance Zarr store URI."),
     ],
     aifs_store: Annotated[
-        str, typer.Option("--aifs-store", help="AIFS exceedance Zarr store URI."),
+        str,
+        typer.Option("--aifs-store", help="AIFS exceedance Zarr store URI."),
     ],
     config: Annotated[
-        Path, typer.Option(help="Path to YAML config file."),
+        Path,
+        typer.Option(help="Path to YAML config file."),
     ] = _DEFAULT_CONFIG,
     output: Annotated[
         str | None,
@@ -841,7 +873,9 @@ def compare(
         typer.echo("[2/3] Seasonal comparison ...")
         enso_path = cfg.component2.thresholds.enso_iod_index_path
         results = seasonal_comparison(
-            ifs_store, aifs_store, enso_iod_path=enso_path,
+            ifs_store,
+            aifs_store,
+            enso_iod_path=enso_path,
         )
         for season_key, ds in results.items():
             out_path = str(Path(output_dir) / f"seasonal_{season_key}.zarr")
@@ -852,7 +886,8 @@ def compare(
         aifs_ens = aifs_ensemble_store or cfg.aifs_track.aifs_store_uri
         if ifs_ens and aifs_ens:
             spread_ds = compare_ensemble_spreads(
-                ifs_ens, aifs_ens,
+                ifs_ens,
+                aifs_ens,
                 region=cfg.outputs.icechunk_store_region,
                 endpoint_url=cfg.outputs.endpoint_url or None,
             )
@@ -930,7 +965,10 @@ def exceedance(
 @app.command()
 def risk(
     exceedance_store: Annotated[str, typer.Option(help="URI of the exceedance Zarr store.")],
-    output: Annotated[Path, typer.Option(help="Output directory for GeoJSON files.")],
+    output: Annotated[
+        str | None,
+        typer.Option(help="Output dir or S3 URI. Defaults to outputs.risk_output_dir (S3)."),
+    ] = None,
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     start: Annotated[str | None, typer.Option(help="First date (YYYY-MM-DD).")] = None,
     end: Annotated[str | None, typer.Option(help="Last date (YYYY-MM-DD).")] = None,
@@ -939,6 +977,7 @@ def risk(
     import xarray as xr
 
     cfg = _bootstrap(config)
+    output = output or cfg.outputs.risk_output_dir
     s = _parse_date(start) if start else None
     e = _parse_date(end) if end else None
 
@@ -991,14 +1030,17 @@ def run_all(
         _run_exceedance(cfg, cfg.outputs.icechunk_store_uri, exc_uri, s, e)
 
         if aifs_enabled:
-            aifs_exc_uri = (
-                cfg.aifs_track.exceedance_store_uri
-                or str(output / "aifs-exceedance-zarr")
+            aifs_exc_uri = cfg.aifs_track.exceedance_store_uri or str(
+                output / "aifs-exceedance-zarr"
             )
             step += 1
             typer.echo(f"[{step}/{n_steps}] exceedance (AIFS) + comparison ...")
             _run_exceedance(
-                cfg, cfg.aifs_track.aifs_store_uri, aifs_exc_uri, s, e,
+                cfg,
+                cfg.aifs_track.aifs_store_uri,
+                aifs_exc_uri,
+                s,
+                e,
             )
             if cfg.aifs_track.comparison_enabled:
                 from gik_icechain.exceedance.aifs_track import (
@@ -1010,17 +1052,20 @@ def run_all(
                 compute_aifs_ifs_delta(exc_uri, aifs_exc_uri, comparison_dir)
                 enso_path = cfg.component2.thresholds.enso_iod_index_path
                 results = seasonal_comparison(
-                    exc_uri, aifs_exc_uri, enso_iod_path=enso_path,
+                    exc_uri,
+                    aifs_exc_uri,
+                    enso_iod_path=enso_path,
                 )
                 for season_key, ds in results.items():
-                    out_path = str(
-                        Path(comparison_dir) / f"seasonal_{season_key}.zarr"
-                    )
+                    out_path = str(Path(comparison_dir) / f"seasonal_{season_key}.zarr")
                     ds.to_zarr(out_path, mode="w")
 
         step += 1
         typer.echo(f"[{step}/{n_steps}] risk ...")
-        _run_risk(cfg, exc_uri, output / "admin1_risk", s, e)
+        # C3 results follow outputs.risk_output_dir (S3 by default); fall back to
+        # a local subdir of the run-all root only if it's explicitly unset.
+        risk_out = cfg.outputs.risk_output_dir or str(output / "admin1_risk")
+        _run_risk(cfg, exc_uri, risk_out, s, e)
     except Exception as exc:
         _exit_on_error("run-all", exc)
 

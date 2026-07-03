@@ -1,4 +1,4 @@
-# GIK-IceChain v2.0 — Default Pipeline Configuration
+# GIK-IceChain v2.0 - Default Pipeline Configuration
 
 sources:
   gik_hf_dataset: "E4DRR/gik-ecmwf-par"
@@ -17,7 +17,9 @@ outputs:
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""
-  risk_output_dir: "results/admin1_risk/"
+  # Risk outputs go to S3 by default (prod: no local disk). Override per run with
+  # `--output <local dir>` or set a local path here for dev.
+  risk_output_dir: "s3://gik-icechain/risk-output"
   dashboard_data_dir: "dashboard/web/public/data/"
 
 component1:
@@ -27,7 +29,7 @@ component1:
     branch: "main"
     commit_message_template: "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: "{date}T{run_hour:02d}Z"
-    # Manifest splitting (VirtualiZarr #884) — keeps manifest fragments bounded
+    # Manifest splitting (VirtualiZarr #884) - keeps manifest fragments bounded
     # at 1200+ day scale. Splits each array's manifest along `step` every N positions.
     manifest_splitting: true
     manifest_split_dim: "step"
@@ -44,7 +46,7 @@ component2:
   # IFS tp is decoded in metres; CMORPH thresholds are in mm. Convert m -> mm.
   precip_scale_to_mm: 1000.0
 
-  # Flood-relevance floor (mm) per window — suppresses arid false alarms where
+  # Flood-relevance floor (mm) per window - suppresses arid false alarms where
   # the GEV return-period threshold collapses to a few mm.
   flood_floor_mm: {3: 15, 6: 20, 12: 25, 24: 30, 48: 40, 72: 50, 168: 75}
 
@@ -207,6 +209,23 @@ component3:
       tau_yellow: 0.14
       tau_orange: 0.19
       tau_red: 0.19
+      # Continuous-severity split for the degenerate tau_orange==tau_red boundary:
+      # a saturated Red below this magnitude drops to Orange (initial value; tune
+      # with the satellite panel like the taus).
+      severity_red_split: 0.30
+    # Continuous within-tier severity, exposed as severity_score (additive).
+    severity:
+      enabled: true
+      w_exceedance: 0.45
+      w_tail: 0.25
+      w_spatial: 0.20
+      w_api: 0.10
+    # Riverine-aware Forecast_Hazard: escalate on the pooled upstream ratio fed
+    # by component3.riverine (catchment-routed Shabelle/Juba/Sudd floods).
+    riverine_aware_hazard: true
+    riverine_medium_ratio: 0.80
+    riverine_high_ratio: 1.00
+    riverine_extreme_ratio: 1.30
   emdat_refinement:
     enabled: true
     laplace_alpha: 1.0
@@ -218,6 +237,13 @@ component3:
     # Complementary to the Spatial_Coverage BN node (which captures % of area).
     method: "max"
     min_coverage_fraction: 0.5
+  # Riverine feed: pool upstream forecast intensity into riverine_ratio via the
+  # curated admin-1 river topology (data-side of riverine_aware_hazard).
+  riverine:
+    enabled: true
+    upstream_map_path: data/river_basins/upstream_admin1.yaml
+    attenuation: 0.9
+    aggregate: max
   output:
     geojson: true
     zarr: true

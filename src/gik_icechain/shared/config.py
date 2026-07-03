@@ -39,6 +39,7 @@ class SourcesConfig(BaseModel):
 
 # Outputs
 
+
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
     icechunk_store_region: str = "eu-west-1"
@@ -46,22 +47,25 @@ class OutputsConfig(BaseModel):
     exceedance_store_uri: str = ""
     exceedance_icechunk_uri: str = ""
     risk_icechunk_uri: str = ""
-    risk_output_dir: str = "results/admin1_risk/"
+    # S3 by default so C3 writes risk JSON (+ boundaries + checkpoint) straight to
+    # object storage (no local disk in prod). Override with a local dir for dev.
+    risk_output_dir: str = "s3://gik-icechain/risk-output"
     dashboard_data_dir: str = "dashboard/web/public/data/"
 
 
 #  Component 1
 
+
 class IceChunkConfig(BaseModel):
     branch: str = "main"
     commit_message_template: str = "GIK ingest: {date}T{run_hour:02d}Z"
     tag_format: str = "{date}T{run_hour:02d}Z"
-    # Manifest splitting (IceChunk 2.x) — caps manifest fragment size so append
+    # Manifest splitting (IceChunk 2.x) - caps manifest fragment size so append
     # latency and metadata scan stay flat as the archive grows to 1200+ days.
     # Splits every array along the given dimension every `manifest_split_size`
     # index positions. See VirtualiZarr #884 (manifest-splitting recommendation).
     manifest_splitting: bool = True
-    manifest_split_dim: str = "step"   # forecast-horizon axis (time-like)
+    manifest_split_dim: str = "step"  # forecast-horizon axis (time-like)
     manifest_split_size: int = 1000
 
 
@@ -81,15 +85,16 @@ class Component1Config(BaseModel):
 
 #  Component 2
 
+
 class ThresholdsConfig(BaseModel):
     adaptive: bool = True
     enso_iod_index_path: str = "data/enso_iod_index.csv"
-    enso_nino34_threshold: float = 0.5   # °C Niño-3.4 for El Niño / La Niña
-    iod_dmi_threshold: float = 0.4       # °C DMI for Positive / Negative IOD
+    enso_nino34_threshold: float = 0.5  # °C Niño-3.4 for El Niño / La Niña
+    iod_dmi_threshold: float = 0.4  # °C DMI for Positive / Negative IOD
     cmorph_path: str = "data/cmorph_thresholds/"
     cmorph_hf_dataset: str = "E4DRR/virtualizarr-stores"
     min_samples_for_gev: int = 30
-    fallback_strategy: str = "neutral"   # "neutral" | "climatology"
+    fallback_strategy: str = "neutral"  # "neutral" | "climatology"
     fallback_rate_warning_threshold: float = 0.20
 
 
@@ -111,9 +116,7 @@ class AIFSTrackConfig(BaseModel):
         valid = {0, 12}
         invalid = [h for h in v if h not in valid]
         if invalid:
-            raise ValueError(
-                f"AIFS ENS only runs at 0z and 12z, got invalid run_hours: {invalid}"
-            )
+            raise ValueError(f"AIFS ENS only runs at 0z and 12z, got invalid run_hours: {invalid}")
         return v
 
 
@@ -147,7 +150,7 @@ class DaskConfig(BaseModel):
     scheduler: str = "distributed"
     n_workers: int = 4
     threads_per_worker: int = 2
-    memory_limit: str = "4GB"           # fallback when memory_fraction is null
+    memory_limit: str = "4GB"  # fallback when memory_fraction is null
     memory_fraction: float | None = 0.6  # cluster-wide share of total RAM; null = absolute
     dashboard_address: str = ":8787"
     chunk_dims: dict[str, Any] = Field(
@@ -157,7 +160,7 @@ class DaskConfig(BaseModel):
 
 class ByteRangeCoalescingConfig(BaseModel):
     enabled: bool = True
-    max_gap_bytes: int = 65536       # 64 KB
+    max_gap_bytes: int = 65536  # 64 KB
     max_merged_bytes: int = 5242880  # 5 MB
 
 
@@ -168,10 +171,10 @@ class ManifestAwareConfig(BaseModel):
 
 
 class ParallelConfig(BaseModel):
-    max_workers: int | None = None   # None = auto (os.cpu_count())
+    max_workers: int | None = None  # None = auto (os.cpu_count())
     multiprocessing: bool = True
     day_timeout_s: int = 300
-    mem_gb_per_worker: float = 3.0      # 0 disables the memory-based worker cap
+    mem_gb_per_worker: float = 3.0  # 0 disables the memory-based worker cap
     mem_headroom_fraction: float = 0.1  # share of total RAM kept free
 
     @field_validator("max_workers")
@@ -194,7 +197,7 @@ class WindowProfileConfig(BaseModel):
 
 
 class Component2Config(BaseModel):
-    # --- Dimension 1: Variables ---
+    #  Dimension 1: Variables
     compute_variables: list[str] = Field(default_factory=lambda: ["tp"])
     risk_evidence_variables: list[str] = Field(
         default_factory=lambda: ["2t", "10u", "10v", "ro"],
@@ -209,11 +212,17 @@ class Component2Config(BaseModel):
     # so arid cells with near-zero thresholds don't false-alarm.
     flood_floor_mm: dict[int, float] = Field(
         default_factory=lambda: {
-            3: 15.0, 6: 20.0, 12: 25.0, 24: 30.0, 48: 40.0, 72: 50.0, 168: 75.0,
+            3: 15.0,
+            6: 20.0,
+            12: 25.0,
+            24: 30.0,
+            48: 40.0,
+            72: 50.0,
+            168: 75.0,
         }
     )
 
-    # --- Dimension 2: Steps ---
+    #  Dimension 2: Steps
     step_resolution_h: int = 6
     max_forecast_h: int | None = None  # None = auto (max of active windows_h)
     step_buffer: int = 1
@@ -229,17 +238,21 @@ class Component2Config(BaseModel):
     tail_quantile: float = 0.95
     tail_enabled: bool = True
 
-    # --- Dimension 3 + 7: Windows (direct + profiles) ---
+    #  Dimension 3 + 7: Windows (direct + profiles)
     windows_h: list[int] = Field(default_factory=lambda: [3, 6, 12, 24, 48, 72, 168])
     return_periods: list[int] = Field(default_factory=lambda: [2, 5, 10, 20, 40, 100])
     active_profile: str | None = None  # None = use top-level windows_h/return_periods
     window_profiles: dict[str, WindowProfileConfig] = Field(
         default_factory=lambda: {
             "flash_flood": WindowProfileConfig(
-                windows_h=[3, 6, 12], return_periods=[2, 5, 10], max_forecast_h=24,
+                windows_h=[3, 6, 12],
+                return_periods=[2, 5, 10],
+                max_forecast_h=24,
             ),
             "medium_range": WindowProfileConfig(
-                windows_h=[24, 48, 72], return_periods=[5, 10, 20], max_forecast_h=72,
+                windows_h=[24, 48, 72],
+                return_periods=[5, 10, 20],
+                max_forecast_h=72,
             ),
             "full": WindowProfileConfig(
                 windows_h=[3, 6, 12, 24, 48, 72, 168],
@@ -249,26 +262,26 @@ class Component2Config(BaseModel):
         }
     )
 
-    # --- Dimension 4: Spatial ---
+    #  Dimension 4: Spatial
     spatial: SpatialConfig = Field(default_factory=SpatialConfig)
 
-    # --- Dimension 5: Byte-range coalescing ---
+    #  Dimension 5: Byte-range coalescing
     byte_range_coalescing: ByteRangeCoalescingConfig = Field(
         default_factory=ByteRangeCoalescingConfig,
     )
 
-    # --- Manifest-aware loading (IceChunk VirtualChunkRef path) ---
+    #  Manifest-aware loading (IceChunk VirtualChunkRef path)
     manifest_aware: ManifestAwareConfig = Field(
         default_factory=ManifestAwareConfig,
     )
 
-    # --- Dimension 6: Parallelism ---
+    #  Dimension 6: Parallelism
     parallel: ParallelConfig = Field(default_factory=ParallelConfig)
 
-    # --- Dimension 8: Thresholds ---
+    #  Dimension 8: Thresholds
     thresholds: ThresholdsConfig = Field(default_factory=ThresholdsConfig)
 
-    # --- Other ---
+    #  Other
     dask: DaskConfig = Field(default_factory=DaskConfig)
     output_chunks: dict[str, Any] = Field(
         default_factory=lambda: {
@@ -324,7 +337,8 @@ class Component2Config(BaseModel):
         return (self.effective_max_forecast_h // self.step_resolution_h) + self.step_buffer + 1
 
 
-#  Component 3 — CRMA model parameters
+#  Component 3 - CRMA model parameters
+
 
 class CompoundScoreThresholdsConfig(BaseModel):
     fresh: list[float] = Field(default_factory=lambda: [1.5, 4.0, 7.0])
@@ -343,9 +357,7 @@ class CompoundCPTBucketSetConfig(BaseModel):
             probs = getattr(self, name)
             total = sum(probs)
             if abs(total - 1.0) > 1e-6:
-                raise ValueError(
-                    f"CPT bucket '{name}' sums to {total:.6f}, expected 1.0"
-                )
+                raise ValueError(f"CPT bucket '{name}' sums to {total:.6f}, expected 1.0")
         return self
 
 
@@ -390,17 +402,21 @@ class SoftEvidenceConfig(BaseModel):
     # making it the production default. See docs/ISSUES.md A2 A/B.
     enabled: bool = False
     sigma_forecast: float = 0.05  # exceedance-probability units
-    sigma_tail: float = 0.07      # tail-ratio units
-    sigma_gpm: float = 5.0        # mm/day
-    sigma_spatial: float = 0.08   # coverage fraction
-    sigma_api: float = 10.0       # mm
-    sigma_trend: float = 1.0      # mm/day (rainfall-trend slope)
+    sigma_tail: float = 0.07  # tail-ratio units
+    sigma_gpm: float = 5.0  # mm/day
+    sigma_spatial: float = 0.08  # coverage fraction
+    sigma_api: float = 10.0  # mm
+    sigma_trend: float = 1.0  # mm/day (rainfall-trend slope)
 
     @model_validator(mode="after")
     def _sigmas_non_negative(self) -> SoftEvidenceConfig:
         for name in (
-            "sigma_forecast", "sigma_tail", "sigma_gpm",
-            "sigma_spatial", "sigma_api", "sigma_trend",
+            "sigma_forecast",
+            "sigma_tail",
+            "sigma_gpm",
+            "sigma_spatial",
+            "sigma_api",
+            "sigma_trend",
         ):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} must be >= 0 (0 reduces to the hard path)")
@@ -421,7 +437,7 @@ class CostLossConfig(BaseModel):
 
     For anticipatory action C/L is low (acting early is cheap, missing is
     devastating), so the optimal trigger probability is far below the argmax's
-    implicit ~0.5 — this lifts recall / lead time at a controlled false-alarm
+    implicit ~0.5 - this lifts recall / lead time at a controlled false-alarm
     cost. More expensive actions get a higher bar: tau_yellow ≤ tau_orange ≤
     tau_red. Defaults follow published forecast-based-financing C/L ratios
     (~0.1 cash transfers, ~0.2 pre-positioned stockpiles). Default OFF.
@@ -431,6 +447,13 @@ class CostLossConfig(BaseModel):
     tau_yellow: float = 0.15
     tau_orange: float = 0.25
     tau_red: float = 0.35
+    # Continuous-severity split for the Orange/Red boundary. When > 0 (and both
+    # cost_loss and severity are enabled), a unit that qualifies for Red by the
+    # cumulative posterior is demoted to Orange unless its severity_score reaches
+    # this value. This decouples the tier from the saturated ``p_red`` (~0.39 for
+    # every Red), which otherwise makes tau_orange == tau_red degenerate.
+    # 0 = off (legacy cumulative-posterior tiering only).
+    severity_red_split: float = 0.0
 
     @model_validator(mode="after")
     def _taus_ordered(self) -> CostLossConfig:
@@ -439,11 +462,41 @@ class CostLossConfig(BaseModel):
                 "cost-loss taus must satisfy 0 < tau_yellow <= tau_orange <= "
                 f"tau_red <= 1 (got {self.tau_yellow}, {self.tau_orange}, {self.tau_red})"
             )
+        if not (0.0 <= self.severity_red_split <= 1.0):
+            raise ValueError(
+                f"severity_red_split must be in [0, 1] (got {self.severity_red_split})"
+            )
+        return self
+
+
+class SeverityGradationConfig(BaseModel):
+    """Continuous severity score exposed alongside the discrete risk state.
+
+    The discrete Risk_State CPT collapses continuous forecast magnitude into a
+    handful of ``p_red`` values (empirically ~0.39 for every Red), so alerts of
+    very different intensity are indistinguishable. ``severity_score`` is a
+    monotone [0, 1] blend of the *continuous* evidence - max exceedance
+    probability, ensemble tail ratio, spatial coverage and API saturation - that
+    restores a within-tier hierarchy for ranking and dashboards. It is additive
+    (does not change the risk label). Weights are normalised internally.
+    """
+
+    enabled: bool = True
+    w_exceedance: float = 0.45
+    w_tail: float = 0.25
+    w_spatial: float = 0.20
+    w_api: float = 0.10
+
+    @model_validator(mode="after")
+    def _weights_nonneg(self) -> SeverityGradationConfig:
+        ws = (self.w_exceedance, self.w_tail, self.w_spatial, self.w_api)
+        if any(w < 0 for w in ws) or sum(ws) <= 0:
+            raise ValueError(f"severity weights must be non-negative and sum > 0 (got {ws})")
         return self
 
 
 class CRMAModelConfig(BaseModel):
-    """All CRMA BN parameters — no hardcoded values in source modules."""
+    """All CRMA BN parameters - no hardcoded values in source modules."""
 
     # Evidence discretization thresholds
     gpm_obs_normal_mmday: float = 5.0
@@ -453,26 +506,24 @@ class CRMAModelConfig(BaseModel):
     spatial_threshold_regional: float = 0.25
     spatial_threshold_extensive: float = 0.75
     consecutive_signal_threshold: int = 3
-    soil_memory_days: int = 7       # days of saturation → SoilMemory_State=1
+    soil_memory_days: int = 7  # days of saturation → SoilMemory_State=1
 
     # Forecast_Hazard discretization thresholds (exceedance prob)
-    hazard_medium_threshold: float = 0.15   # Low → Medium boundary
-    hazard_high_threshold: float = 0.40     # Medium → High boundary
+    hazard_medium_threshold: float = 0.15  # Low → Medium boundary
+    hazard_high_threshold: float = 0.40  # Medium → High boundary
     # Exceedance signal thresholds
     signal_threshold_prob: float = 0.15
     rp_signal: int = 5
     # Return periods the risk engine evaluates (risk_state produced per RP so the
     # dashboard can switch 2yr↔5yr). rp_signal is the primary/default one.
     rp_signal_options: list[int] = Field(default_factory=lambda: [2, 5])
-    # Per-RP Forecast_Hazard boundaries (medium, high) — a 2yr threshold is
+    # Per-RP Forecast_Hazard boundaries (medium, high) - a 2yr threshold is
     # exceeded more often, so its boundaries sit higher than the 5yr ones.
     hazard_thresholds_by_rp: dict[int, tuple[float, float]] = Field(
         default_factory=lambda: {2: (0.30, 0.60), 5: (0.15, 0.40)}
     )
     hazard_extreme_threshold: float = 0.70  # High → Extreme boundary
-    hazard_extreme_by_rp: dict[int, float] = Field(
-        default_factory=lambda: {2: 0.85, 5: 0.70}
-    )
+    hazard_extreme_by_rp: dict[int, float] = Field(default_factory=lambda: {2: 0.85, 5: 0.70})
 
     # Tail-aware Forecast_Hazard (possible-worlds reasoning). When enabled, the
     # Forecast_Hazard state is max(fraction-based state, tail-based state) so a
@@ -483,9 +534,18 @@ class CRMAModelConfig(BaseModel):
     #   ratio ≥ tail_high_ratio    → Forecast_Hazard ≥ High
     #   ratio ≥ tail_extreme_ratio → Forecast_Hazard = Extreme
     tail_aware_hazard: bool = True
-    tail_medium_ratio: float = 0.80   # p95 member at ~80% of the return level
-    tail_high_ratio: float = 1.00     # p95 member reaches the return level
+    tail_medium_ratio: float = 0.80  # p95 member at ~80% of the return level
+    tail_high_ratio: float = 1.00  # p95 member reaches the return level
     tail_extreme_ratio: float = 1.30  # p95 member well past the return level
+
+    # Riverine-aware Forecast_Hazard: escalate on an upstream/riverine ratio
+    # (routed discharge or upstream rainfall / flood-return level) even when
+    # local exceedance is ~0. Off by default; riverine_ratio defaults to 0.
+    riverine_aware_hazard: bool = False
+    riverine_medium_ratio: float = 0.80
+    riverine_high_ratio: float = 1.00
+    riverine_extreme_ratio: float = 1.30
+    sigma_riverine: float = 0.07
 
     # Gaussian soft-binning of continuous evidence (virtual evidence). Disabled
     # → hard discretization (legacy). See SoftEvidenceConfig.
@@ -496,6 +556,10 @@ class CRMAModelConfig(BaseModel):
     # exceeds that tier's cost-loss ratio. See CostLossConfig.
     cost_loss: CostLossConfig = Field(default_factory=CostLossConfig)
 
+    # Continuous within-tier severity score (additive; does not change the
+    # label). Restores event hierarchy lost to the discrete Risk_State CPT.
+    severity: SeverityGradationConfig = Field(default_factory=SeverityGradationConfig)
+
     @model_validator(mode="after")
     def _tail_ratios_ordered(self) -> CRMAModelConfig:
         if not (0.0 < self.tail_medium_ratio < self.tail_high_ratio < self.tail_extreme_ratio):
@@ -503,6 +567,17 @@ class CRMAModelConfig(BaseModel):
                 "tail ratios must satisfy 0 < medium < high < extreme "
                 f"(got {self.tail_medium_ratio}, {self.tail_high_ratio}, "
                 f"{self.tail_extreme_ratio})"
+            )
+        if not (
+            0.0
+            < self.riverine_medium_ratio
+            < self.riverine_high_ratio
+            < self.riverine_extreme_ratio
+        ):
+            raise ValueError(
+                "riverine ratios must satisfy 0 < medium < high < extreme "
+                f"(got {self.riverine_medium_ratio}, {self.riverine_high_ratio}, "
+                f"{self.riverine_extreme_ratio})"
             )
         return self
 
@@ -518,7 +593,7 @@ class CRMAModelConfig(BaseModel):
 
     # Data_Confidence dampening applied to the compound risk score, indexed by
     # confidence state [Low, Medium, High]. Precip ensembles are typically
-    # Medium (IQR/median ~0.3-1.0), so Medium must stay near-neutral — otherwise
+    # Medium (IQR/median ~0.3-1.0), so Medium must stay near-neutral - otherwise
     # it structurally vetoes strong forecast signals (all-Green failure mode).
     confidence_damping: list[float] = Field(default_factory=lambda: [0.8, 0.95, 1.0])
     # False (default): confidence dampens only the obs branch. True: legacy whole-score.
@@ -542,9 +617,7 @@ class CRMAModelConfig(BaseModel):
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(
         default_factory=CompoundScoreThresholdsConfig
     )
-    compound_cpt_buckets: CompoundCPTBucketsConfig = Field(
-        default_factory=CompoundCPTBucketsConfig
-    )
+    compound_cpt_buckets: CompoundCPTBucketsConfig = Field(default_factory=CompoundCPTBucketsConfig)
     cluster_weights: dict[str, ClusterWeightConfig] = Field(
         default_factory=lambda: {
             "equatorial_east": ClusterWeightConfig(forecast=2.0, obs=1.5, api=1.5),
@@ -607,16 +680,39 @@ class Component3OutputConfig(BaseModel):
     eahw_export: bool = True
 
 
+class RiverineFeedConfig(BaseModel):
+    """Populates riverine_ratio by pooling upstream forecast intensity.
+
+    Data-side counterpart of crma_model.riverine_aware_hazard. When enabled, the
+    risk engine pools each unit's upstream tail ratios (curated topology) into a
+    riverine_ratio, feeding catchment-routed floods into Forecast_Hazard.
+    """
+
+    enabled: bool = False
+    upstream_map_path: str = "data/river_basins/upstream_admin1.yaml"
+    attenuation: float = Field(default=0.9, gt=0.0, le=1.0)
+    aggregate: str = "max"  # "max" | "mean" over upstream units
+
+    @field_validator("aggregate")
+    @classmethod
+    def _agg_valid(cls, v: str) -> str:
+        if v not in ("max", "mean"):
+            raise ValueError(f"aggregate must be 'max' or 'mean', got {v!r}")
+        return v
+
+
 class Component3Config(BaseModel):
     crma: CRMAConfig = Field(default_factory=CRMAConfig)
     api: APIConfig = Field(default_factory=APIConfig)
     crma_model: CRMAModelConfig = Field(default_factory=CRMAModelConfig)
     emdat_refinement: EMDATRefinementConfig = Field(default_factory=EMDATRefinementConfig)
     aggregation: AggregationConfig = Field(default_factory=AggregationConfig)
+    riverine: RiverineFeedConfig = Field(default_factory=RiverineFeedConfig)
     output: Component3OutputConfig = Field(default_factory=Component3OutputConfig)
 
 
 # Dashboard
+
 
 class TiTilerConfig(BaseModel):
     endpoint: str = ""
@@ -637,8 +733,7 @@ class CalendarMapConfig(BaseModel):
         )
         if not (y < o < r):
             raise ValueError(
-                f"Calendar map thresholds must satisfy yellow < orange < red, "
-                f"got {y} < {o} < {r}"
+                f"Calendar map thresholds must satisfy yellow < orange < red, got {y} < {o} < {r}"
             )
         return self
 
@@ -655,6 +750,7 @@ class DashboardConfig(BaseModel):
 
 #  Logging
 
+
 class LoggingConfig(BaseModel):
     level: str = "INFO"
     format: str = "json"
@@ -662,6 +758,7 @@ class LoggingConfig(BaseModel):
 
 
 #  Root config
+
 
 class GIKConfig(BaseModel):
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
