@@ -53,6 +53,46 @@ def sample_exceedance_da():
     return xr.DataArray(data, dims=["lat", "lon"], coords={"lat": lat, "lon": lon})
 
 
+@pytest.fixture(scope="session")
+def square_admin_gdf():
+    """Two 2x2-cell square admin-1 units on the 1-degree test grid.
+
+    AA1 (KEN) covers lat 0-1 x lon 10-11; BB2 (SOM) covers lat 2-3 x lon 12-13.
+    Shared by aggregator / geojson_writer / risk_engine tests (DRY).
+    """
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    return gpd.GeoDataFrame(
+        {
+            "admin1_pcode": ["AA1", "BB2"],
+            "shapeName": ["Alpha", "Beta"],
+            "shapeGroup": ["KEN", "SOM"],
+        },
+        geometry=[box(9.5, -0.5, 11.5, 1.5), box(11.5, 1.5, 13.5, 3.5)],
+        crs="EPSG:4326",
+    )
+
+
+@pytest.fixture
+def square_grid_da():
+    """4x4 1-degree grid matching square_admin_gdf.
+
+    AA1 cells hold [1, 2, 3, 4] (mean 2.5, max 4); BB2 cells hold
+    [10, 20, 30, 40] (mean 25, max 40); cells outside both units are 0.
+    """
+    lat = np.array([0.0, 1.0, 2.0, 3.0])
+    lon = np.array([10.0, 11.0, 12.0, 13.0])
+    data = np.zeros((4, 4))
+    data[0, 0], data[0, 1], data[1, 0], data[1, 1] = 1.0, 2.0, 3.0, 4.0
+    data[2, 2], data[2, 3], data[3, 2], data[3, 3] = 10.0, 20.0, 30.0, 40.0
+    return xr.DataArray(
+        data,
+        dims=("latitude", "longitude"),
+        coords={"latitude": lat, "longitude": lon},
+    )
+
+
 @pytest.fixture
 def make_evidence():
     """Factory fixture for creating CRMAEvidence with sensible defaults (DRY)."""
