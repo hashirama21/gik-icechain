@@ -192,8 +192,13 @@ def _spatial_grids_compatible(
     return (len(mismatch) == 0, mismatch)
 
 
+def _fill_value_for(dtype: np.dtype):
+    """Missing-data sentinel: NaN for floats, -1 for integer flag variables."""
+    return -1 if np.issubdtype(dtype, np.integer) else np.nan
+
+
 def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset:
-    """Reconcile the non-append dims of *new_ds* with an existing store.
+    """Reconcile the non-append dims and variables of *new_ds* with a store.
 
     Appending along ``date`` requires every other dimension to match the store
     exactly. When a run produces a different set of accumulation windows or
@@ -204,6 +209,13 @@ def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset
     This reindexes *new_ds* onto the store's ``window``/``return_period``
     coordinates - NaN-filling values the run did not produce - and fails loudly
     if the run introduces *new* coordinate values the store cannot represent.
+
+    Variables get the same treatment: zarr appends each variable independently
+    along ``date``, so a store variable absent from this run would silently
+    stay short and desync the date dimension across variables (observed on the
+    OND-2024 backfill: ``median_ratio``/``tail_ratio`` at 4 dates vs
+    ``exceedance_prob`` at 24). Store variables the run did not produce are
+    fill-value-padded; variables the store cannot represent fail loudly.
     """
     for dim in ("window", "return_period"):
         if dim not in existing.dims or dim not in new_ds.dims:
@@ -225,7 +237,61 @@ def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset
                 store_values=existing_coord.tolist(),
             )
             new_ds = new_ds.reindex({dim: existing_coord})
+
+    new_vars = {str(v) for v in new_ds.data_vars}
+    store_vars = {str(v) for v in existing.data_vars}
+    extra_vars = sorted(new_vars - store_vars)
+    if extra_vars:
+        raise ValueError(
+            f"Cannot append: run produced variables {extra_vars} absent from "
+            f"the existing store {sorted(store_vars)}. Rewrite the "
+            f"store (append=False) to add variables."
+        )
+    for name in sorted(store_vars - new_vars):
+        template = existing[name]
+        fill = _fill_value_for(template.dtype)
+        log.warning(
+            "append_schema_var_filled",
+            variable=name,
+            fill_value=fill,
+            reason="store variable absent from this run; padded to keep "
+            "the date dimension in sync across variables",
+        )
+        sizes = {
+            d: (new_ds.sizes[d] if d == "date" else existing.sizes[d])
+            for d in template.dims
+        }
+        new_ds[name] = xr.DataArray(
+            np.full(tuple(sizes.values()), fill, dtype=template.dtype),
+            dims=tuple(sizes),
+            coords={
+                d: (new_ds[d].values if d == "date" else existing[d].values)
+                for d in template.dims
+                if d == "date" or d in existing.coords
+            },
+            attrs=dict(template.attrs),
+        )
     return new_ds
+
+
+_OPTIONAL_VAR_ATTRS: dict[str, dict] = {
+    "tail_ratio": {
+        "long_name": "Forecast tail ratio (pXX member accumulation / GEV return level)",
+        "units": "1",
+        "definition": "possible-worlds tail signal - see exceedance.compute_tail_ratio",
+    },
+    "median_ratio": {
+        "long_name": "Median member ratio (p50 member accumulation / GEV return level)",
+        "units": "1",
+        "definition": "median-world storyline signal - see exceedance.compute_member_ratio",
+    },
+    "ensemble_confidence": {
+        "long_name": "Ensemble confidence level (24h window)",
+        "flag_values": [0, 1, 2],
+        "flag_meanings": "low_confidence medium_confidence high_confidence",
+        "definition": "IQR/max(median,1mm) - ICPAC EGU26-18323",
+    },
+}
 
 
 def _build_dataset(
@@ -244,35 +310,31 @@ def _build_dataset(
             "conventions": "CF-1.8",
         },
     )
-    if tail_dict:
-        tail_arrays = [tail_dict[d] for d in sorted_dates if d in tail_dict]
-        if len(tail_arrays) == len(sorted_dates):
-            tail_combined = xr.concat(tail_arrays, dim="date")
-            ds["tail_ratio"] = tail_combined.astype(np.float32)
-            ds["tail_ratio"].attrs = {
-                "long_name": "Forecast tail ratio (pXX member accumulation / GEV return level)",
-                "units": "1",
-                "definition": "possible-worlds tail signal - see exceedance.compute_tail_ratio",
-            }
-    if median_dict:
-        median_arrays = [median_dict[d] for d in sorted_dates if d in median_dict]
-        if len(median_arrays) == len(sorted_dates):
-            median_combined = xr.concat(median_arrays, dim="date")
-            ds["median_ratio"] = median_combined.astype(np.float32)
-            ds["median_ratio"].attrs = {
-                "long_name": "Median member ratio (p50 member accumulation / GEV return level)",
-                "units": "1",
-                "definition": "median-world storyline signal - see exceedance.compute_member_ratio",
-            }
-    if confidence_dict:
-        conf_arrays = [confidence_dict[d] for d in sorted_dates if d in confidence_dict]
-        if len(conf_arrays) == len(sorted_dates):
-            conf_combined = xr.concat(conf_arrays, dim="date")
-            ds["ensemble_confidence"] = conf_combined.astype(np.int8)
-            ds["ensemble_confidence"].attrs = {
-                "long_name": "Ensemble confidence level (24h window)",
-                "flag_values": [0, 1, 2],
-                "flag_meanings": "low_confidence medium_confidence high_confidence",
-                "definition": "IQR/max(median,1mm) - ICPAC EGU26-18323",
-            }
+    optional: dict[str, tuple[dict[date, xr.DataArray] | None, np.dtype]] = {
+        "tail_ratio": (tail_dict, np.dtype(np.float32)),
+        "median_ratio": (median_dict, np.dtype(np.float32)),
+        "ensemble_confidence": (confidence_dict, np.dtype(np.int8)),
+    }
+    for name, (var_dict, dtype) in optional.items():
+        if not var_dict:
+            continue
+        present = [d for d in sorted_dates if d in var_dict]
+        if not present:
+            continue
+        var = xr.concat([var_dict[d] for d in present], dim="date").astype(dtype)
+        if len(present) < len(sorted_dates):
+            # A partially-covered variable must still span every date in the
+            # batch: writing it short (or dropping it) desyncs the date
+            # dimension across variables on append and corrupts the store.
+            fill = _fill_value_for(dtype)
+            log.warning(
+                "exceedance_var_partial_dates",
+                variable=name,
+                n_present=len(present),
+                n_dates=len(sorted_dates),
+                fill_value=fill,
+            )
+            var = var.reindex(date=ds["date"].values, fill_value=fill)
+        ds[name] = var
+        ds[name].attrs = dict(_OPTIONAL_VAR_ATTRS[name])
     return ds

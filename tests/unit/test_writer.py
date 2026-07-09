@@ -3,6 +3,7 @@
 from datetime import date
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -60,6 +61,86 @@ class TestStorylineVariables:
         assert ds.sizes["date"] == 2
         assert float(ds["median_ratio"].sel(date="2024-01-02").mean()) == pytest.approx(0.4)
         assert float(ds["tail_ratio"].sel(date="2024-01-01").mean()) == pytest.approx(1.5)
+
+
+def _conf_da(day: date, value: int = 2):
+    """Build an ensemble_confidence DataArray (date, lat, lon), int8."""
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([10.0, 11.0], dtype=np.float32)
+    return xr.DataArray(
+        np.full((1, lat.size, lon.size), value, dtype=np.int8),
+        dims=("date", "latitude", "longitude"),
+        coords={"date": [pd.Timestamp(day)], "latitude": lat, "longitude": lon},
+    )
+
+
+class TestAppendVariableSafety:
+    """A store variable absent from a run must not silently stay short and
+    desync the date dimension across variables (OND-2024 corruption)."""
+
+    def test_append_without_optional_vars_pads_them(self, tmp_path):
+        """Run without tail/median/confidence appends fill values, not desync."""
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1, value=0.1)},
+            uri,
+            append=False,
+            tail_dict={d1: _exc_da([24], [5], d1, value=1.5)},
+            median_dict={d1: _exc_da([24], [5], d1, value=0.3)},
+            confidence_dict={d1: _conf_da(d1, value=2)},
+        )
+        write_exceedance_store(
+            {d2: _exc_da([24], [5], d2, value=0.2)},
+            uri,
+            append=True,
+        )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        # Every variable advanced to 2 dates - no per-variable desync.
+        for name in ("exceedance_prob", "tail_ratio", "median_ratio", "ensemble_confidence"):
+            assert ds[name].sizes["date"] == 2, name
+        # Day 1 values preserved; day 2 padded (NaN for floats, -1 for int8).
+        assert float(ds["tail_ratio"].sel(date="2024-01-01").mean()) == pytest.approx(1.5)
+        assert bool(np.isnan(ds["tail_ratio"].sel(date="2024-01-02")).all())
+        assert bool(np.isnan(ds["median_ratio"].sel(date="2024-01-02")).all())
+        assert int(ds["ensemble_confidence"].sel(date="2024-01-01").max()) == 2
+        assert int(ds["ensemble_confidence"].sel(date="2024-01-02").max()) == -1
+
+    def test_append_new_variable_raises(self, tmp_path):
+        """Introducing a variable absent from the store fails loudly."""
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1)},
+            uri,
+            append=False,
+        )
+        with pytest.raises(ValueError, match="variables"):
+            write_exceedance_store(
+                {d2: _exc_da([24], [5], d2)},
+                uri,
+                append=True,
+                tail_dict={d2: _exc_da([24], [5], d2, value=1.6)},
+            )
+
+    def test_partial_dates_within_batch_kept_and_filled(self, tmp_path):
+        """A variable covering only some dates of a batch is kept and padded,
+        not silently dropped (the original var-drop path)."""
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1), d2: _exc_da([24], [5], d2)},
+            uri,
+            append=False,
+            tail_dict={d1: _exc_da([24], [5], d1, value=1.5)},  # d2 missing
+        )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert "tail_ratio" in ds
+        assert ds["tail_ratio"].sizes["date"] == 2
+        assert float(ds["tail_ratio"].sel(date="2024-01-01").mean()) == pytest.approx(1.5)
+        assert bool(np.isnan(ds["tail_ratio"].sel(date="2024-01-02")).all())
 
 
 class TestAppendSchemaSafety:
