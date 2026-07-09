@@ -111,9 +111,50 @@ are initial values to be tuned against the satellite panel. The topology seeds
 the major basins (Shabelle, Juba, White Nile/Sudd, Blue Nile, Tana) and extends
 by editing the YAML.
 
-## 6. One-line verdict
+## 6. One-line verdict (pre-remediation)
 
 C3 is already near-operational on **reliability** (96 % precision) but far from it
 on **completeness** (29 % recall). The route forward is **hydrological information
 (discharge, flood routing, upstream rainfall) and probability calibration**, not
 further threshold tuning.
+
+## 7. Post-remediation re-runs (2026-07-09)
+
+The Nov-2024 window (31 Oct – 30 Nov, 238 units) was re-scored with all four
+levers enabled and re-validated against the same FAO/VIIRS panel, in two
+passes: first against the repaired exceedance store where real `tail_ratio`
+existed on only 7 of 31 days (`results/admin1_risk_postlevers/`), then against
+a fully recomputed store with real tail/median on all 31 days
+(`results/exceedance_nov2024full.zarr` → `results/admin1_risk_fullwindow/`).
+The pre-lever baseline is preserved in `results/admin1_risk/`.
+
+| Metric (105 units, flooded ≥ 50 km²) | Pre-levers | Levers, tail 7/31 d | Levers, tail 31/31 d |
+|---------------------------------------|-----------:|--------------------:|---------------------:|
+| AUC (C3 peak `p_red` vs VIIRS flood)  | 0.715 | 0.724 | **0.734** |
+| Recall @ Orange+                      | 0.29 (26/91) | 0.46 (42/91) | **0.51 (46/91)** |
+| Precision @ Orange+                   | 0.96 (26/27) | 0.95 (42/44) | **0.96 (46/48)** |
+
+The riverine lever resolves the headline misses, and the effect scales with
+tail coverage: **Middle Shabelle (3 016 km², 245 k exposed) goes 0 → 6 → 30
+Orange+ days**; Lower Juba, Lower Shabelle and Middle Juba follow the same
+0 → 6 → ~30 pattern, via the pooled upstream `riverine_ratio` (≈ 2.6 on the
+Shabelle/Juba corridor, ≈ 2.7–3.0 on the Blue Nile/Gezira reach). Sustained
+month-long alerting matches the observed Deyr flood persistence, and the
+doubled Red count (311 → 632 unit-days) costs no precision (0.96).
+
+Residual limitations:
+
+- `p_red` still saturates at 0.392 (BN structure unchanged by design);
+  gradation is carried by the additive `severity_score`, emitted on every
+  scored unit-day.
+- Banadir (coastal, 94 km² but 562 k exposed), Bakool and Bay remain at 0
+  alert-days — coastal/urban flooding is not on the riverine topology; a
+  coastal pathway is future work.
+- Recall is bounded near ~0.5 by units outside the curated river topology and
+  outside FAO EVE's forecast-signal reach; extending the topology YAML and a
+  GloFAS discharge feed are the next levers.
+
+Provenance note: every figure above comes from real ECMWF ensemble GRIBs
+(C1 store) and real GPM IMERG observations — no padded or synthetic values
+remain in the full-window chain. The 7-day-tail pass is kept for the record
+because it isolates the riverine lever's marginal contribution.

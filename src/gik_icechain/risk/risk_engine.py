@@ -384,7 +384,11 @@ def _process_day(
     gpm_s = aggregate_to_admin1(gpm_da, admin) if gpm_da is not None else pd.Series(dtype=float)
 
     if "ensemble_confidence" in exc_day:
-        conf_mean_s = aggregate_to_admin1(exc_day["ensemble_confidence"].astype(float), admin)
+        # Negative values are the writer's int8 missing-data sentinel (-1,
+        # NaN being unrepresentable): mask them so a padded date falls back to
+        # the default confidence (2) instead of being clipped to Low.
+        conf_da = exc_day["ensemble_confidence"].astype(float)
+        conf_mean_s = aggregate_to_admin1(conf_da.where(conf_da >= 0), admin)
         conf_s: pd.Series = conf_mean_s.round().clip(0, 2).fillna(2.0).astype("int8")
     else:
         conf_s = pd.Series(dtype="int8")
