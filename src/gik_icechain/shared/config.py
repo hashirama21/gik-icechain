@@ -539,9 +539,9 @@ class CRMAModelConfig(BaseModel):
     tail_extreme_ratio: float = 1.30  # p95 member well past the return level
 
     # Riverine-aware Forecast_Hazard: escalate on an upstream/riverine ratio
-    # (routed discharge or upstream rainfall / flood-return level) even when
-    # local exceedance is ~0. Off by default; riverine_ratio defaults to 0.
-    riverine_aware_hazard: bool = False
+    # even when local exceedance is ~0. riverine_ratio defaults to 0, so units
+    # without an upstream feed are unaffected.
+    riverine_aware_hazard: bool = True
     riverine_medium_ratio: float = 0.80
     riverine_high_ratio: float = 1.00
     riverine_extreme_ratio: float = 1.30
@@ -688,7 +688,7 @@ class RiverineFeedConfig(BaseModel):
     riverine_ratio, feeding catchment-routed floods into Forecast_Hazard.
     """
 
-    enabled: bool = False
+    enabled: bool = True
     upstream_map_path: str = "data/river_basins/upstream_admin1.yaml"
     attenuation: float = Field(default=0.9, gt=0.0, le=1.0)
     aggregate: str = "max"  # "max" | "mean" over upstream units
