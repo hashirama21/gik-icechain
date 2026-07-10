@@ -1,33 +1,162 @@
 "use client";
 
-// ARCHIVE tab — calendar heatmap of worst daily risk, from index.json.
+// ARCHIVE tab — one continuous cal-heatmap (GitHub-style) of worst daily risk.
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getIndex, type CalendarIndex } from "@/lib/api";
 import { RISK_COLOR, RISK_LABEL, type RiskState, type UnitRisk } from "@/lib/risk";
+import "cal-heatmap/cal-heatmap.css";
 
-const MNAMES = ["January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December"];
-const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS_SHOWN = 6;
+const NOT_IN_ARCHIVE = -2;
+
+type CalInstance = {
+  paint: (options: object, plugins?: unknown[][]) => Promise<unknown>;
+  previous: (n?: number) => Promise<unknown>;
+  next: (n?: number) => Promise<unknown>;
+  on: (event: string, cb: (...args: never[]) => void) => void;
+  destroy: () => Promise<unknown>;
+};
+
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function monthStart(ym: string): Date {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1));
+}
 
 export default function ArchiveTab({
   risks, onPick,
 }: { risks: Record<string, UnitRisk>; onPick: (d: string) => void }) {
+  const router = useRouter();
   const [index, setIndex] = useState<CalendarIndex>({});
+  const calRef = useRef<CalInstance | null>(null);
+
   useEffect(() => { getIndex().then(setIndex).catch(() => setIndex({})); }, []);
 
-  const months = useMemo(() => {
-    const set = new Set<string>();
-    for (const d of Object.keys(index)) set.add(d.slice(0, 7)); // YYYY-MM
-    return Array.from(set).sort();
-  }, [index]);
+  const dates = useMemo(() => Object.keys(index).sort(), [index]);
 
   const stats = useMemo(() => {
-    const dates = Object.values(index);
-    const signal = dates.filter((d) => d.worst_risk >= 1).length;
-    return { days: dates.length, signal, units: Object.keys(risks).length };
+    const entries = Object.values(index);
+    const signal = entries.filter((d) => d.worst_risk >= 1).length;
+    return { days: entries.length, signal, units: Object.keys(risks).length };
   }, [index, risks]);
+
+  useEffect(() => {
+    if (dates.length === 0) return;
+    let disposed = false;
+
+    const paint = async () => {
+      const [{ default: CalHeatmap }, { default: Tooltip }, { default: CalendarLabel }] =
+        await Promise.all([
+          import("cal-heatmap"),
+          import("cal-heatmap/plugins/Tooltip"),
+          import("cal-heatmap/plugins/CalendarLabel"),
+        ]);
+      if (disposed) return;
+
+      const first = monthStart(dates[0].slice(0, 7));
+      const last = monthStart(dates[dates.length - 1].slice(0, 7));
+      // Initial view: the densest MONTHS_SHOWN-month window of the archive
+      // (a stray recent date must not drag the view to an empty span).
+      const perMonth = new Map<string, number>();
+      for (const d of dates) perMonth.set(d.slice(0, 7), (perMonth.get(d.slice(0, 7)) ?? 0) + 1);
+      let view = first;
+      let best = -1;
+      for (const c = new Date(first); c <= last; c.setUTCMonth(c.getUTCMonth() + 1)) {
+        const w = new Date(c);
+        let count = 0;
+        for (let i = 0; i < MONTHS_SHOWN; i++) {
+          count += perMonth.get(w.toISOString().slice(0, 7)) ?? 0;
+          w.setUTCMonth(w.getUTCMonth() + 1);
+        }
+        if (count >= best) { best = count; view = new Date(c); }
+      }
+
+      // Every day of the paintable span gets a value, so every cell is colored
+      // by the scale (no reliance on the library's empty-cell CSS).
+      const source: { date: string; value: number }[] = [];
+      const end = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0));
+      for (let d = new Date(first); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+        const ds = d.toISOString().slice(0, 10);
+        source.push({ date: ds, value: index[ds]?.worst_risk ?? NOT_IN_ARCHIVE });
+      }
+
+      await calRef.current?.destroy();
+      const cal = new CalHeatmap() as unknown as CalInstance;
+      calRef.current = cal;
+
+      await cal.paint(
+        {
+          itemSelector: "#risk-cal",
+          data: { source, type: "json", x: "date", y: "value" },
+          date: { start: view, min: first, max: end },
+          range: MONTHS_SHOWN,
+          scale: {
+            color: {
+              type: "threshold",
+              domain: [-1, 0, 1, 2, 3],
+              range: [
+                cssVar("--c-nodata") || "#F0F0F0",
+                RISK_COLOR[-1], RISK_COLOR[0], RISK_COLOR[1], RISK_COLOR[2], RISK_COLOR[3],
+              ],
+            },
+          },
+          domain: {
+            type: "month",
+            gutter: 6,
+            label: { text: "MMM YYYY", textAlign: "start", position: "top" },
+          },
+          subDomain: { type: "ghDay", radius: 2, width: 12, height: 12, gutter: 3 },
+        },
+        [
+          [
+            Tooltip,
+            {
+              text: (_ts: number, value: number | null, dayjsDate: { format: (f: string) => string }) => {
+                const day = dayjsDate.format("dddd, MMMM D, YYYY");
+                if (value === null || value === NOT_IN_ARCHIVE) return `Not in archive · ${day}`;
+                return `${RISK_LABEL[value as RiskState]} — worst unit risk · ${day}`;
+              },
+            },
+          ],
+          [
+            CalendarLabel,
+            {
+              width: 26,
+              textAlign: "start",
+              text: () => ["", "Mon", "", "Wed", "", "Fri", ""],
+              padding: [22, 0, 0, 0],
+            },
+          ],
+        ],
+      );
+
+      cal.on("click", ((_e: unknown, ts: number, value: number | null) => {
+        if (value === null || value === NOT_IN_ARCHIVE) return;
+        const ds = new Date(ts).toISOString().slice(0, 10);
+        onPick(ds);
+        router.push(`/stories/${ds}`);
+      }) as never);
+    };
+
+    paint();
+    // Repaint on theme switch: the not-in-archive color comes from a CSS var
+    // resolved at paint time.
+    const observer = new MutationObserver(() => paint());
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      calRef.current?.destroy();
+      calRef.current = null;
+    };
+  }, [dates, index, onPick, router]);
 
   return (
     <div className="p-3.5" style={{ color: "var(--tp)" }}>
@@ -42,30 +171,45 @@ export default function ArchiveTab({
         Max daily flood-risk per day · East Africa · click a day → storymap
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mb-3.5">
         <Stat label="Days in archive" value={String(stats.days)} color="var(--teal)" />
         <Stat label="Active signal days" value={String(stats.signal)} color="var(--r500)" />
         <Stat label="Admin-1 units" value={String(stats.units)} color="var(--green)" />
       </div>
 
-      {/* Months */}
-      <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))" }}>
-        {months.map((ym) => <MonthBlock key={ym} ym={ym} index={index} onPick={onPick} />)}
-        {months.length === 0 && (
+      <div className="rounded-[10px] p-3" style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}>
+        {dates.length === 0 ? (
           <p className="text-xs" style={{ color: "var(--ts)" }}>No dates yet — run the data pipeline.</p>
+        ) : (
+          <>
+            <div className="overflow-x-auto pb-1">
+              <div id="risk-cal" />
+            </div>
+            <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
+              <div className="flex gap-1.5">
+                <NavButton onClick={() => calRef.current?.previous()} label="Previous">
+                  <ChevronLeft size={12} /> Previous
+                </NavButton>
+                <NavButton onClick={() => calRef.current?.next()} label="Next">
+                  Next <ChevronRight size={12} />
+                </NavButton>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {([3, 2, 1, 0, -1] as RiskState[]).map((s) => (
+                  <span key={s} className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
+                    <span className="w-3 h-3 rounded shrink-0" style={{ background: RISK_COLOR[s] }} />
+                    {RISK_LABEL[s]}
+                  </span>
+                ))}
+                <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
+                  <span className="w-3 h-3 rounded shrink-0"
+                    style={{ background: "var(--c-nodata)", border: "1px solid var(--brd)" }} />
+                  Not in archive
+                </span>
+              </div>
+            </div>
+          </>
         )}
-      </div>
-
-      {/* Legend */}
-      <div className="flex flex-wrap gap-3 mt-3 p-2.5 rounded-[10px]"
-        style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}>
-        {([3, 2, 1, 0, -1] as RiskState[]).map((s) => (
-          <span key={s} className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
-            <span className="w-3 h-3 rounded shrink-0" style={{ background: RISK_COLOR[s] }} />
-            {RISK_LABEL[s]}
-          </span>
-        ))}
       </div>
     </div>
   );
@@ -80,50 +224,14 @@ function Stat({ label, value, color }: { label: string; value: string; color: st
   );
 }
 
-function MonthBlock({
-  ym, index, onPick,
-}: { ym: string; index: CalendarIndex; onPick: (d: string) => void }) {
-  const [yr, mo] = ym.split("-").map(Number);
-  const first = new Date(yr, mo - 1, 1);
-  const days = new Date(yr, mo, 0).getDate();
-  const startDow = (first.getDay() + 6) % 7;
-  const cells: (string | null)[] = [];
-  for (let i = 0; i < startDow; i++) cells.push(null);
-  for (let d = 1; d <= days; d++) cells.push(`${ym}-${String(d).padStart(2, "0")}`);
-
+function NavButton({
+  onClick, label, children,
+}: { onClick: () => void; label: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-[10px] p-2.5" style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}>
-      <div className="font-mono text-[8px] tracking-[2px] uppercase mb-2 text-center font-bold" style={{ color: "var(--ts)" }}>
-        {MNAMES[mo - 1]} {yr}
-      </div>
-      <div className="grid grid-cols-7 gap-0.5 mb-1">
-        {DOW.map((d) => (
-          <div key={d} className="font-mono text-[7px] text-center" style={{ color: "var(--td)" }}>{d}</div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7 gap-0.5">
-        {cells.map((ds, i) => {
-          if (!ds) return <div key={i} className="aspect-square" />;
-          const entry = index[ds];
-          const has = !!entry;
-          const cell = (
-            <div
-              title={has ? `${ds} · ${entry.risk_label}` : ds}
-              className="aspect-square rounded-[6px] flex items-center justify-center font-mono text-[9px] cursor-pointer transition-transform hover:scale-110"
-              style={{
-                background: has ? RISK_COLOR[entry.worst_risk as RiskState] : "var(--c-nodata)",
-                color: has && entry.worst_risk >= 2 ? "#fff" : "var(--c-txt-n)",
-                opacity: has ? 1 : 0.4,
-              }}
-            >
-              {Number(ds.slice(-2))}
-            </div>
-          );
-          return has ? (
-            <Link key={i} href={`/stories/${ds}`} onClick={() => onPick(ds)}>{cell}</Link>
-          ) : <div key={i}>{cell}</div>;
-        })}
-      </div>
-    </div>
+    <button onClick={onClick} aria-label={label}
+      className="flex items-center gap-1 font-mono text-[9px] px-2 py-1 rounded-[5px] cursor-pointer"
+      style={{ background: "var(--ele)", border: "1px solid var(--brd)", color: "var(--ts)" }}>
+      {children}
+    </button>
   );
 }

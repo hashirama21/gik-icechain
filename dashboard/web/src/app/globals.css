@@ -66,3 +66,10 @@
 [data-theme="dark"] .leaflet-tile{filter:brightness(.62) saturate(.45)}
 [data-theme="light"] .leaflet-tile{filter:none}
 .leaflet-container{background:var(--bg)}
+
+/* cal-heatmap (Archive tab): theme-aware labels, hover ring, tooltip */
+#risk-cal .ch-domain-text{fill:var(--ts);font-family:var(--mono);font-size:8px;letter-spacing:1px;text-transform:uppercase}
+#risk-cal .ch-plugin-calendar-label-text{fill:var(--td);font-family:var(--mono);font-size:7px}
+#risk-cal .ch-subdomain-bg:hover{stroke:var(--tp);stroke-width:1px;cursor:pointer}
+#ch-tooltip{background:var(--ele);color:var(--tp);border:1px solid var(--brd);border-radius:5px;font-family:var(--mono);font-size:9px;padding:4px 8px}
+#ch-tooltip[data-popper-placement] .ch-tooltip-arrow:before{background:var(--ele);border:1px solid var(--brd)}

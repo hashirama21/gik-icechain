@@ -17,7 +17,7 @@ import type { UnitRisk } from "@/lib/risk";
 export default function DashboardApp() {
   const [tab, setTab] = useState<TabId>("map");
   const [date, setDate] = useState<string | null>(null);
-  const [rp, setRp] = useState("5");
+  const [rp, setRp] = useState("2");
   const [risks, setRisks] = useState<Record<string, UnitRisk>>({});
   const [deps, setDeps] = useState<Record<string, UnitDependency>>({});
 
