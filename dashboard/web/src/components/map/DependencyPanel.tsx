@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { BarChart3, BookOpen, Check } from "lucide-react";
 import { N_MEMBERS, RETURN_PERIODS, WINDOWS } from "@/lib/config";
 import {
   DISPLAY_LABEL, DISPLAY_VAR, displayClass, riskForRp, type RiskState, type UnitRisk,
@@ -40,7 +41,7 @@ export default function DependencyPanel({
       {/* Confidence */}
       <div className="rounded-md px-2.5 py-[7px] flex items-center gap-1.5"
         style={{ background: "var(--ele)", border: "1px solid var(--brd)" }}>
-        <span>📊</span>
+        <BarChart3 size={12} style={{ color: "var(--ts)", flexShrink: 0 }} />
         <span className="font-mono text-[9px]" style={{ color: "var(--ts)" }}>
           {dep?.confidence?.m ?? 0}/{N_MEMBERS} members · <strong style={{ color: "var(--tp)" }}>
             {dep?.confidence?.label ?? "—"}</strong>
@@ -87,7 +88,9 @@ export default function DependencyPanel({
                 <span className="w-7 text-right font-mono" style={{ color: met ? "var(--c-high)" : "var(--td)" }}>
                   {pct}%
                 </span>
-                <span className="w-3.5 text-[10px]">{met ? "✓" : "·"}</span>
+                <span className="w-3.5 inline-flex justify-center text-[10px]">
+                  {met ? <Check size={10} style={{ color: "var(--c-high)" }} /> : "·"}
+                </span>
               </div>
             );
           })}
@@ -110,10 +113,10 @@ export default function DependencyPanel({
       </Section>
 
       <Link href={`/stories/${date}`}
-        className="block text-center rounded-md py-2.5 text-[11px] font-medium"
+        className="flex items-center justify-center gap-1.5 rounded-md py-2.5 text-[11px] font-medium"
         style={{ background: "rgba(59,130,246,.1)", color: "var(--blue)",
           border: "1px solid rgba(59,130,246,.28)" }}>
-        📖 Open storymap
+        <BookOpen size={12} /> Open storymap
       </Link>
     </div>
   );

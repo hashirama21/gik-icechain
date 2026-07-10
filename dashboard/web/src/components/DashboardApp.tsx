@@ -4,6 +4,7 @@
 // and look (via the ported design tokens), but fed with REAL pipeline data.
 
 import { useEffect, useState } from "react";
+import { Info } from "lucide-react";
 import Header from "./ui/Header";
 import BottomNav, { type TabId } from "./ui/BottomNav";
 import MapTab from "./tabs/MapTab";
@@ -42,7 +43,8 @@ export default function DashboardApp() {
       <div className="flex items-center gap-1.5 px-3 py-[3px] text-[9px] shrink-0"
         style={{ color: "var(--td)", background: "rgba(59,130,246,.05)",
                  borderBottom: "1px solid rgba(59,130,246,.1)" }}>
-        ℹ️ Decision-support tool only — does not replace operational judgment of
+        <Info size={10} className="inline -mt-px mr-1" />
+        Decision-support tool only — does not replace operational judgment of
         competent authorities · ECMWF Open Licence · EM-DAT CC-BY · NASA Open Data
       </div>
 
