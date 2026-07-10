@@ -26,7 +26,7 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     const { risks, rp } = stateRef.current;
     const r = risks[pcode];
     const bg = r ? DISPLAY_VAR[displayClass(riskForRp(r, rp))] : DISPLAY_VAR.no_data;
-    return { color: "rgba(200,220,255,.38)", weight: 0.8, fillColor: bg, fillOpacity: 0.78 };
+    return { color: "rgba(120,140,180,.55)", weight: 0.8, fillColor: bg, fillOpacity: 0.92 };
   }
 
   // init once
