@@ -4,9 +4,7 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 .env*.local
-# Generated at build time from the pipeline outputs (never committed):
-# deploy-web syncs the risk results from S3 + downloads boundaries, then runs
-# dashboard.data_pipeline to render the contract under public/data.
-public/data/
+# public/data/ is the committed baseline contract; deploy-web refreshes it
+# from the store at build time when reachable.
 public/cogs/
 public/stac/
