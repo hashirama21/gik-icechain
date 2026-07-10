@@ -32,9 +32,9 @@
   --bg:var(--db50);--sur:#FFFFFF;--ele:var(--db50);
   --hov:var(--db100);--brd:var(--db200);--bhi:var(--db300);
   --tp:var(--db950);--ts:var(--db500);--td:var(--db400);
-  --c-normal:#FAFAFA;--c-nodata:#F0F0F0;
-  --c-low:var(--r50);--c-mod:var(--r100);--c-sig:var(--r200);
-  --c-high:var(--r300);--c-vhi:var(--r400);--c-crit:var(--r500);
+  --c-normal:#6EE7B7;--c-nodata:#F0F0F0;
+  --c-low:var(--r200);--c-mod:var(--r300);--c-sig:var(--r400);
+  --c-high:var(--r500);--c-vhi:var(--r600);--c-crit:var(--r700);
   --c-brd:rgba(0,0,0,.07);--c-brd-r:rgba(255,38,38,.18);
   --c-txt-n:#AAAAAA;--c-txt-l:#CC7777;--c-txt-m:#BB5555;
   --c-txt-s:#AA3333;--c-txt-h:#881111;--c-txt-v:#770000;--c-txt-c:#FFFFFF;
