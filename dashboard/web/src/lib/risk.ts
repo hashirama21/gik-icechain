@@ -9,9 +9,10 @@ export const RISK_LABEL: Record<RiskState, string> = {
   [-1]: "No data", 0: "Green", 1: "Yellow", 2: "Orange", 3: "Red",
 };
 
-/** Canonical 4-class colours (== titiler_config risk_levels). */
+/** Canonical 4-class colours. Orange is #C2410C (not titiler's #FF9800):
+ *  #FF9800 vs #F59E0B is dE 1.2 under protanopia - indistinguishable. */
 export const RISK_COLOR: Record<RiskState, string> = {
-  [-1]: "#445577", 0: "#10B981", 1: "#F59E0B", 2: "#FF9800", 3: "#FF2626",
+  [-1]: "#445577", 0: "#10B981", 1: "#F59E0B", 2: "#C2410C", 3: "#FF2626",
 };
 
 /** Risk fields for one return period. */

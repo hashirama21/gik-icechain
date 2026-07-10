@@ -2,6 +2,7 @@
 
 import ThemeToggle from "./ThemeToggle";
 import type { TabId } from "./BottomNav";
+import { BASE_PATH } from "@/lib/config";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "map", label: "Map" },
@@ -18,7 +19,12 @@ export default function Header({
       className="flex items-center gap-2.5 px-3.5 shrink-0 z-[1000]"
       style={{ height: "var(--hdr)", background: "var(--sur)", borderBottom: "1px solid var(--brd)" }}
     >
-      <div className="flex items-center gap-1.5 shrink-0">
+      {/* eslint-disable-next-line @next/next/no-img-element -- static export, no image optimizer */}
+      <img src={`${BASE_PATH}/logo.jpg`} alt="GIK-IceChain"
+        className="h-8 w-auto shrink-0 rounded-[5px]"
+        style={{ border: "1px solid var(--brd)" }} />
+      <div className="w-px h-[18px] shrink-0" style={{ background: "var(--brd)" }} />
+      <div className="hidden sm:flex items-center gap-1.5 shrink-0">
         <span className="font-mono text-[8px] font-bold tracking-[1px] px-1.5 py-[3px] border rounded-[3px]"
           style={{ color: "var(--teal)", borderColor: "rgba(20,184,166,.3)" }}>ICPAC</span>
         <span className="font-mono text-[8px] font-bold tracking-[1px] px-1.5 py-[3px] border rounded-[3px]"
@@ -26,8 +32,6 @@ export default function Header({
         <span className="font-mono text-[8px] font-bold tracking-[1px] px-1.5 py-[3px] border rounded-[3px]"
           style={{ color: "var(--td)", borderColor: "var(--brd)" }}>ECMWF</span>
       </div>
-      <div className="w-px h-[18px] shrink-0" style={{ background: "var(--brd)" }} />
-      <div className="font-mono text-[10px] font-bold tracking-[1.5px] truncate">GIK·ICECHAIN</div>
 
       <nav className="hidden md:flex gap-0.5 flex-1 mx-2">
         {TABS.map((t) => (
