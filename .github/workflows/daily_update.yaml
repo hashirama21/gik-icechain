@@ -5,8 +5,11 @@ name: Daily Pipeline Update
 #       python scripts/tools.py download --component thresholds
 #       python scripts/tools.py download-thresholds
 #       python scripts/tools.py upload-thresholds   # -> s3://$GIK_BUCKET/cmorph_thresholds/
-#   - Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, GIK_BUCKET,
-#       GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
+#   - Repo secrets: MINIO_ENDPOINT_URL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+#       GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
+# Credentials are passed as plain AWS_* env vars (same pattern as e2e_run.yaml):
+# aws-actions/configure-aws-credentials validates via STS and rejects
+# MinIO keys, which failed every scheduled run at the first step.
 # Per-run prerequisites (admin, ENSO/IOD, eccodes, CHIRPS) are installed by the
 # jobs below.
 
@@ -22,6 +25,10 @@ on:
 
 env:
   PYTHONIOENCODING: utf-8
+  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+  AWS_DEFAULT_REGION: eu-west-1
 
 jobs:
 
@@ -38,11 +45,6 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-1
       - name: Ingest GIK batch
         id: ingest
         run: |
@@ -77,11 +79,6 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-1
       - name: Install eccodes + ENSO/IOD index (C2 prerequisites)
         run: |
           sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
@@ -99,7 +96,7 @@ jobs:
   update-risk:
     name: "C3: Admin-1 risk"
     runs-on: ubuntu-latest
-    needs: update-exceedance
+    needs: [ingest-daily-gik, update-exceedance]
     environment: production
     timeout-minutes: 45
     steps:
@@ -107,11 +104,6 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-1
       - name: Download admin boundaries + observed rainfall (C3 prerequisites)
         run: |
           python scripts/tools.py download --component admin
@@ -130,7 +122,7 @@ jobs:
   update-dashboard:
     name: "Dashboard: calendar data"
     runs-on: ubuntu-latest
-    needs: update-risk
+    needs: [ingest-daily-gik, update-risk]
     environment: production
     timeout-minutes: 15
     steps:
@@ -138,19 +130,16 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: viz
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-1
-      - name: Build dashboard contract and publish to S3 (no commit)
+      - name: Build dashboard contract and publish to the store (no commit)
         run: |
           PROC="${{ needs.ingest-daily-gik.outputs.processed_date }}"
           BUCKET="${{ secrets.GIK_BUCKET }}"
+          EP=""
+          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
           # Pull the existing contract so index.json MERGES (keeps date history),
           # and the risk output for this day (synced by update-risk) + boundaries.
-          aws s3 sync "s3://$BUCKET/dashboard-data/" dashboard/web/public/data/ || true
-          aws s3 sync "s3://$BUCKET/admin1_risk/" results/admin1_risk/
+          aws s3 sync $EP "s3://$BUCKET/dashboard-data/" dashboard/web/public/data/ || true
+          aws s3 sync $EP "s3://$BUCKET/admin1_risk/" results/admin1_risk/
           python -m dashboard.data_pipeline.pipeline contract \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
             --results results/admin1_risk \
@@ -159,8 +148,18 @@ jobs:
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
-          # Served by the web via NEXT_PUBLIC_DATA_BASE (like COG_BASE); never committed.
-          aws s3 sync dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
+          # Bundled into the Pages artifact by deploy-web (redeploy-pages below).
+          aws s3 sync $EP dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
+
+  redeploy-pages:
+    name: "Dashboard: redeploy Pages with fresh contract"
+    needs: update-dashboard
+    uses: ./.github/workflows/deploy-web.yaml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    secrets: inherit
 
   notify-failure:
     name: Notify on failure

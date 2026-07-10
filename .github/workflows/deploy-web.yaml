@@ -1,10 +1,12 @@
 name: Deploy Dashboard (Next.js)
 
 # Builds the GIK-IceChain dashboard (static export) and publishes it to GitHub
-# Pages. The per-day data contract is served at runtime from S3 via
-# NEXT_PUBLIC_DATA_BASE (built and published by the daily_update workflow); it is
-# not committed. configure-pages enables Pages (source: GitHub Actions) so the
-# project site is served under /gik-icechain/.
+# Pages. The per-day data contract is pulled from the store at build time and
+# bundled into the Pages artifact, so the app serves it same-origin over HTTPS
+# (no public bucket, no CORS, no mixed content). NEXT_PUBLIC_DATA_BASE stays as
+# an optional override for an external HTTPS data host. configure-pages enables
+# Pages (source: GitHub Actions) so the project site is served under
+# /gik-icechain/.
 
 on:
   push:
@@ -13,6 +15,7 @@ on:
       - "dashboard/web/**"
       - ".github/workflows/deploy-web.yaml"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -41,14 +44,31 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Pull data contract into the artifact (served same-origin)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          MINIO_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+          GIK_BUCKET: ${{ secrets.GIK_BUCKET }}
+        run: |
+          BUCKET="${GIK_BUCKET:-gik-icechain}"
+          ENDPOINT_FLAG=""
+          if [ -n "$MINIO_ENDPOINT_URL" ]; then
+            ENDPOINT_FLAG="--endpoint-url $MINIO_ENDPOINT_URL"
+          fi
+          if aws s3 ls $ENDPOINT_FLAG "s3://$BUCKET/dashboard-data/" > /dev/null 2>&1; then
+            aws s3 sync $ENDPOINT_FLAG "s3://$BUCKET/dashboard-data/" public/data/
+            echo "Contract bundled: $(find public/data -name '*.json' | wc -l) JSON files"
+          else
+            echo "No dashboard-data at s3://$BUCKET/ - deploying with bundled /data only"
+          fi
       - name: Build static export
         env:
           NEXT_PUBLIC_BASE_PATH: /gik-icechain
           NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
           NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
-          # Per-day contract fetched at runtime from S3 (published by
-          # daily_update); not committed. If unset, the app falls back to the
-          # bundled /data (empty in CI).
+          # Optional override: external HTTPS data host. Empty = the app reads
+          # the contract bundled above, same-origin from Pages.
           NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}
         run: npm run build
       - name: Disable Jekyll (serve _next/ underscore dirs verbatim)
