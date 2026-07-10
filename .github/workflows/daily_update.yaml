@@ -1,17 +1,10 @@
 name: Daily Pipeline Update
 
-# ONE-TIME prerequisites (not per-run):
-#   - Stage the 252 GEV threshold files on S3 once:
-#       python scripts/tools.py download --component thresholds
-#       python scripts/tools.py download-thresholds
-#       python scripts/tools.py upload-thresholds   # -> s3://$GIK_BUCKET/cmorph_thresholds/
-#   - Repo secrets: MINIO_ENDPOINT_URL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
-#       GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
-# Credentials are passed as plain AWS_* env vars (same pattern as e2e_run.yaml):
-# aws-actions/configure-aws-credentials validates via STS and rejects
-# MinIO keys, which failed every scheduled run at the first step.
-# Per-run prerequisites (admin, ENSO/IOD, eccodes, CHIRPS) are installed by the
-# jobs below.
+# Repo secrets: MINIO_ENDPOINT_URL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+# GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
+# Credentials flow as plain AWS_* env vars: aws-actions/configure-aws-credentials
+# validates via STS and rejects MinIO keys. All prerequisites (thresholds,
+# admin boundaries, ENSO/IOD, eccodes, CHIRPS) are staged by the jobs themselves.
 
 on:
   schedule:
@@ -83,6 +76,14 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
           python scripts/tools.py download --component enso_iod
+      - name: Stage GEV thresholds in the store if absent
+        run: |
+          EP=""
+          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
+          if ! aws s3 ls $EP "s3://${{ secrets.GIK_BUCKET }}/cmorph_thresholds/" | grep -q .; then
+            python scripts/tools.py download-thresholds
+            python scripts/tools.py upload-thresholds
+          fi
       - env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
         run: |
@@ -111,8 +112,6 @@ jobs:
           START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('$PROC')-timedelta(14))")
           python scripts/tools.py download-gpm --source chirps --start "$START" --end "$PROC"
       - run: |
-          # S3-native output (no local disk): C3 writes JSON + boundaries +
-          # checkpoint straight to the bucket the dashboard pipeline reads.
           gik-icechain risk \
             --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
             --output s3://${{ secrets.GIK_BUCKET }}/admin1_risk \
@@ -136,8 +135,7 @@ jobs:
           BUCKET="${{ secrets.GIK_BUCKET }}"
           EP=""
           [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
-          # Pull the existing contract so index.json MERGES (keeps date history),
-          # and the risk output for this day (synced by update-risk) + boundaries.
+          # Pull the existing contract first: index.json merges, keeping date history.
           aws s3 sync $EP "s3://$BUCKET/dashboard-data/" dashboard/web/public/data/ || true
           aws s3 sync $EP "s3://$BUCKET/admin1_risk/" results/admin1_risk/
           python -m dashboard.data_pipeline.pipeline contract \
@@ -148,7 +146,6 @@ jobs:
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
-          # Bundled into the Pages artifact by deploy-web (redeploy-pages below).
           aws s3 sync $EP dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
 
   redeploy-pages:

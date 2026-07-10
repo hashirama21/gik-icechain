@@ -1,18 +1,17 @@
 name: Deploy Dashboard (Next.js)
 
-# Builds the GIK-IceChain dashboard (static export) and publishes it to GitHub
-# Pages. The per-day data contract is pulled from the store at build time and
-# bundled into the Pages artifact, so the app serves it same-origin over HTTPS
-# (no public bucket, no CORS, no mixed content). NEXT_PUBLIC_DATA_BASE stays as
-# an optional override for an external HTTPS data host. configure-pages enables
-# Pages (source: GitHub Actions) so the project site is served under
-# /gik-icechain/.
+# Static export to GitHub Pages. The data contract is pulled from the store at
+# build time and served same-origin from Pages (a https page cannot fetch the
+# private http MinIO directly). If the store has no contract, the build
+# rebuilds it from admin1_risk and republishes; an empty artifact fails the
+# deploy.
 
 on:
   push:
     branches: [main]
     paths:
       - "dashboard/web/**"
+      - "dashboard/data_pipeline/**"
       - ".github/workflows/deploy-web.yaml"
   workflow_dispatch:
   workflow_call:
@@ -25,6 +24,12 @@ permissions:
 concurrency:
   group: pages-web
   cancel-in-progress: true
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+  AWS_DEFAULT_REGION: eu-west-1
 
 jobs:
   build:
@@ -40,38 +45,93 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/web/package-lock.json
       - run: npm ci || npm install
-      - name: Configure GitHub Pages (enable + source = Actions)
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
           enablement: true
-      - name: Pull data contract into the artifact (served same-origin)
+
+      - name: Pull data contract into the artifact
+        id: pull
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-          MINIO_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
           GIK_BUCKET: ${{ secrets.GIK_BUCKET }}
         run: |
           BUCKET="${GIK_BUCKET:-gik-icechain}"
-          ENDPOINT_FLAG=""
-          if [ -n "$MINIO_ENDPOINT_URL" ]; then
-            ENDPOINT_FLAG="--endpoint-url $MINIO_ENDPOINT_URL"
-          fi
-          if aws s3 ls $ENDPOINT_FLAG "s3://$BUCKET/dashboard-data/" > /dev/null 2>&1; then
-            aws s3 sync $ENDPOINT_FLAG "s3://$BUCKET/dashboard-data/" public/data/
-            echo "Contract bundled: $(find public/data -name '*.json' | wc -l) JSON files"
+          echo "bucket=$BUCKET" >> "$GITHUB_OUTPUT"
+          EP=""
+          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
+          echo "endpoint set: $([ -n "$AWS_ENDPOINT_URL" ] && echo yes || echo NO)" \
+               "| creds set: $([ -n "$AWS_ACCESS_KEY_ID" ] && echo yes || echo NO)" \
+               "| bucket: $BUCKET" | tee -a "$GITHUB_STEP_SUMMARY"
+          if aws s3 ls $EP "s3://$BUCKET/dashboard-data/" > /tmp/ls.out 2>&1; then
+            aws s3 sync $EP --only-show-errors "s3://$BUCKET/dashboard-data/" public/data/
           else
-            echo "No dashboard-data at s3://$BUCKET/ - deploying with bundled /data only"
+            echo "s3 ls failed:" | tee -a "$GITHUB_STEP_SUMMARY"
+            tail -3 /tmp/ls.out | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+          N=$(find public/data -name '*.json' 2>/dev/null | wc -l)
+          echo "pulled: $N JSON files" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "empty=$([ "$N" -lt 3 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        if: steps.pull.outputs.empty == 'true'
+        uses: ./.github/actions/pipeline-setup
+        with:
+          extras: viz
+      - name: Rebuild the contract from admin1_risk
+        if: steps.pull.outputs.empty == 'true'
+        working-directory: .
+        env:
+          GIK_EXCEEDANCE_STORE_URI: ${{ secrets.GIK_EXCEEDANCE_STORE_URI }}
+        run: |
+          BUCKET="${{ steps.pull.outputs.bucket }}"
+          EP=""
+          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
+          if ! aws s3 sync $EP --only-show-errors "s3://$BUCKET/admin1_risk/" results/admin1_risk/; then
+            echo "::warning::no admin1_risk in the store"
+            exit 0
+          fi
+          DATES=$(ls results/admin1_risk/*_risk_scores.json 2>/dev/null | sed 's/.*\///;s/_risk_scores.json//' | sort)
+          [ -n "$DATES" ] || { echo "::warning::admin1_risk holds no score files"; exit 0; }
+          for D in $DATES; do
+            python -m dashboard.data_pipeline.pipeline contract \
+              --results results/admin1_risk \
+              --out dashboard/web/public \
+              --date "$D" \
+              ${GIK_EXCEEDANCE_STORE_URI:+--exceedance-store "$GIK_EXCEEDANCE_STORE_URI"} \
+              ${AWS_ENDPOINT_URL:+--endpoint-url "$AWS_ENDPOINT_URL"} \
+              || echo "::warning::contract failed for $D"
+          done
+          python -m dashboard.data_pipeline.pipeline geojson \
+            --boundaries results/admin1_risk/admin1_boundaries.geojson \
+            --out dashboard/web/public
+          aws s3 sync $EP --only-show-errors dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
+          echo "contract rebuilt for $(echo "$DATES" | wc -w) dates and republished" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify deploy prerequisites
+        run: |
+          JSON_COUNT=$(find public/data -name '*.json' 2>/dev/null | wc -l)
+          GEO_COUNT=$(find public/data/geojson -name '*.json' 2>/dev/null | wc -l)
+          DATE_COUNT=$(find public/data -maxdepth 1 -type d -name '20*' 2>/dev/null | wc -l)
+          HAS_INDEX=$([ -f public/data/index.json ] && echo yes || echo NO)
+          printf '{"sha":"%s","json":%s,"geojson":%s,"dates":%s,"index":"%s","built":"%s"}\n' \
+            "$GITHUB_SHA" "$JSON_COUNT" "$GEO_COUNT" "$DATE_COUNT" "$HAS_INDEX" \
+            "$(date -u +%FT%TZ)" > public/data/_meta.json
+          echo "prerequisites: index=$HAS_INDEX dates=$DATE_COUNT geojson=$GEO_COUNT json=$JSON_COUNT" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$HAS_INDEX" = "NO" ] || [ "$DATE_COUNT" -eq 0 ] || [ "$GEO_COUNT" -eq 0 ]; then
+            echo "::error title=Empty dashboard contract::the site would deploy empty; check the diagnostics above"
+            exit 1
+          fi
+
       - name: Build static export
         env:
           NEXT_PUBLIC_BASE_PATH: /gik-icechain
           NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
           NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
-          # Optional override: external HTTPS data host. Empty = the app reads
-          # the contract bundled above, same-origin from Pages.
           NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}
         run: npm run build
-      - name: Disable Jekyll (serve _next/ underscore dirs verbatim)
+      - name: Disable Jekyll
         run: touch out/.nojekyll
       - uses: actions/upload-pages-artifact@v3
         with:
