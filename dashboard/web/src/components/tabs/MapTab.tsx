@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import { Globe } from "lucide-react";
 import { COUNTRIES, COUNTRY_BY_CODE, RISK_RETURN_PERIODS } from "@/lib/config";
 import {
   DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER, riskForRp,
@@ -136,7 +137,7 @@ export default function MapTab({ date, risks, deps, rp, onRp }: MapTabProps) {
           <DependencyPanel date={date} unit={selUnit} dep={deps[selUnit.pcode]} rp={rp} />
         ) : (
           <div className="text-center px-3 py-7">
-            <div className="text-[28px] mb-2.5">🌍</div>
+            <Globe size={28} className="mx-auto mb-2.5" style={{ color: "var(--ts)" }} />
             <div className="text-[13px] font-semibold mb-1.5" style={{ color: "var(--tp)" }}>Select a region</div>
             <div className="text-[10px] leading-relaxed" style={{ color: "var(--ts)" }}>
               Click a country, then an admin-1 region, to explore the 5-step flood-risk dependency chain.

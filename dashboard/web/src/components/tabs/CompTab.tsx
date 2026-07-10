@@ -4,6 +4,8 @@
 // (aifs_track disabled), so this view is explicitly flagged as a PREVIEW
 // rather than presenting fabricated divergence numbers as real.
 
+import { Scale } from "lucide-react";
+
 export default function CompTab({ date }: { date: string | null }) {
   return (
     <div className="p-3.5 flex flex-col gap-3" style={{ color: "var(--tp)" }}>
@@ -24,7 +26,7 @@ export default function CompTab({ date }: { date: string | null }) {
 
       <div className="rounded-[10px] p-4 flex flex-col items-center justify-center text-center gap-2"
         style={{ background: "var(--sur)", border: "1px solid var(--brd)", minHeight: 240 }}>
-        <div className="text-3xl">⚖️</div>
+        <Scale size={30} style={{ color: "var(--ts)" }} />
         <div className="text-sm font-semibold">AIFS track — preview</div>
         <div className="text-[11px] max-w-md leading-relaxed" style={{ color: "var(--ts)" }}>
           The AIFS ENS branch of the pipeline (<code>aifs_track</code>) is wired but
