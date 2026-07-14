@@ -536,8 +536,12 @@ def _process_day(
             scores[pcode]["storyline_median_state"] = median_state
             scores[pcode]["storyline_spread"] = max(0, worst_state - median_state)
 
+    day_meta = dict(meta or {})
+    if "source_grid_deg" in exc_day:
+        day_meta["source_grid_deg"] = float(exc_day["source_grid_deg"])
+
     out_path = write_risk_scores(
-        day, scores, output_dir, meta=meta, storage_options=storage_options
+        day, scores, output_dir, meta=day_meta, storage_options=storage_options
     )
     log.info("risk_day_written", date=day, n_units=len(scores), rps=list(agg))
     return out_path
