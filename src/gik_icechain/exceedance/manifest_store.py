@@ -21,7 +21,7 @@ from gik_icechain.shared.byte_range import (
     coalesce_byte_ranges,
     fetch_coalesced_ranges,
 )
-from gik_icechain.shared.grid import DEFAULT_SHAPE, lat_lon_res
+from gik_icechain.shared.grid import DEFAULT_SHAPE, grid_deg, lat_lon_res, shape_for_uri
 
 log = structlog.get_logger(__name__)
 
@@ -441,15 +441,17 @@ def load_day_manifest_aware(
     step_hours = _read_step_hours(session, date_str, max_steps, step_resolution_h)
 
     # Step 7: Assemble dataset
+    native_shape = shape_for_uri(byte_ranges[0].uri)
     log.info(
         "manifest_aware_load_complete",
         date=date_str,
         n_members=len(unique_members),
         n_decoded=len(decoded),
         n_coalesced_requests=len(coalesced),
+        source_grid_deg=grid_deg(native_shape[0]) if native_shape else None,
     )
 
-    return _assemble_dataset(
+    ds = _assemble_dataset(
         decoded,
         variables,
         unique_members,
@@ -457,6 +459,9 @@ def load_day_manifest_aware(
         step_hours,
         bbox,
     )
+    if native_shape is not None:
+        ds.attrs["source_grid_deg"] = grid_deg(native_shape[0])
+    return ds
 
 
 def _read_step_hours(
