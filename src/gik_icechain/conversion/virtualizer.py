@@ -25,6 +25,7 @@ import xarray as xr
 log = structlog.get_logger(__name__)
 
 from gik_icechain.shared.codec_registry import register_grib_codecs  # noqa: E402
+from gik_icechain.shared.grid import DEFAULT_SHAPE, shape_for_uri  # noqa: E402
 
 register_grib_codecs()
 
@@ -141,7 +142,8 @@ class GIKFlatParquetParser:
         # incorrect spatial shape (e.g. 181×360 for 1° while the actual GRIB2
         # messages on s3://ecmwf-forecasts/ are 0.25° = 721×1440).  We detect
         # the grid resolution from the S3 URI pattern and override when possible.
-        nlat, nlon, default_dtype = 721, 1440, "<f4"
+        nlat, nlon = DEFAULT_SHAPE
+        default_dtype = "<f4"
         first_uri = ""
         for val in chunk_df["value"].head(3):
             ref = _to_ref_value(val)
@@ -151,12 +153,9 @@ class GIKFlatParquetParser:
             if isinstance(ref, list) and len(ref) >= 1:
                 first_uri = str(ref[0])
                 break
-        if "/0p25/" in first_uri:
-            nlat, nlon = 721, 1440
-        elif "/0p4-beta/" in first_uri:
-            nlat, nlon = 451, 900
-        elif "/1p0/" in first_uri or "/1p/" in first_uri:
-            nlat, nlon = 181, 360
+        uri_shape = shape_for_uri(first_uri)
+        if uri_shape is not None:
+            nlat, nlon = uri_shape
         else:
             # Fall back to parquet .zarray metadata
             for v in df.loc[df["key"].str.endswith(".zarray"), "value"].head(5):
