@@ -19,8 +19,14 @@ data/*
 !data/river_basins/upstream_admin1.yaml
 .DS_Store
 .idea/
+.vscode/
 *.ipynb_checkpoints/
+# Secrets — NEVER commit. `.env*` also covers .env.example, which has held real
+# keys. The dashboard template holds only public NEXT_PUBLIC_* values.
 .env
+.env*
+*.env
+!dashboard/web/.env.example
 # Earthdata credentials — NEVER commit (real file at repo root or under data/)
 /earthdata_credentials.py
 test_aifs_vps.sh
