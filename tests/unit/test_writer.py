@@ -185,24 +185,44 @@ class TestAppendSchemaSafety:
                 append=True,
             )
 
-    def test_append_changed_spatial_grid_recreates_store(self, tmp_path):
-        """A changed bbox (different latitude grid) recreates the store, no crash."""
+    def test_append_changed_spatial_grid_refuses_to_destroy_the_store(self, tmp_path):
+        """A grid change (new bbox, or a 0p4-beta vs 0p25 era) must not silently
+        overwrite every date already written."""
         uri = str(tmp_path / "exc.zarr")
-        # Store written on a 2-cell latitude grid (old bbox).
         write_exceedance_store(
             {date(2024, 1, 1): _exc_da([6, 12], [2, 5], date(2024, 1, 1))},
             uri,
             append=False,
         )
-        # New run on a 3-cell latitude grid (bbox extended) - cannot append.
+        new_lat = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+
+        with pytest.raises(ValueError, match="destroy"):
+            write_exceedance_store(
+                {date(2024, 1, 2): _exc_da([6, 12], [2, 5], date(2024, 1, 2), lat=new_lat)},
+                uri,
+                append=True,
+            )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert ds.sizes["latitude"] == 2
+        assert [str(d)[:10] for d in ds["date"].values] == ["2024-01-01"]
+
+    def test_grid_reset_is_available_when_asked_for(self, tmp_path):
+        """The destructive path stays reachable, but only explicitly."""
+        uri = str(tmp_path / "exc.zarr")
+        write_exceedance_store(
+            {date(2024, 1, 1): _exc_da([6, 12], [2, 5], date(2024, 1, 1))},
+            uri,
+            append=False,
+        )
         new_lat = np.array([0.0, 1.0, 2.0], dtype=np.float32)
         write_exceedance_store(
             {date(2024, 1, 2): _exc_da([6, 12], [2, 5], date(2024, 1, 2), lat=new_lat)},
             uri,
             append=True,
+            allow_grid_reset=True,
         )
 
         ds = xr.open_zarr(uri, consolidated=False)
-        # Store recreated on the new grid: only the new date, new latitude size.
         assert ds.sizes["latitude"] == 3
-        assert list(str(d)[:10] for d in ds["date"].values) == ["2024-01-02"]
+        assert [str(d)[:10] for d in ds["date"].values] == ["2024-01-02"]
