@@ -484,6 +484,7 @@ def _process_exceedance_day(args: dict) -> dict:
         "conf_path": conf_path,
         "tail_path": tail_path,
         "median_path": median_path,
+        "source_grid_deg": day_ds.attrs.get("source_grid_deg"),
     }
 
 
@@ -637,6 +638,7 @@ def _run_exceedance(
     confidence_results: dict[date, xr.DataArray] = {}
     tail_results: dict[date, xr.DataArray] = {}
     median_results: dict[date, xr.DataArray] = {}
+    grid_results: dict[date, float] = {}
     for r in sorted(succeeded, key=lambda x: x["date_str"]):
         day = date.fromisoformat(r["date_str"])
         ds = xr.open_zarr(r["path"], consolidated=False)
@@ -650,6 +652,8 @@ def _run_exceedance(
         if r.get("median_path"):
             mds = xr.open_zarr(r["median_path"], consolidated=False)
             median_results[day] = mds["median_ratio"]
+        if r.get("source_grid_deg") is not None:
+            grid_results[day] = float(r["source_grid_deg"])
 
     write_exceedance_store(
         results,
@@ -659,6 +663,7 @@ def _run_exceedance(
         confidence_dict=confidence_results or None,
         tail_dict=tail_results or None,
         median_dict=median_results or None,
+        source_grid_deg=grid_results or None,
         endpoint_url=cfg.outputs.endpoint_url or None,
     )
 
