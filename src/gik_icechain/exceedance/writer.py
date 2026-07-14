@@ -18,6 +18,7 @@ Output Zarr schema::
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -115,24 +116,12 @@ def write_exceedance_store(
             if not new_dates:
                 log.info("write_exceedance_store_no_new_dates")
                 return
-            new_conf = (
-                {d: confidence_dict[d] for d in new_dates.values() if d in confidence_dict}
-                if confidence_dict
-                else None
-            )
-            new_tail = (
-                {d: tail_dict[d] for d in new_dates.values() if d in tail_dict}
-                if tail_dict
-                else None
-            )
-            new_median = (
-                {d: median_dict[d] for d in new_dates.values() if d in median_dict}
-                if median_dict
-                else None
-            )
+            keep = list(new_dates.values())
             new_ds = _build_dataset(
-                {d: exceedance_dict[d] for d in new_dates.values()},
-                new_conf, new_tail, new_median,
+                {d: exceedance_dict[d] for d in keep},
+                _subset_by_date(confidence_dict, keep),
+                _subset_by_date(tail_dict, keep),
+                _subset_by_date(median_dict, keep),
             )
             new_ds = _align_append_schema(new_ds, existing)
             new_ds = new_ds.chunk(
@@ -207,6 +196,14 @@ def _spatial_grids_compatible(
 def _fill_value_for(dtype: np.dtype):
     """Missing-data sentinel: NaN for floats, -1 for integer flag variables."""
     return -1 if np.issubdtype(dtype, np.integer) else np.nan
+
+
+def _subset_by_date(values: dict[date, Any] | None, keep: list[date]) -> dict[date, Any] | None:
+    """Restrict a per-date mapping to *keep*; None when nothing is left."""
+    if not values:
+        return None
+    subset = {d: values[d] for d in keep if d in values}
+    return subset or None
 
 
 def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset:
