@@ -10,6 +10,7 @@ no manual prep; ``scripts/tools.py`` exposes the same functions as commands.
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.request import Request, urlopen
@@ -18,6 +19,10 @@ import structlog
 
 if TYPE_CHECKING:
     from gik_icechain.shared.config import GIKConfig
+
+
+
+_GPM_LEAD_IN_DAYS = 30
 
 log = structlog.get_logger(__name__)
 
@@ -222,9 +227,50 @@ def ensure_gev_thresholds(directory: Path, enso_iod_csv: Path) -> Path:
     return directory
 
 
-def ensure_reference_data(cfg: GIKConfig) -> None:
-    """Fetch admin boundaries, ENSO/IOD index and GEV thresholds if any are missing."""
+def ensure_gpm_data(
+    gpm_dir: Path, start: date, end: date, lead_in_days: int = _GPM_LEAD_IN_DAYS
+) -> int:
+    """Download GPM IMERG daily rainfall for the run window plus its lead-in.
+
+    C3's observed-precipitation pathway needs GPM from ``start - lead_in_days``
+    (soil-saturation spin-up) through ``end``. Only missing days are fetched.
+
+    NASA Earthdata credentials are required (creds file, env, or ~/.netrc). When
+    they are absent the download is skipped with a warning rather than failing:
+    C3 then runs on the default antecedent state - a degraded but valid run.
+
+    Returns the number of days downloaded (0 if skipped or already complete).
+    """
+    from gik_icechain.thresholds.gpm_seasonal import download_gpm_ea
+
+    win_start = start - timedelta(days=lead_in_days)
+    try:
+        got = download_gpm_ea(win_start, end, gpm_dir)
+    except ValueError as exc:  # no Earthdata credentials
+        log.warning(
+            "gpm_skipped_no_credentials",
+            window=f"{win_start} -> {end}",
+            hint=str(exc).splitlines()[0],
+            consequence="C3 runs on the default antecedent state (compound pathway inert)",
+        )
+        return 0
+    log.info("gpm_ready", window=f"{win_start} -> {end}", n_downloaded=len(got))
+    return len(got)
+
+
+def ensure_reference_data(
+    cfg: GIKConfig, start: date | None = None, end: date | None = None
+) -> None:
+    """Fetch every input C2/C3 needs that is missing.
+
+    Static reference data (admin boundaries, ENSO/IOD index, GEV thresholds) is
+    always ensured. When *start*/*end* are given, GPM IMERG for the run window
+    (plus its lead-in) is ensured too - skipped gracefully without Earthdata
+    credentials.
+    """
     enso_csv = Path(cfg.component2.thresholds.enso_iod_index_path)
     ensure_admin_boundaries(Path(cfg.sources.admin_boundaries_path))
     ensure_enso_iod(enso_csv)
     ensure_gev_thresholds(Path(cfg.component2.thresholds.cmorph_path), enso_csv)
+    if start is not None and end is not None:
+        ensure_gpm_data(Path(cfg.sources.gpm_imerg_path), start, end)
