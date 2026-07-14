@@ -159,10 +159,11 @@ def _subset_to_bbox(
     Handles both proper geographic coordinates and raw integer indices
     (as produced by VirtualiZarr when lat/lon aren't assigned).
 
-    For a 0.25° ECMWF global grid with integer indices:
-      latitude[i]  = 90 - i * 0.25   (721 values, 90N to 90S)
-      longitude[j] = j * 0.25        (1440 values, 0E to 359.75E)
+    The grid step is derived from the array shape, so both ECMWF eras work
+    (0.25° = 721×1440 from ~2024-02; 0.4° = 451×900 before it).
     """
+    from gik_icechain.shared.grid import lat_lon_res
+
     lat_min, lat_max, lon_min, lon_max = bbox
     lat_name = "latitude" if "latitude" in ds.dims else "lat"
     lon_name = "longitude" if "longitude" in ds.dims else "lon"
@@ -172,9 +173,7 @@ def _subset_to_bbox(
     lat_vals = ds[lat_name].values
     if float(lat_vals.max()) <= nlat:
         # Integer indices - convert geographic bounds to index bounds.
-        # Infer grid: 0.25° global grid (721×1440) or similar.
-        dlat = 180.0 / (nlat - 1)
-        dlon = 360.0 / nlon
+        dlat, dlon = lat_lon_res(nlat, nlon)
         # ECMWF grids: latitude[0]=90°N (descending), longitude[0]=0°E
         i_min = max(0, int((90.0 - lat_max) / dlat))
         i_max = min(nlat - 1, int((90.0 - lat_min) / dlat))
