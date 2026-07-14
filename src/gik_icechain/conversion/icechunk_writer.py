@@ -30,6 +30,7 @@ except ImportError:
     log.warning("icechunk_not_installed", msg="pip install icechunk")
 
 from gik_icechain.shared.codec_registry import register_grib_codecs  # noqa: E402
+from gik_icechain.shared.grid import grid_deg  # noqa: E402
 
 register_grib_codecs()
 
@@ -173,17 +174,22 @@ class IceChainStore:
 
         virtual_ds.virtualize.to_icechunk(session.store, group=date_group)
 
+        commit_meta = {
+            "forecast_date": forecast_date.isoformat(),
+            "run_hour": str(run_hour),
+            "commit_time": datetime.now(tz=UTC).isoformat(),
+            "source": "gik-icechain",
+        }
+        nlat = virtual_ds.sizes.get("latitude")
+        if nlat:
+            commit_meta["source_grid_deg"] = str(grid_deg(int(nlat)))
+
         commit_hash = session.commit(
             message=message
             or self._commit_message_template.format(
                 date=forecast_date.isoformat(), run_hour=run_hour
             ),
-            metadata={
-                "forecast_date": forecast_date.isoformat(),
-                "run_hour": str(run_hour),
-                "commit_time": datetime.now(tz=UTC).isoformat(),
-                "source": "gik-icechain",
-            },
+            metadata=commit_meta,
         )
         # Tags are a best-effort human label for the *first* ingest of a date.
         # IceChunk tags are immutable and names cannot be reused even after
