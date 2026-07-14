@@ -50,16 +50,17 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     let cancelled = false;
 
     (async () => {
+      // One request per country, all in flight at once: sequential awaits made
+      // the map wait on 16 round trips before its first paint.
+      const settled = await Promise.allSettled(COUNTRIES.map((c) => getGeoJson(c.code)));
       const features: GeoJSON.Feature[] = [];
-      for (const c of COUNTRIES) {
-        try {
-          const fc = await getGeoJson(c.code);
-          for (const f of fc.features) {
-            const pcode = (f.properties?.pcode || f.properties?.admin1_pcode) as string;
-            f.properties = { ...f.properties, pcode };
-            features.push(f);
-          }
-        } catch { /* country not built yet */ }
+      for (const outcome of settled) {
+        if (outcome.status !== "fulfilled") continue; // country not built yet
+        for (const f of outcome.value.features) {
+          const pcode = (f.properties?.pcode || f.properties?.admin1_pcode) as string;
+          f.properties = { ...f.properties, pcode };
+          features.push(f);
+        }
       }
       if (cancelled) return;
       const layer = L.geoJSON(

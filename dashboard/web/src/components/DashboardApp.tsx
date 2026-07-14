@@ -11,7 +11,7 @@ import MapTab from "./tabs/MapTab";
 import ArchiveTab from "./tabs/ArchiveTab";
 import CompTab from "./tabs/CompTab";
 import DocsTab from "./tabs/DocsTab";
-import { getDependency, getIndex, getRegionRisks, type UnitDependency } from "@/lib/api";
+import { getIndex, getRegionRisks } from "@/lib/api";
 import type { UnitRisk } from "@/lib/risk";
 
 export default function DashboardApp() {
@@ -19,7 +19,6 @@ export default function DashboardApp() {
   const [date, setDate] = useState<string | null>(null);
   const [rp, setRp] = useState("2");
   const [risks, setRisks] = useState<Record<string, UnitRisk>>({});
-  const [deps, setDeps] = useState<Record<string, UnitDependency>>({});
 
   useEffect(() => {
     getIndex()
@@ -33,7 +32,6 @@ export default function DashboardApp() {
   useEffect(() => {
     if (!date) return;
     getRegionRisks(date).then(setRisks).catch(() => setRisks({}));
-    getDependency(date).then(setDeps).catch(() => setDeps({}));
   }, [date]);
 
   return (
@@ -50,7 +48,7 @@ export default function DashboardApp() {
 
       <main className="flex-1 relative overflow-hidden">
         <div className={tab === "map" ? "absolute inset-0 flex" : "hidden"}>
-          <MapTab date={date} risks={risks} deps={deps} rp={rp} onRp={setRp} />
+          <MapTab date={date} risks={risks} rp={rp} onRp={setRp} />
         </div>
         <div className={tab === "archive" ? "absolute inset-0 overflow-y-auto" : "hidden"}>
           <ArchiveTab risks={risks} onPick={setDate} />

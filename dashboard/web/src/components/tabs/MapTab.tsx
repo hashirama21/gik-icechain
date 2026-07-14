@@ -2,7 +2,7 @@
 
 // MAP tab — country/region sidebar · admin-1 risk map · 5-step dependency chain.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Globe } from "lucide-react";
 import { COUNTRIES, COUNTRY_BY_CODE, RISK_RETURN_PERIODS } from "@/lib/config";
@@ -10,7 +10,7 @@ import {
   DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER, riskForRp,
   type DisplayClass, type UnitRisk,
 } from "@/lib/risk";
-import type { UnitDependency } from "@/lib/api";
+import { getDependency, type UnitDependency } from "@/lib/api";
 import DependencyPanel from "../map/DependencyPanel";
 
 // Leaflet must be client-only (no SSR).
@@ -19,14 +19,25 @@ const LeafletMap = dynamic(() => import("../map/LeafletMap"), { ssr: false });
 export interface MapTabProps {
   date: string | null;
   risks: Record<string, UnitRisk>;
-  deps: Record<string, UnitDependency>;
   rp: string;
   onRp: (rp: string) => void;
 }
 
-export default function MapTab({ date, risks, deps, rp, onRp }: MapTabProps) {
+export default function MapTab({ date, risks, rp, onRp }: MapTabProps) {
   const [country, setCountry] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [deps, setDeps] = useState<Record<string, UnitDependency>>({});
+
+  // dependency.json only feeds the panel, so pay for it when a unit is picked
+  // rather than on every date change. The api layer dedupes and caches it.
+  useEffect(() => {
+    if (!date || !selected) return;
+    let cancelled = false;
+    getDependency(date)
+      .then((d) => { if (!cancelled) setDeps(d); })
+      .catch(() => { if (!cancelled) setDeps({}); });
+    return () => { cancelled = true; };
+  }, [date, selected]);
 
   // worst display class per country (for the sidebar chips), at the chosen RP
   const countryWorst = useMemo(() => {

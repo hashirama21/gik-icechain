@@ -104,7 +104,8 @@ jobs:
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
-          aws s3 sync $EP --only-show-errors dashboard/web/public/data/ "s3://$BUCKET/dashboard-data/"
+          bash scripts/publish_dashboard_data.sh \
+            dashboard/web/public/data "s3://$BUCKET/dashboard-data" $EP --only-show-errors
           echo "contract rebuilt for $(echo "$DATES" | wc -w) dates and republished" \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
