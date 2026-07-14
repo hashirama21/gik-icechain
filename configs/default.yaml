@@ -34,6 +34,9 @@ component1:
     manifest_splitting: true
     manifest_split_dim: "step"
     manifest_split_size: 1000
+  # The bucket goes back to 2023-01-18, but pre-2024-02 dates live under
+  # `0p4-beta/` at 0.4 deg (451x900), not `0p25/` (721x1440). Ingesting them means
+  # handling both grids - C1 already does; C2 derives the grid per GRIB message.
   gap_fill:
     enabled: true
     aws_batch_job: "deploy/aws/batch_job_definition.json"
@@ -97,6 +100,8 @@ component2:
     mem_gb_per_worker: 3.0
     mem_headroom_fraction: 0.1
 
+  # cmorph_path selects the threshold arm (same filenames in each; see
+  # configs/ablation_*.yaml). Regenerate: current files predate the OND fix.
   thresholds:
     adaptive: true
     enso_iod_index_path: "data/enso_iod_index.csv"
@@ -128,10 +133,13 @@ component2:
     window: -1
     return_period: -1
 
+# Innovation 4. OFF here so the daily run stays single-track; enable via
+# configs/aifs_comparison.yaml. AIFS ENS exists on s3://ecmwf-forecasts only
+# from ~2025-07-05 (earlier dates 404); IFS goes back to ~2024-03-01.
 aifs_track:
   enabled: false
   aifs_store_uri: "s3://gik-icechain/aifs-icechain-store"
-  exceedance_store_uri: ""
+  exceedance_store_uri: "s3://gik-icechain/aifs-exceedance-zarr"
   variables: ["tp"]
   run_hours: [0]
   max_step_h: 360

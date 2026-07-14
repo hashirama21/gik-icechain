@@ -10,9 +10,7 @@ import pytest
 import xarray as xr
 
 from gik_icechain.exceedance.thresholds import (
-    _SEASON_MONTHS as _SEASON_MONTHS_FOR_TEST,
-)
-from gik_icechain.exceedance.thresholds import (
+    SEASON_MONTHS,
     AdaptiveGEVThresholds,
     ClimateMode,
     ENSOPhase,
@@ -30,7 +28,7 @@ class TestGetSeason:
             assert get_season(month) == Season.MAM
 
     def test_ond_months(self):
-        for month in (10, 11):
+        for month in (10, 11, 12):
             assert get_season(month) == Season.OND
 
     def test_jjas_months(self):
@@ -38,13 +36,13 @@ class TestGetSeason:
             assert get_season(month) == Season.JJAS
 
     def test_djf_months(self):
-        for month in (12, 1, 2):
+        for month in (1, 2):
             assert get_season(month) == Season.DJF
 
-    def test_december_is_djf_not_ond(self):
-        # December was erroneously listed in both OND and DJF; it must be DJF only.
-        assert get_season(12) == Season.DJF
-        assert get_season(12) != Season.OND
+    def test_december_is_ond_not_djf(self):
+        # ISSUE-20: December is short rains (OND), not the DJF dry spell.
+        assert get_season(12) == Season.OND
+        assert get_season(12) != Season.DJF
 
     def test_all_months_covered(self):
         for month in range(1, 13):
@@ -54,7 +52,7 @@ class TestGetSeason:
     def test_no_month_maps_to_two_seasons(self):
         """Each calendar month must map to exactly one season."""
         seen: dict[int, Season] = {}
-        for season, months in _SEASON_MONTHS_FOR_TEST.items():
+        for season, months in SEASON_MONTHS.items():
             for m in months:
                 assert m not in seen, (
                     f"Month {m} appears in both {seen[m]} and {season}"

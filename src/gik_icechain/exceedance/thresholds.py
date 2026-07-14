@@ -37,7 +37,7 @@ class Season(StrEnum):
     MAM = "MAM"  # March-April-May (long rains)
     OND = "OND"  # October-November-December (short rains)
     JJAS = "JJAS"  # June-July-August-September
-    DJF = "DJF"  # December-January-February
+    DJF = "DJF"  # Jan-Feb (December is in OND, see SEASON_MONTHS)
 
 
 class ENSOPhase(StrEnum):
@@ -65,17 +65,18 @@ class ClimateMode:
         return f"{self.season.value}_{self.enso_phase.value}_{self.iod_phase.value}"
 
 
-_SEASON_MONTHS: dict[Season, list[int]] = {
+# Single source of truth - other modules import this instead of redefining it.
+SEASON_MONTHS: dict[Season, list[int]] = {
     Season.MAM: [3, 4, 5],
-    Season.OND: [10, 11],  # December transitions to DJF
+    Season.OND: [10, 11, 12],  # short rains - includes December
     Season.JJAS: [6, 7, 8, 9],
-    Season.DJF: [12, 1, 2],
+    Season.DJF: [1, 2],  # residual dry-spell months; December now in OND
 }
 
 
 def get_season(month: int) -> Season:
     """Map a calendar month (1-12) to an East Africa rainfall season."""
-    for season, months in _SEASON_MONTHS.items():
+    for season, months in SEASON_MONTHS.items():
         if month in months:
             return season
     raise ValueError(f"Invalid month: {month}")
@@ -429,7 +430,7 @@ class AdaptiveGEVThresholds:
     ) -> xr.DataArray:
         time_pd = pd.DatetimeIndex(time_index.values)
         month_mask = np.zeros(len(time_pd), dtype=bool)
-        for m in _SEASON_MONTHS[season]:
+        for m in SEASON_MONTHS[season]:
             month_mask |= time_pd.month == m
 
         nino_col = "nino34_anom" if "nino34_anom" in enso_iod_daily.columns else "nino34"

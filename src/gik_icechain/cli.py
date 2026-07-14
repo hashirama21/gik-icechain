@@ -1014,6 +1014,21 @@ def run_all(
             help="Run the AIFS track + IFS comparison (overrides aifs_track.enabled).",
         ),
     ] = None,
+    thresholds_dir: Annotated[
+        str | None,
+        typer.Option(
+            "--thresholds-dir",
+            help="Override component2.thresholds.cmorph_path (adaptive-vs-static ablation).",
+        ),
+    ] = None,
+    exceedance_store: Annotated[
+        str | None,
+        typer.Option("--exceedance-store", help="Override outputs.exceedance_store_uri."),
+    ] = None,
+    risk_output: Annotated[
+        str | None,
+        typer.Option("--risk-output", help="Override outputs.risk_output_dir."),
+    ] = None,
 ) -> None:
     """Run C1 -> C2 -> C3 end-to-end for the given date range (with optional AIFS track)."""
     from gik_icechain.shared.validation import validate_date_range
@@ -1023,6 +1038,12 @@ def run_all(
     cfg = _bootstrap(config)
     if aifs is not None:
         cfg.aifs_track.enabled = aifs
+    if thresholds_dir is not None:
+        cfg.component2.thresholds.cmorph_path = thresholds_dir
+    if exceedance_store is not None:
+        cfg.outputs.exceedance_store_uri = exceedance_store
+    if risk_output is not None:
+        cfg.outputs.risk_output_dir = risk_output
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
     aifs_enabled = cfg.aifs_track.enabled and bool(cfg.aifs_track.aifs_store_uri)
     n_steps = 5 if aifs_enabled else 3

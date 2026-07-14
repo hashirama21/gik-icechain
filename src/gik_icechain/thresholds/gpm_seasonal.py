@@ -33,19 +33,13 @@ import pandas as pd
 import structlog
 import xarray as xr
 
+from gik_icechain.exceedance.thresholds import SEASON_MONTHS
+
 log = structlog.get_logger(__name__)
 
 # East Africa bounding box
 EA_LAT_MIN, EA_LAT_MAX = -12.0, 23.0
 EA_LON_MIN, EA_LON_MAX = 22.0, 52.0
-
-# Seasonal month membership (Dec -> DJF, matching exceedance/thresholds.py)
-SEASON_MONTHS: dict[str, list[int]] = {
-    "MAM": [3, 4, 5],     # long rains
-    "OND": [10, 11],      # short rains (Dec -> DJF)
-    "JJAS": [6, 7, 8, 9],  # Ethiopian highland rains
-    "DJF": [12, 1, 2],    # dry season / fallback
-}
 
 RETURN_PERIODS = [2, 5, 10, 20, 40, 100]
 WINDOWS_H = [3, 6, 12, 24, 48, 72, 168]
@@ -313,13 +307,20 @@ def load_gpm_daily_ea(paths: list[Path]) -> xr.DataArray:
     return da_all
 
 def compute_seasonal_maxima(
-    daily_da: xr.DataArray, accumulation_h: int, season: str
+    daily_da: xr.DataArray,
+    accumulation_h: int,
+    season: str,
+    pool_seasons: bool = False,
 ) -> xr.DataArray:
     """Per-(season, year) block maxima of the *accumulation_h* rolling sum.
 
     Daily input -> windows must be multiples of 24 h; sub-daily windows need
     hourly data and yield an empty result (caller skips them).
     Returns dims (year, lat, lon).
+
+    With ``pool_seasons``, every calendar month feeds the block maxima whatever
+    *season* is - i.e. annual maxima. Used to build the unstratified baseline
+    the adaptive thresholds are ablated against (see build_seasonal_thresholds).
     """
     win_days = accumulation_h // 24
     empty = xr.DataArray(
@@ -332,7 +333,7 @@ def compute_seasonal_maxima(
         return empty
 
     acc = daily_da.rolling(time=win_days, min_periods=win_days).sum()
-    months = SEASON_MONTHS[season]
+    months = list(range(1, 13)) if pool_seasons else SEASON_MONTHS[season]
     mask = np.isin(pd.DatetimeIndex(acc["time"].values).month, months)
     acc_season = acc.isel(time=mask)
     if acc_season.sizes["time"] == 0:
@@ -437,15 +438,30 @@ def build_seasonal_thresholds(
     windows_h: list[int] = WINDOWS_H,
     min_years: int = MIN_YEARS_PER_BIN,
     seasons: list[str] | None = None,
+    pool_seasons: bool = False,
 ) -> dict[str, Path]:
     """Write season x ENSO x IOD Gumbel threshold NetCDFs from daily precip.
 
     One file per (season, enso, iod, window): ``thresholds_{mode}_{w}h.nc`` with
     ``rp_{rp}y`` variables, loader-compatible (``mode_key`` / ``window_h`` attrs).
     Returns {f"{mode}_{w}h": path}.
+
+    Ablation baselines (Innovation 2 - proposal §7.2 promises an adaptive-vs-static
+    AUC-ROC comparison). All three arms write the same filenames, so the pipeline
+    loads any of them unchanged - point ``component2.thresholds`` at the chosen dir:
+
+    ==================  ==============================  ====================================
+    arm                 call                            what varies per grid cell
+    ==================  ==============================  ====================================
+    adaptive (shipped)  defaults                        season x ENSO x IOD
+    season-only         ``min_years=999``               season (ENSO/IOD bins all fall back)
+    static (baseline)   ``min_years=999,                nothing - one annual-maxima fit
+                        pool_seasons=True``             replicated across every mode_key
+    ==================  ==============================  ====================================
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    seasons = seasons or list(SEASON_MONTHS)
+    # str() so a Season enum (SEASON_MONTHS is enum-keyed) serialises cleanly to netCDF attrs.
+    seasons = [str(s) for s in (seasons or SEASON_MONTHS)]
     phases = classify_enso_iod(enso_iod_csv)
     lat = daily_da["lat"].values
     lon = daily_da["lon"].values
@@ -453,7 +469,7 @@ def build_seasonal_thresholds(
     written: dict[str, Path] = {}
     for season in seasons:
         for window_h in windows_h:
-            s_max = compute_seasonal_maxima(daily_da, window_h, season)
+            s_max = compute_seasonal_maxima(daily_da, window_h, season, pool_seasons=pool_seasons)
             if s_max.sizes.get("year", 0) == 0:
                 continue
             year_coord = s_max["year"].values.astype(int)
@@ -493,6 +509,7 @@ def build_seasonal_thresholds(
                             "iod_phase": iod,
                             "n_years_fit": fit.n_years,
                             "enso_iod_stratified": int(fit.stratified),
+                            "season_stratified": int(not pool_seasons),
                             "ea_bbox": f"{EA_LAT_MIN},{EA_LAT_MAX},{EA_LON_MIN},{EA_LON_MAX}",
                         },
                     ).to_netcdf(out)

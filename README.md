@@ -292,7 +292,7 @@ python -m gik_icechain convert --start 2024-10-01 --end 2024-10-01 --config conf
 
 ## Benchmarks
 
-Preliminary benchmarks (30-day window, East Africa domain):
+Order-of-magnitude reference figures (not yet an empirical run - see ISSUE-18):
 
 | Approach | Storage | Time-to-first-byte | Full-scan (30 days) | S3 egress cost |
 |----------|---------|--------------------|---------------------|---------------|
@@ -300,8 +300,13 @@ Preliminary benchmarks (30-day window, East Africa domain):
 | dynamical.org full copy | ~242 TB | < 1 s | ~20 min (32 vCPU) | ~$0.02/day |
 | Herbie (on-the-fly) | 0 | > 60 s | Not feasible | High |
 
-Full benchmark results: [`results/benchmarks/`](results/benchmarks/)  
-Benchmark notebook: [`notebooks/04_benchmark_report.ipynb`](notebooks/04_benchmark_report.ipynb)
+`python scripts/tools.py benchmark` runs `conversion/benchmark.py` for real
+against a live store and writes CSVs to
+[`results/benchmarks/`](results/benchmarks/) (currently empty - no run has
+been recorded yet). The dynamical.org row is the storage figure the project
+advertises for its public IFS ENS full-copy Zarr, not an independently
+measured number.
+Benchmark walkthrough: [`notebooks/gik_icechain_walkthrough.ipynb`](notebooks/gik_icechain_walkthrough.ipynb)
 
 ## Dashboard
 

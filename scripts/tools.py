@@ -542,13 +542,18 @@ def _classify_years_enso_iod(years: list[int], index_path: Path) -> dict[int, tu
     """
     import pandas as pd
 
-    from gik_icechain.exceedance.thresholds import classify_enso, classify_iod
+    from gik_icechain.exceedance.thresholds import (
+        SEASON_MONTHS,
+        Season,
+        classify_enso,
+        classify_iod,
+    )
 
     if not index_path.exists():
         return {}
     df = pd.read_csv(index_path, parse_dates=["date"])
     df["year"] = df["date"].dt.year
-    ond = df[df["date"].dt.month.isin([10, 11, 12])]
+    ond = df[df["date"].dt.month.isin(SEASON_MONTHS[Season.OND])]
     out: dict[int, tuple[str, str]] = {}
     for y in years:
         sub = ond[ond["year"] == int(y)]
@@ -681,6 +686,16 @@ def build_thresholds_gpm(
     / "enso_iod_index.csv",
     min_years: Annotated[int, typer.Option(help="Min years per bin before fallback.")] = 6,
     seasons: Annotated[str, typer.Option(help="Comma-separated seasons.")] = "MAM,OND,JJAS,DJF",
+    pool_seasons: Annotated[
+        bool,
+        typer.Option(
+            "--pool-seasons",
+            help=(
+                "Fit annual (not seasonal) maxima. With --min-years 999 this builds the "
+                "unstratified static baseline the adaptive thresholds are ablated against."
+            ),
+        ),
+    ] = False,
     download: Annotated[
         bool, typer.Option(help="Download missing GPM files first (needs Earthdata).")
     ] = False,
@@ -722,13 +737,17 @@ def build_thresholds_gpm(
     typer.echo(f"Loading {len(files_in_range)} GPM files ({s} -> {e}) ...")
     daily_da = load_gpm_daily_ea(files_in_range)
     season_list = [x.strip() for x in seasons.split(",")]
-    typer.echo(f"Fitting thresholds: seasons={season_list}, min_years={min_years} ...")
+    arm = "static (unstratified)" if pool_seasons else "season-stratified"
+    typer.echo(
+        f"Fitting thresholds [{arm}]: seasons={season_list}, min_years={min_years} ..."
+    )
     written = build_seasonal_thresholds(
         daily_da=daily_da,
         enso_iod_csv=enso_iod_csv,
         output_dir=output,
         min_years=min_years,
         seasons=season_list,
+        pool_seasons=pool_seasons,
     )
     typer.echo(f"Wrote {len(written)} threshold files to {output}")
 

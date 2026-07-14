@@ -3,6 +3,8 @@ tests/unit/test_crma_model.py
 Unit tests for the CRMA Bayesian Network model.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -601,3 +603,53 @@ class TestEscalationLevers:
             f"Decoupling must preserve the forecast: legacy={legacy['risk_label']} "
             f"decoupled={decoupled['risk_label']}"
         )
+
+
+class TestCPTPersistence:
+    """save_cpts/load_cpts is the mechanism `use_refined_cpts` relies on in
+    production (cli.py:_run_risk); previously untested (see ISSUE-10)."""
+
+    @pytest.fixture
+    def fresh_model(self):
+        pytest.importorskip("pgmpy", reason="pgmpy not installed")
+        model = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
+        model.build()
+        return model
+
+    def test_save_then_load_round_trips_identically(self, fresh_model, make_evidence, tmp_path):
+        evidence = make_evidence(
+            exceedance_prob_24h=0.6, api_mm=80.0, spatial_coverage_fraction=0.5
+        )
+        before = fresh_model.infer(evidence)
+
+        cpt_path = tmp_path / "refined_cpts.json"
+        fresh_model.save_cpts(cpt_path)
+        fresh_model.load_cpts(cpt_path)
+        after = fresh_model.infer(evidence)
+
+        assert after["risk_state"] == before["risk_state"]
+        assert after["p_red"] == pytest.approx(before["p_red"])
+
+    def test_load_cpts_accepts_a_dict(self, fresh_model, tmp_path):
+        cpt_path = tmp_path / "refined_cpts.json"
+        fresh_model.save_cpts(cpt_path)
+        cpts = json.loads(cpt_path.read_text())
+
+        fresh_model.load_cpts(cpts)  # must not raise
+
+    def test_load_cpts_invalidates_dbn_cache(self, fresh_model, make_evidence, tmp_path):
+        # Force the lazy DBN to build once before reloading CPTs.
+        fresh_model.infer_sequence([make_evidence()])
+
+        cpt_path = tmp_path / "refined_cpts.json"
+        fresh_model.save_cpts(cpt_path)
+        fresh_model.load_cpts(cpt_path)
+
+        assert fresh_model._dbn is None
+        assert fresh_model._dbn_inference is None
+
+    def test_load_cpts_before_build_raises(self):
+        pytest.importorskip("pgmpy", reason="pgmpy not installed")
+        unbuilt = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
+        with pytest.raises(RuntimeError):
+            unbuilt.load_cpts({})

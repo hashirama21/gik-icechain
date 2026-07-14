@@ -97,3 +97,50 @@ def test_loader_reads_gpm_thresholds(tmp_path):
     mode = ClimateMode(Season.OND, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
     out = thr.get(24, 5, mode)
     assert float(out.mean()) > 0
+
+
+class TestStaticBaselineArm:
+    """The unstratified arm of the Innovation-2 ablation (proposal §7.2)."""
+
+    def test_pooled_maxima_span_every_month(self):
+        da = _synthetic_daily()
+        seasonal = compute_seasonal_maxima(da, 24, "MAM", pool_seasons=False)
+        pooled = compute_seasonal_maxima(da, 24, "MAM", pool_seasons=True)
+        # Pooling folds the wet OND months into the MAM label, so the annual
+        # maximum is at least the MAM-only one, and strictly higher on wet data.
+        assert float(pooled.mean()) > float(seasonal.mean())
+
+    def test_static_arm_collapses_the_seasonal_signal(self, tmp_path):
+        """The whole point of the baseline: OND and MAM stop differing."""
+        da = _synthetic_daily(ond_scale=30.0, mam_scale=10.0)
+        idx = _neutral_index_csv(tmp_path)
+        build_seasonal_thresholds(
+            da,
+            idx,
+            tmp_path,
+            return_periods=[5],
+            windows_h=[24],
+            seasons=["MAM", "OND"],
+            min_years=999,
+            pool_seasons=True,
+        )
+        ond = xr.open_dataset(tmp_path / "thresholds_OND_neutral_neutral_24h.nc")
+        mam = xr.open_dataset(tmp_path / "thresholds_MAM_neutral_neutral_24h.nc")
+
+        np.testing.assert_allclose(ond["rp_5y"].values, mam["rp_5y"].values)
+        assert ond.attrs["season_stratified"] == 0
+        assert ond.attrs["enso_iod_stratified"] == 0  # min_years=999 forces the fallback
+
+    def test_static_arm_stays_loadable_by_the_pipeline(self, tmp_path):
+        """Same filenames as the adaptive arm, so C2 loads it with no code change."""
+        from gik_icechain.exceedance.thresholds import ClimateMode, ENSOPhase, IODPhase, Season
+
+        da = _synthetic_daily()
+        idx = _neutral_index_csv(tmp_path)
+        build_seasonal_thresholds(
+            da, idx, tmp_path, return_periods=[5], windows_h=[24],
+            seasons=["OND"], min_years=999, pool_seasons=True,
+        )
+        thr = AdaptiveGEVThresholds.load(tmp_path)
+        out = thr.get(24, 5, ClimateMode(Season.OND, ENSOPhase.EL_NINO, IODPhase.POSITIVE))
+        assert float(out.mean()) > 0  # resolves via the neutral fallback

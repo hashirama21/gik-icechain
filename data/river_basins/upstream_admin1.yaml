@@ -21,6 +21,11 @@ SOM_Gedo: [ETH_Oromia, ETH_SNNPR]
 SOM_Middle Juba: [ETH_Oromia, ETH_SNNPR, SOM_Gedo]
 SOM_Lower Juba: [ETH_Oromia, ETH_SNNPR, SOM_Gedo, SOM_Middle Juba]
 
+# --- Inter-riverine (Shabelle/Juba corridor) - placeholder, unverified against
+# GloFAS/HydroBASINS, see docs/C3_VALIDATION_FINDINGS.md remediation roadmap ---
+SOM_Bakool: [ETH_Oromia, ETH_Somali, SOM_Hiiraan]
+SOM_Bay: [ETH_Oromia, ETH_SNNPR, SOM_Bakool, SOM_Gedo]
+
 # --- White Nile / Sudd (Ethiopia + Uganda -> South Sudan) ---
 SSD_Upper Nile: [ETH_Gambela, ETH_Beneshangul Gumu, ETH_Oromia]
 SSD_Central Equatoria: [UGA_Western Region, UGA_Central Region]
