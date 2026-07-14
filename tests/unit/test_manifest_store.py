@@ -58,6 +58,36 @@ class TestBboxToSlices:
         assert lat_sl.stop == 541
 
 
+class TestBboxToSlicesMixedResolution:
+    """s3://ecmwf-forecasts serves 0p4-beta (451x900) before ~2024-02 and 0p25
+    (721x1440) after. Slicing a 0.4-deg grid on 0.25-deg indices silently returns
+    a different region - the archive spans both, so the step must follow the grid.
+    """
+
+    EA = (-12.0, 23.0, 22.0, 52.0)
+
+    def test_slices_differ_between_grids(self):
+        assert _bbox_to_slices(self.EA) != _bbox_to_slices(self.EA, 451, 900)
+
+    def test_east_africa_on_0p4_grid(self):
+        lat_sl, lon_sl = _bbox_to_slices(self.EA, 451, 900)
+        # 0.4 deg: lat idx = (90 - lat) / 0.4 ; lon idx = lon / 0.4
+        assert lat_sl.start == 168  # 23N
+        assert lat_sl.stop == 256  # -12N inclusive
+        assert lon_sl.start == 55  # 22E
+        assert lon_sl.stop == 131  # 52E inclusive
+
+    def test_both_grids_select_the_same_geography(self):
+        """The whole point: same bbox -> same corner coordinates, either grid."""
+        for nlat, nlon in ((721, 1440), (451, 900)):
+            lat_res, lon_res = 180.0 / (nlat - 1), 360.0 / nlon
+            lat_sl, lon_sl = _bbox_to_slices(self.EA, nlat, nlon)
+            top_lat = 90.0 - lat_sl.start * lat_res
+            left_lon = lon_sl.start * lon_res
+            assert top_lat == pytest.approx(23.0, abs=lat_res)
+            assert left_lon == pytest.approx(22.0, abs=lon_res)
+
+
 class TestDecodeGribMessage:
     """Tests for _decode_grib_message with mocked eccodes."""
 
