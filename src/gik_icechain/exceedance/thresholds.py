@@ -74,6 +74,25 @@ SEASON_MONTHS: dict[Season, list[int]] = {
 }
 
 
+def _parse_threshold_filename(path: Path) -> tuple[str | None, int | None]:
+    """``thresholds_{mode_key}_{window_h}h.nc`` -> (mode_key, window_h).
+
+    mode_key itself contains underscores (``OND_neutral_neutral``), so the window
+    is split off the right-hand side.
+    """
+    stem = path.stem
+    if not stem.startswith("thresholds_"):
+        return None, None
+    body = stem[len("thresholds_") :]
+    mode_key, _, window = body.rpartition("_")
+    if not mode_key or not window.endswith("h"):
+        return None, None
+    try:
+        return mode_key, int(window[:-1])
+    except ValueError:
+        return None, None
+
+
 def get_season(month: int) -> Season:
     """Map a calendar month (1-12) to an East Africa rainfall season."""
     for season, months in SEASON_MONTHS.items():
@@ -114,6 +133,7 @@ class AdaptiveGEVThresholds:
 
     def __init__(self) -> None:
         self._thresholds: dict[str, dict[int, dict[int, xr.DataArray]]] = {}
+        self._pending: dict[str, dict[int, Path]] = {}
         self._call_count: int = 0
         self._fallback_count: int = 0
 
@@ -230,27 +250,56 @@ class AdaptiveGEVThresholds:
 
     @classmethod
     def load(cls, directory: Path) -> AdaptiveGEVThresholds:
-        """Load pre-computed thresholds from a directory of NetCDF files."""
+        """Index pre-computed threshold NetCDFs; each file is read on first use.
+
+        The filename (``thresholds_{mode_key}_{window_h}h.nc``) carries the mode
+        and window, so indexing needs no file I/O at all.
+        """
         instance = cls()
         threshold_files = sorted(directory.glob("thresholds_*.nc"))
         if not threshold_files:
             raise FileNotFoundError(f"No threshold files found in {directory}")
 
         for f in threshold_files:
-            ds = xr.open_dataset(f)
-            mode_key = ds.attrs["mode_key"]
-            window_h = int(ds.attrs["window_h"])
-            instance._thresholds.setdefault(mode_key, {})[window_h] = {
-                rp: ds[f"rp_{rp}y"] for rp in RETURN_PERIODS if f"rp_{rp}y" in ds
-            }
+            mode_key, window_h = _parse_threshold_filename(f)
+            if mode_key is None or window_h is None:
+                log.warning("threshold_filename_unparsed", file=f.name)
+                continue
+            instance._pending.setdefault(mode_key, {})[window_h] = f
 
-        log.info("thresholds_loaded", directory=str(directory), n_files=len(threshold_files))
+        log.info("thresholds_indexed", directory=str(directory), n_files=len(threshold_files))
         return instance
+
+    def _read_mode(self, mode_key: str, window_h: int) -> dict[int, xr.DataArray] | None:
+        """Open the (mode, window) NetCDF on demand and memoise its return periods."""
+        cached = self._thresholds.get(mode_key, {}).get(window_h)
+        if cached is not None:
+            return cached
+
+        path = self._pending.get(mode_key, {}).get(window_h)
+        if path is None:
+            return None
+
+        # Read into memory and close: the arrays are small (1-deg EA grid), and a
+        # dangling NetCDF handle locks the file on Windows.
+        with xr.open_dataset(path) as ds:
+            rp_dict = {
+                rp: ds[f"rp_{rp}y"].load() for rp in RETURN_PERIODS if f"rp_{rp}y" in ds
+            }
+        self._thresholds.setdefault(mode_key, {})[window_h] = rp_dict
+        return rp_dict
+
+    def _materialize_pending(self) -> None:
+        """Read every indexed-but-unopened mode. Serialisation needs them all."""
+        for mode_key, windows in self._pending.items():
+            for window_h in windows:
+                self._read_mode(mode_key, window_h)
 
     def save(self, directory: Path) -> None:
         """Save fitted thresholds to NetCDF files (one per mode × window)."""
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
+        self._materialize_pending()
 
         for mode_key, windows in self._thresholds.items():
             for window_h, rp_dict in windows.items():
@@ -277,6 +326,7 @@ class AdaptiveGEVThresholds:
         (mode_key, window_h, return_period, lat, lon) Zarr array.
         """
         path = str(path)
+        self._materialize_pending()
 
         mode_keys = sorted(self._thresholds)
         all_windows: list[int] = sorted(
@@ -394,9 +444,8 @@ class AdaptiveGEVThresholds:
         """
 
         def _lookup(key: str) -> xr.DataArray | None:
-            windows = self._thresholds.get(key, {})
-            rp_dict = windows.get(window_h, {})
-            return rp_dict.get(return_period)
+            rp_dict = self._read_mode(key, window_h)
+            return rp_dict.get(return_period) if rp_dict else None
 
         self._call_count += 1
 
