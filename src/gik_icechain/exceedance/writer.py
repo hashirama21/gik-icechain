@@ -208,6 +208,9 @@ def _fill_value_for(dtype: np.dtype):
     return -1 if np.issubdtype(dtype, np.integer) else np.nan
 
 
+_PROVENANCE_VARS = frozenset({"source_grid_deg"})
+
+
 def _subset_by_date(values: dict[date, Any] | None, keep: list[date]) -> dict[date, Any] | None:
     """Restrict a per-date mapping to *keep*; None when nothing is left."""
     if not values:
@@ -259,6 +262,18 @@ def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset
 
     new_vars = {str(v) for v in new_ds.data_vars}
     store_vars = {str(v) for v in existing.data_vars}
+
+    # Provenance-only variables are dropped rather than fatal, so a run stays able
+    # to append onto a store written before they existed.
+    for name in sorted((new_vars - store_vars) & _PROVENANCE_VARS):
+        log.warning(
+            "append_schema_var_dropped",
+            variable=name,
+            reason="absent from the existing store; rewrite it (append=False) to record it",
+        )
+        new_ds = new_ds.drop_vars(name)
+        new_vars.discard(name)
+
     extra_vars = sorted(new_vars - store_vars)
     if extra_vars:
         raise ValueError(
