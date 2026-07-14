@@ -1031,6 +1031,7 @@ def run_all(
     ] = None,
 ) -> None:
     """Run C1 -> C2 -> C3 end-to-end for the given date range (with optional AIFS track)."""
+    from gik_icechain.shared.reference_data import ensure_reference_data
     from gik_icechain.shared.validation import validate_date_range
 
     s, e = _parse_date(start), _parse_date(end)
@@ -1044,6 +1045,7 @@ def run_all(
         cfg.outputs.exceedance_store_uri = exceedance_store
     if risk_output is not None:
         cfg.outputs.risk_output_dir = risk_output
+    ensure_reference_data(cfg)
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
     aifs_enabled = cfg.aifs_track.enabled and bool(cfg.aifs_track.aifs_store_uri)
     n_steps = 5 if aifs_enabled else 3

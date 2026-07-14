@@ -143,84 +143,6 @@ def validate_store(
         raise typer.Exit(1)
 
     typer.echo("\nStore is valid.")
-
-
-def _download_admin_boundaries(output_dir: Path) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    dest = output_dir / "east_africa_admin1.geojson"
-    if dest.exists():
-        typer.echo(f"  Already exists: {dest}")
-        return
-
-    typer.echo("  Downloading admin-1 boundaries from geoBoundaries ...")
-
-    # In sync with shared.regions.EAST_AFRICA_COUNTRIES_ISO3.
-    _ea_countries = [
-        "KEN",
-        "ETH",
-        "UGA",
-        "TZA",
-        "SOM",
-        "RWA",
-        "BDI",
-        "SSD",
-        "ERI",
-        "DJI",
-        "MDG",
-        "SDN",
-        "COM",
-        "SYC",
-        "MWI",
-        "ZMB",
-    ]
-    all_features: list[dict] = []
-    for iso in _ea_countries:
-        api_url = f"https://www.geoboundaries.org/api/current/gbOpen/{iso}/ADM1/"
-        try:
-            with _urlopen(api_url, timeout=15) as r:
-                meta = json.loads(r.read())
-            dl_url = meta.get("gjDownloadURL", "")
-            if not dl_url:
-                typer.echo(f"    {iso}: no download URL", err=True)
-                continue
-            with _urlopen(dl_url, timeout=30) as r:
-                fc = json.loads(r.read())
-            for feat in fc.get("features", []):
-                feat["properties"]["admin1_pcode"] = (
-                    iso + "_" + str(feat["properties"].get("shapeName", ""))[:20]
-                )
-                all_features.append(feat)
-            typer.echo(f"    {iso}: {len(fc.get('features', []))} units")
-        except Exception as exc:
-            typer.echo(f"    {iso}: skipped ({exc})", err=True)
-
-    if not all_features:
-        raise RuntimeError("No admin-1 features downloaded from geoBoundaries")
-
-    dest.write_text(json.dumps({"type": "FeatureCollection", "features": all_features}))
-    typer.echo(f"  Saved {len(all_features)} admin-1 units: {dest}")
-
-
-def _download_cmorph_thresholds(output_dir: Path) -> None:
-    """Download CMORPH East Africa return-period thresholds from HuggingFace."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    dest = output_dir / "cmorph_ea_return_periods.nc"
-    if dest.exists():
-        typer.echo(f"  Already exists: {dest}")
-        return
-
-    typer.echo("  Downloading CMORPH return-period thresholds from HuggingFace ...")
-    from huggingface_hub import hf_hub_download
-
-    path = hf_hub_download(
-        repo_id="E4DRR/virtualizarr-stores",
-        filename="cmorph_ea_return_periods.nc",
-        repo_type="dataset",
-        local_dir=str(output_dir),
-    )
-    typer.echo(f"  Saved: {path}")
-
-
 def _download_gpm_nasa(output_dir: Path, start: date, end: date) -> None:
     """Download GPM IMERG V07B (EA subset) from NASA GES DISC via the fixed loader.
 
@@ -317,66 +239,6 @@ def _download_chirps(output_dir: Path, start: date, end: date) -> None:
         f"  CHIRPS: {n_downloaded} downloaded, {n_skipped} skipped"
         + (f", {n_failed} failed" if n_failed else "")
     )
-
-
-def _download_enso_iod(output_dir: Path) -> None:
-    """Download ENSO/IOD indices: Niño 3.4 (NOAA CPC) + DMI (NOAA PSL)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    dest = output_dir / "enso_iod_index.csv"
-    if dest.exists():
-        typer.echo(f"  Already exists: {dest}")
-        return
-
-    nino34_url = "https://www.cpc.ncep.noaa.gov/data/indices/sstoi.indices"
-    typer.echo(f"  Downloading Niño 3.4 anomaly from {nino34_url} ...")
-    with _urlopen(nino34_url, timeout=30) as r:
-        nino34_raw = r.read().decode("utf-8")
-
-    nino34: dict[tuple[int, int], float] = {}
-    for line in nino34_raw.splitlines():
-        parts = line.split()
-        if len(parts) >= 10 and parts[0].lstrip("-").isdigit():
-            try:
-                year, month = int(parts[0]), int(parts[1])
-                nino34[(year, month)] = float(parts[9])
-            except (ValueError, IndexError):
-                continue
-    typer.echo(f"    {len(nino34)} monthly Niño 3.4 records")
-
-    dmi_url = "https://psl.noaa.gov/gcos_wgsp/Timeseries/Data/dmi.had.long.data"
-    typer.echo(f"  Downloading DMI from {dmi_url} ...")
-    with _urlopen(dmi_url, timeout=30) as r:
-        dmi_raw = r.read().decode("utf-8")
-
-    dmi: dict[tuple[int, int], float] = {}
-    _missing = {-99.99, -99.9, -999.0, -999.9}
-    for line in dmi_raw.splitlines():
-        parts = line.split()
-        if len(parts) == 13 and parts[0].lstrip("-").isdigit():
-            try:
-                year = int(parts[0])
-                for m in range(1, 13):
-                    val = float(parts[m])
-                    if val not in _missing and abs(val) < 90:
-                        dmi[(year, m)] = val
-            except (ValueError, IndexError):
-                continue
-    typer.echo(f"    {len(dmi)} monthly DMI records")
-
-    common = sorted(set(nino34) & set(dmi))
-    if not common:
-        raise RuntimeError(
-            "No overlapping dates between Niño 3.4 and DMI datasets. Check source URLs."
-        )
-
-    lines = ["date,nino34_anom,dmi"]
-    for year, month in common:
-        lines.append(f"{year}-{month:02d}-01,{nino34[(year, month)]:.2f},{dmi[(year, month)]:.3f}")
-
-    dest.write_text("\n".join(lines) + "\n")
-    typer.echo(f"  Saved {len(common)} merged monthly records: {dest}")
-
-
 @app.command("download-gpm")
 def download_gpm(
     start: Annotated[str, typer.Option("--start", help="First date (YYYY-MM-DD).")],
@@ -437,30 +299,30 @@ def download(
 
     For GPM IMERG daily rainfall, use the dedicated ``download-gpm`` command.
     """
+    from gik_icechain.shared.reference_data import (
+        ensure_admin_boundaries,
+        ensure_enso_iod,
+        ensure_gev_thresholds,
+    )
+
     typer.echo(f"Downloading: {component}  ->  {output}")
+    enso_csv = output / "enso_iod_index.csv"
+    admin_geojson = output / "admin_boundaries" / "east_africa_admin1.geojson"
+    jobs = {
+        "admin": lambda: ensure_admin_boundaries(admin_geojson),
+        "enso_iod": lambda: ensure_enso_iod(enso_csv),
+        "thresholds": lambda: ensure_gev_thresholds(output / "cmorph_thresholds", enso_csv),
+    }
 
     errors: list[str] = []
-
-    if component in ("all", "admin"):
+    for name, job in jobs.items():
+        if component not in ("all", name):
+            continue
         try:
-            _download_admin_boundaries(output / "admin_boundaries")
+            job()
         except Exception as exc:
-            typer.echo(f"  admin download failed: {exc}", err=True)
-            errors.append("admin")
-
-    if component in ("all", "thresholds"):
-        try:
-            _download_cmorph_thresholds(output / "cmorph_thresholds")
-        except Exception as exc:
-            typer.echo(f"  thresholds download failed: {exc}", err=True)
-            errors.append("thresholds")
-
-    if component in ("all", "enso_iod"):
-        try:
-            _download_enso_iod(output)
-        except Exception as exc:
-            typer.echo(f"  enso_iod download failed: {exc}", err=True)
-            errors.append("enso_iod")
+            typer.echo(f"  {name} download failed: {exc}", err=True)
+            errors.append(name)
 
     if errors:
         typer.echo(f"Done (with errors in: {', '.join(errors)}).", err=True)
@@ -518,53 +380,6 @@ def upload_thresholds(
         archive.unlink(missing_ok=True)
 
 
-_DURATION_TO_HOURS: dict[str, int] = {
-    "3hr": 3,
-    "6hr": 6,
-    "12hr": 12,
-    "24hr": 24,
-    "48hr": 48,
-    "72hr": 72,
-    "7day": 168,
-}
-_TARGET_RPS = [2, 5, 10, 20, 40, 100]
-_SEASONS = ["MAM", "OND", "JJAS", "DJF"]
-_ENSO_PHASES = ["el_nino", "neutral", "la_nina"]
-_IOD_PHASES = ["positive", "neutral", "negative"]
-
-
-def _classify_years_enso_iod(years: list[int], index_path: Path) -> dict[int, tuple[str, str]]:
-    """Classify each year by its OND-season (Oct-Dec) ENSO & IOD phase.
-
-    Uses the Oct-Dec mean of the Niño-3.4 anomaly and DMI for each year.
-    Returns ``{year: (enso_phase, iod_phase)}`` with strings matching
-    ``_ENSO_PHASES`` / ``_IOD_PHASES``; ``{}`` if the index is unavailable.
-    """
-    import pandas as pd
-
-    from gik_icechain.exceedance.thresholds import (
-        SEASON_MONTHS,
-        Season,
-        classify_enso,
-        classify_iod,
-    )
-
-    if not index_path.exists():
-        return {}
-    df = pd.read_csv(index_path, parse_dates=["date"])
-    df["year"] = df["date"].dt.year
-    ond = df[df["date"].dt.month.isin(SEASON_MONTHS[Season.OND])]
-    out: dict[int, tuple[str, str]] = {}
-    for y in years:
-        sub = ond[ond["year"] == int(y)]
-        if sub.empty:
-            continue
-        enso = classify_enso(float(sub["nino34_anom"].mean())).value
-        iod = classify_iod(float(sub["dmi"].mean())).value
-        out[int(y)] = (enso, iod)
-    return out
-
-
 @app.command("download-thresholds")
 def download_thresholds(
     output: Annotated[Path, typer.Option(help="Output directory for threshold files.")] = REPO_ROOT
@@ -580,95 +395,10 @@ def download_thresholds(
 
     Idempotent - skips if threshold files already exist.
     """
-    import numpy as np
-    import xarray as xr
+    from gik_icechain.shared.reference_data import ensure_gev_thresholds
 
-    output.mkdir(parents=True, exist_ok=True)
-    existing = sorted(output.glob("thresholds_*.nc"))
-    if existing:
-        typer.echo(f"Already exists: {len(existing)} threshold files in {output}")
-        return
-
-    src_path = output / "cmorph_ea_return_periods.nc"
-    if not src_path.exists():
-        typer.echo(f"Source not found: {src_path}", err=True)
-        typer.echo("Run 'python scripts/tools.py download --component thresholds' first.", err=True)
-        raise typer.Exit(1)
-
-    typer.echo(f"  Opening {src_path.name} ...")
-    ds = xr.open_dataset(src_path)
-
-    # ENSO/IOD-stratified Method-of-Moments Gumbel fit on the per-year annual
-    # maxima (`annual_maxima`: duration × year × lat × lon). Season is NOT
-    # stratified - annual maxima conflate seasons (one max per year) - so the
-    # four season files for a given (enso, iod) are identical by construction.
-    # This delivers genuinely phase-varying thresholds (was 36 identical copies
-    # before - Innovation 2 was cosmetic). See ISSUE-20.
-    target_lat = np.arange(-14.0, 25.0, 1.0)
-    target_lon = np.arange(20.0, 54.0, 1.0)
-    euler = 0.5772156649015329  # Euler-Mascheroni (Gumbel mean offset)
-    min_years = 6  # below this, fall back to the all-years (unstratified) fit
-
-    years = [int(y) for y in ds["year"].values]
-    year_phase = _classify_years_enso_iod(years, REPO_ROOT / "data" / "enso_iod_index.csv")
-    if not year_phase:
-        typer.echo(
-            "  WARNING: ENSO/IOD index missing -> thresholds NOT stratified (single climatology).",
-            err=True,
-        )
-    available = {str(d) for d in ds["duration"].values}
-
-    n_files = 0
-    for dur_label, window_h in _DURATION_TO_HOURS.items():
-        if dur_label not in available:
-            continue
-        am = ds["annual_maxima"].sel(duration=dur_label)  # (year, lat, lon)
-
-        for enso in _ENSO_PHASES:
-            for iod in _IOD_PHASES:
-                yrs = [y for y in years if year_phase.get(y) == (enso, iod)]
-                if len(yrs) >= min_years:
-                    sub, n_used, stratified = am.sel(year=yrs), len(yrs), 1
-                else:
-                    sub, n_used, stratified = am, len(years), 0  # fallback
-
-                # Method-of-moments Gumbel: scale = std·√6/π, loc = mean − γ·scale
-                scale = sub.std("year") * (np.sqrt(6.0) / np.pi)
-                loc = sub.mean("year") - euler * scale
-
-                rp_arrays: dict[str, xr.DataArray] = {}
-                for rp in _TARGET_RPS:
-                    y_rp = -np.log(-np.log(1.0 - 1.0 / rp))  # Gumbel reduced variate
-                    rp_arrays[f"rp_{rp}y"] = (loc + scale * y_rp).interp(
-                        lat=target_lat, lon=target_lon, method="linear"
-                    )
-
-                for season in _SEASONS:
-                    mode_key = f"{season}_{enso}_{iod}"
-                    xr.Dataset(
-                        rp_arrays,
-                        attrs={
-                            "mode_key": mode_key,
-                            "window_h": window_h,
-                            "units": "mm",
-                            "source": "CMORPH v1.0 annual maxima",
-                            "method": (
-                                "Method-of-moments Gumbel; ENSO/IOD-stratified "
-                                "(OND-season phase); season NOT stratified "
-                                "(annual maxima conflate seasons)"
-                            ),
-                            "n_years": n_used,
-                            "enso_iod_stratified": stratified,
-                            "description": (
-                                f"Gumbel return-period thresholds for {mode_key}, "
-                                f"{window_h}h accumulation"
-                            ),
-                        },
-                    ).to_netcdf(output / f"thresholds_{mode_key}_{window_h}h.nc")
-                    n_files += 1
-
-    ds.close()
-    typer.echo(f"  Generated {n_files} threshold files in {output}")
+    ensure_gev_thresholds(output, REPO_ROOT / "data" / "enso_iod_index.csv")
+    typer.echo(f"Threshold files ready in {output}")
 
 
 @app.command("build-thresholds-gpm")
