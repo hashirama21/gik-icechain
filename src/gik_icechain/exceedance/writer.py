@@ -44,6 +44,7 @@ def write_exceedance_store(
     tail_dict: dict[date, xr.DataArray] | None = None,
     median_dict: dict[date, xr.DataArray] | None = None,
     endpoint_url: str | None = None,
+    allow_grid_reset: bool = False,
 ) -> None:
     """Write or extend the exceedance Zarr store with new forecast dates.
 
@@ -66,6 +67,13 @@ def write_exceedance_store(
         median_dict:     Optional mapping forecast date → median_ratio DataArray
                          (same dims). Written as ``median_ratio`` - the p50
                          member world for the per-member storyline.
+        allow_grid_reset: Permit destroying an existing store whose spatial grid
+                         differs (e.g. a deliberate bbox change). Off by default:
+                         a silent overwrite would drop every date already written.
+
+    Raises:
+        ValueError: When appending onto a store with a different spatial grid
+                    and *allow_grid_reset* is False.
     """
     if not exceedance_dict:
         log.warning("write_exceedance_store_empty")
@@ -84,11 +92,15 @@ def write_exceedance_store(
     try:
         existing = xr.open_zarr(output_uri, consolidated=False, **zarr_kw)
         compatible, mismatch = _spatial_grids_compatible(ds, existing)
+        if append and not compatible and not allow_grid_reset:
+            raise ValueError(
+                f"Spatial grid differs from the existing store at {output_uri}: {mismatch}. "
+                f"Appending would overwrite it and destroy every date already written. "
+                f"Causes: a changed bbox, or mixing ECMWF eras (0.4 deg before ~2024-02, "
+                f"0.25 deg after). Write the era to its own store, or pass "
+                f"allow_grid_reset=True to recreate this one from scratch."
+            )
         if append and not compatible:
-            # The store was written with a different spatial grid (the bbox
-            # changed between runs). Dates already in the store were computed on
-            # the old grid, so they cannot be concatenated along `date` and are
-            # no longer consistent with the new domain. Recreate the store.
             log.warning(
                 "exceedance_store_grid_changed",
                 mismatch=mismatch,
