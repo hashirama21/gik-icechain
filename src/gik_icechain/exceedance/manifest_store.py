@@ -21,6 +21,7 @@ from gik_icechain.shared.byte_range import (
     coalesce_byte_ranges,
     fetch_coalesced_ranges,
 )
+from gik_icechain.shared.grid import DEFAULT_SHAPE, lat_lon_res
 
 log = structlog.get_logger(__name__)
 
@@ -32,33 +33,39 @@ except ImportError:
     eccodes = None  # type: ignore[assignment]
     _HAS_ECCODES = False
 
-_GRID_RES = 0.25
-_NLAT_GLOBAL = 721  # 90N to 90S inclusive
-_NLON_GLOBAL = 1440  # 0E to 359.75E
+_NLAT_GLOBAL, _NLON_GLOBAL = DEFAULT_SHAPE
 
 
 def _bbox_to_slices(
     bbox: tuple[float, float, float, float],
+    nlat: int = _NLAT_GLOBAL,
+    nlon: int = _NLON_GLOBAL,
 ) -> tuple[slice, slice]:
     """Convert a geographic bounding box to numpy index slices.
 
-    ECMWF 0.25-deg grid: lat[0]=90N (descending), lon[0]=0E.
+    Global lat/lon grid with lat[0]=90N (descending) and lon[0]=0E. The step is
+    derived from the grid shape, NOT assumed: slicing 0.4-deg data on 0.25-deg
+    indices silently returns the wrong region.
 
     Args:
         bbox: (lat_min, lat_max, lon_min, lon_max) in degrees.
+        nlat: Latitude points of the grid being sliced.
+        nlon: Longitude points of the grid being sliced.
 
     Returns:
-        (lat_slice, lon_slice) for indexing a (721, 1440) global grid.
+        (lat_slice, lon_slice) for indexing an (nlat, nlon) global grid.
     """
     lat_min, lat_max, lon_min, lon_max = bbox
-    lat_idx_top = round((90.0 - lat_max) / _GRID_RES)
-    lat_idx_bot = round((90.0 - lat_min) / _GRID_RES)
-    lon_idx_left = round(lon_min / _GRID_RES) % _NLON_GLOBAL
-    lon_idx_right = round(lon_max / _GRID_RES) % _NLON_GLOBAL
+    lat_res, lon_res = lat_lon_res(nlat, nlon)
+
+    lat_idx_top = round((90.0 - lat_max) / lat_res)
+    lat_idx_bot = round((90.0 - lat_min) / lat_res)
+    lon_idx_left = round(lon_min / lon_res) % nlon
+    lon_idx_right = round(lon_max / lon_res) % nlon
 
     # Clamp to valid range
-    lat_idx_top = max(0, min(lat_idx_top, _NLAT_GLOBAL - 1))
-    lat_idx_bot = max(0, min(lat_idx_bot, _NLAT_GLOBAL - 1))
+    lat_idx_top = max(0, min(lat_idx_top, nlat - 1))
+    lat_idx_bot = max(0, min(lat_idx_bot, nlat - 1))
 
     return (
         slice(lat_idx_top, lat_idx_bot + 1),
@@ -74,15 +81,21 @@ def _decode_grib_message(
     offset: int = 0,
     member: int = -1,
     step: int = -1,
+    bbox: tuple[float, float, float, float] | None = None,
 ) -> np.ndarray | None:
     """Decode a single GRIB2 message to a float32 ndarray.
 
     Uses eccodes directly (not GRIBCodec) for control over error handling
     and bbox sub-setting at decode time.
 
+    Pass *bbox* rather than *bbox_slices* whenever the grid resolution may vary
+    across the archive: the slices are then derived from the message's own Nj/Ni,
+    so a 0.4-deg day is cropped to the same geography as a 0.25-deg one.
+    *bbox_slices* is honoured for callers that already know the grid.
+
     Returns:
-        ndarray of shape ``(nlat, nlon)`` (global) or ``(nlat_bbox, nlon_bbox)``
-        if *bbox_slices* is provided.  ``None`` on decode failure.
+        ndarray of shape ``(nlat, nlon)`` (global) or the bbox subset.
+        ``None`` on decode failure.
     """
     if not _HAS_ECCODES:
         log.error("eccodes_not_installed", msg="pip install eccodes-python")
@@ -98,6 +111,8 @@ def _decode_grib_message(
             eccodes.codes_release(msg_id)
 
         grid = values.reshape(nlat, nlon)
+        if bbox is not None:
+            bbox_slices = _bbox_to_slices(bbox, nlat, nlon)
         if bbox_slices is not None:
             grid = grid[bbox_slices[0], bbox_slices[1]]
         return grid
@@ -310,8 +325,9 @@ def _assemble_dataset(
         lats = np.linspace(lat_max, lat_min, nlat, dtype=np.float32)
         lons = np.linspace(lon_min, lon_max, nlon, dtype=np.float32)
     else:
-        lats = (90.0 - np.arange(nlat) * _GRID_RES).astype(np.float32)
-        lons = (np.arange(nlon) * _GRID_RES).astype(np.float32)
+        lat_res, lon_res = lat_lon_res(nlat, nlon)
+        lats = (90.0 - np.arange(nlat) * lat_res).astype(np.float32)
+        lons = (np.arange(nlon) * lon_res).astype(np.float32)
 
     coords = {
         "member": np.array(member_indices, dtype=np.int32),
@@ -392,8 +408,8 @@ def load_day_manifest_aware(
         s3_region=s3_region,
     )
 
-    # Step 4: Decode GRIB2 messages
-    bbox_slices = _bbox_to_slices(bbox) if bbox is not None else None
+    # Step 4: Decode GRIB2 messages. Slices are derived per message from its own
+    # Nj/Ni, so a 0p4-beta day (451x900) crops to the same geography as 0p25.
     decoded: dict[tuple, np.ndarray] = {}
 
     for key in list(raw_data.keys()):
@@ -401,11 +417,11 @@ def load_day_manifest_aware(
         data = raw_data.pop(key)
         grid = _decode_grib_message(
             data,
-            bbox_slices,
             uri=f"{date_str}/{var}",
             offset=0,
             member=member_idx if member_idx is not None else -1,
             step=step_idx if step_idx is not None else -1,
+            bbox=bbox,
         )
         if grid is not None:
             decoded[key] = grid
