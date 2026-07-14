@@ -7,6 +7,10 @@ Output Zarr schema::
         exceedance_prob      - float32 in [0, 1]
         ensemble_confidence  - int8 in {0=Low, 1=Medium, 2=High}
                                derived from inter-member IQR/median (24h window)
+        tail_ratio           - float32, pXX member accumulation / GEV return level
+        median_ratio         - float32, p50 member accumulation / GEV return level
+        source_grid_deg      - float32 (date,), native ECMWF grid step: 0.25, or
+                               0.4 for pre-2024-02 `0p4-beta` dates
     coords:
         date          - datetime64[D]
         latitude      - float32, degrees N
@@ -44,6 +48,7 @@ def write_exceedance_store(
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
     median_dict: dict[date, xr.DataArray] | None = None,
+    source_grid_deg: dict[date, float] | None = None,
     endpoint_url: str | None = None,
     allow_grid_reset: bool = False,
 ) -> None:
@@ -68,6 +73,10 @@ def write_exceedance_store(
         median_dict:     Optional mapping forecast date → median_ratio DataArray
                          (same dims). Written as ``median_ratio`` - the p50
                          member world for the per-member storyline.
+        source_grid_deg: Optional mapping forecast date → the native ECMWF grid
+                         step (0.25, or 0.4 for pre-2024-02 ``0p4-beta`` dates).
+                         Written as the ``(date,)`` variable ``source_grid_deg``
+                         so downstream analysis can stratify or exclude an era.
         allow_grid_reset: Permit destroying an existing store whose spatial grid
                          differs (e.g. a deliberate bbox change). Off by default:
                          a silent overwrite would drop every date already written.
@@ -83,7 +92,7 @@ def write_exceedance_store(
     effective_chunks = chunks or _DEFAULT_CHUNKS
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
 
-    ds = _build_dataset(exceedance_dict, confidence_dict, tail_dict, median_dict)
+    ds = _build_dataset(exceedance_dict, confidence_dict, tail_dict, median_dict, source_grid_deg)
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
     zarr_kw: dict = {}
@@ -122,6 +131,7 @@ def write_exceedance_store(
                 _subset_by_date(confidence_dict, keep),
                 _subset_by_date(tail_dict, keep),
                 _subset_by_date(median_dict, keep),
+                _subset_by_date(source_grid_deg, keep),
             )
             new_ds = _align_append_schema(new_ds, existing)
             new_ds = new_ds.chunk(
@@ -300,6 +310,12 @@ _OPTIONAL_VAR_ATTRS: dict[str, dict] = {
         "flag_meanings": "low_confidence medium_confidence high_confidence",
         "definition": "IQR/max(median,1mm) - ICPAC EGU26-18323",
     },
+    "source_grid_deg": {
+        "long_name": "Native ECMWF grid step of the source forecast",
+        "units": "degree",
+        "definition": "0.25 from ~2024-02; 0.4 for earlier 0p4-beta dates. A coarser "
+        "cell smooths extremes, so exceedance is not directly comparable across eras.",
+    },
 }
 
 
@@ -308,6 +324,7 @@ def _build_dataset(
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
     median_dict: dict[date, xr.DataArray] | None = None,
+    source_grid_deg: dict[date, float] | None = None,
 ) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
     combined = xr.concat([exceedance_dict[d] for d in sorted_dates], dim="date")
@@ -319,6 +336,15 @@ def _build_dataset(
             "conventions": "CF-1.8",
         },
     )
+    if source_grid_deg:
+        ds["source_grid_deg"] = xr.DataArray(
+            np.array(
+                [source_grid_deg.get(d, np.nan) for d in sorted_dates], dtype=np.float32
+            ),
+            dims=("date",),
+            coords={"date": ds["date"]},
+            attrs=dict(_OPTIONAL_VAR_ATTRS["source_grid_deg"]),
+        )
     optional: dict[str, tuple[dict[date, xr.DataArray] | None, np.dtype]] = {
         "tail_ratio": (tail_dict, np.dtype(np.float32)),
         "median_ratio": (median_dict, np.dtype(np.float32)),
