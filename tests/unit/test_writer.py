@@ -226,3 +226,46 @@ class TestAppendSchemaSafety:
         ds = xr.open_zarr(uri, consolidated=False)
         assert ds.sizes["latitude"] == 3
         assert [str(d)[:10] for d in ds["date"].values] == ["2024-01-02"]
+
+
+class TestSourceGridProvenance:
+    """source_grid_deg records the native ECMWF grid (0.25, or 0.4 pre-2024-02),
+    so a mixed-era store can be stratified instead of silently compared."""
+
+    def test_written_as_a_per_date_variable(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        days = [date(2024, 1, 1), date(2024, 1, 2)]
+        write_exceedance_store(
+            {d: _exc_da([6], [2], d) for d in days},
+            uri,
+            append=False,
+            source_grid_deg={days[0]: 0.4, days[1]: 0.25},
+        )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert ds["source_grid_deg"].dims == ("date",)
+        np.testing.assert_allclose(ds["source_grid_deg"].values, [0.4, 0.25], rtol=1e-6)
+
+    def test_absent_when_not_supplied(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        write_exceedance_store(
+            {date(2024, 1, 1): _exc_da([6], [2], date(2024, 1, 1))}, uri, append=False
+        )
+        assert "source_grid_deg" not in xr.open_zarr(uri, consolidated=False).data_vars
+
+    def test_append_onto_a_legacy_store_drops_it_rather_than_failing(self, tmp_path):
+        """Stores written before this variable existed must stay appendable."""
+        uri = str(tmp_path / "exc.zarr")
+        write_exceedance_store(
+            {date(2024, 1, 1): _exc_da([6], [2], date(2024, 1, 1))}, uri, append=False
+        )
+        write_exceedance_store(
+            {date(2024, 1, 2): _exc_da([6], [2], date(2024, 1, 2))},
+            uri,
+            append=True,
+            source_grid_deg={date(2024, 1, 2): 0.25},
+        )
+
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert "source_grid_deg" not in ds.data_vars
+        assert ds.sizes["date"] == 2
