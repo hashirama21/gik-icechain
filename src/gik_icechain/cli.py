@@ -1007,6 +1007,13 @@ def run_all(
     end: Annotated[str, typer.Option("--end", help="Pipeline end date (YYYY-MM-DD).")],
     config: Annotated[Path, typer.Option(help="Path to YAML config file.")] = _DEFAULT_CONFIG,
     output: Annotated[Path, typer.Option(help="Root output directory.")] = Path("results/"),
+    aifs: Annotated[
+        bool | None,
+        typer.Option(
+            "--aifs/--no-aifs",
+            help="Run the AIFS track + IFS comparison (overrides aifs_track.enabled).",
+        ),
+    ] = None,
 ) -> None:
     """Run C1 -> C2 -> C3 end-to-end for the given date range (with optional AIFS track)."""
     from gik_icechain.shared.validation import validate_date_range
@@ -1014,6 +1021,8 @@ def run_all(
     s, e = _parse_date(start), _parse_date(end)
     validate_date_range(s, e)
     cfg = _bootstrap(config)
+    if aifs is not None:
+        cfg.aifs_track.enabled = aifs
     exc_uri = cfg.outputs.exceedance_store_uri or str(output / "exceedance-zarr")
     aifs_enabled = cfg.aifs_track.enabled and bool(cfg.aifs_track.aifs_store_uri)
     n_steps = 5 if aifs_enabled else 3
