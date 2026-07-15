@@ -51,3 +51,7 @@ CLAUDE.md
 
 # EM-DAT portal xlsx exports (source only, derived CSV is tracked)
 scripts/public_emdat_*.xlsx
+
+# AWS credential exports
+*accessKeys*.csv
+notebooks/data/
