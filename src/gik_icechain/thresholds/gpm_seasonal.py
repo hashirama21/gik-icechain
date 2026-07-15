@@ -33,7 +33,7 @@ import pandas as pd
 import structlog
 import xarray as xr
 
-from gik_icechain.exceedance.thresholds import SEASON_MONTHS
+from gik_icechain.exceedance.thresholds import SEASON_MONTHS, Season
 
 log = structlog.get_logger(__name__)
 
@@ -333,7 +333,7 @@ def compute_seasonal_maxima(
         return empty
 
     acc = daily_da.rolling(time=win_days, min_periods=win_days).sum()
-    months = list(range(1, 13)) if pool_seasons else SEASON_MONTHS[season]
+    months = list(range(1, 13)) if pool_seasons else SEASON_MONTHS[Season(season)]
     mask = np.isin(pd.DatetimeIndex(acc["time"].values).month, months)
     acc_season = acc.isel(time=mask)
     if acc_season.sizes["time"] == 0:
