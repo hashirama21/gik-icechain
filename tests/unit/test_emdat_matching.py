@@ -76,9 +76,7 @@ class TestResolvePcodes:
 
 class TestBuildFloodEventIndex:
     def test_attributed_record_matches_at_admin1_level(self):
-        idx = build_flood_event_index(
-            [_record("SOM_Hiraan", iso3="SOM")], VALID_PCODES, ALIASES
-        )
+        idx = build_flood_event_index([_record("SOM_Hiraan", iso3="SOM")], VALID_PCODES, ALIASES)
         assert idx.match("2024-04-20", "SOM_Hiiraan") == "admin1"
         assert idx.match("2024-04-20", "SOM_Lower Shebelle") is None
 
@@ -99,9 +97,7 @@ class TestBuildFloodEventIndex:
         assert idx.match("2024-04-20", "SOM_Hiiraan") is None
 
     def test_unresolvable_attribution_falls_back_to_country(self):
-        idx = build_flood_event_index(
-            [_record("SOM_Gone", iso3="SOM")], VALID_PCODES, ALIASES
-        )
+        idx = build_flood_event_index([_record("SOM_Gone", iso3="SOM")], VALID_PCODES, ALIASES)
         assert idx.match("2024-04-20", "SOM_Hiiraan") == "country"
 
     def test_admin1_match_shadows_country_match(self):
@@ -160,10 +156,6 @@ def test_shipped_alias_table_covers_all_orphan_codes(aliases_path, csv_path, req
     valid = set(gpd.read_file(boundaries)["admin1_pcode"].astype(str))
     aliases = load_pcode_aliases(root / aliases_path)
     df = pd.read_csv(root / csv_path)
-    codes = set(
-        df.loc[(df["Disaster Type"] == "Flood") & df["Admin1 Code"].notna(), "Admin1 Code"]
-    )
-    unresolved = {
-        c for c in codes if not resolve_pcodes(str(c), valid, aliases)
-    }
+    codes = set(df.loc[(df["Disaster Type"] == "Flood") & df["Admin1 Code"].notna(), "Admin1 Code"])
+    unresolved = {c for c in codes if not resolve_pcodes(str(c), valid, aliases)}
     assert unresolved == set()
