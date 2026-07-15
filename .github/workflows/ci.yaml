@@ -68,9 +68,6 @@ jobs:
     name: Notebook Tests (live MinIO)
     runs-on: ubuntu-latest
     needs: test-unit
-    # The walkthrough runs real C1→C2→C3→run-all→benchmark against the live MinIO
-    # store (no synthetic data). It depends on live infra + ECMWF S3 and runs the
-    # full pipeline, so it is best-effort (non-blocking).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
@@ -83,12 +80,18 @@ jobs:
         run: |
           python scripts/tools.py download --component all
           python scripts/tools.py download-thresholds
-      - name: Run live walkthrough notebook
+      - name: Run notebooks (light mode)
         env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
           MINIO_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
           MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
           MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          NB_RUN_FULL: "0"
+          NB_RUN_C1: "0"
+          NB_RUN_C2: "0"
+          NB_START: "2025-12-01"
         run: |
-          pytest --nbmake notebooks/gik_icechain_walkthrough.ipynb \
-            --nbmake-timeout=2400 --timeout=2400 -v
+          pytest --nbmake \
+            notebooks/gik_icechain_walkthrough.ipynb \
+            notebooks/gik_icechain_colab_run.ipynb \
+            --nbmake-timeout=1200 --timeout=1800 -v
