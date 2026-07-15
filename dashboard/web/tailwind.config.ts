@@ -11,11 +11,12 @@ const config: Config = {
         mono: ["Space Mono", "monospace"],
       },
       colors: {
-        // Risk traffic-light (canonical 4-class, matches titiler_config risk_levels).
+        // Risk traffic-light (canonical 4-class, keep in sync with lib/risk.ts
+        // RISK_COLOR  orange is the CVD-safe #C2410C, not titiler's #FF9800).
         risk: {
           green: "#10B981",
           yellow: "#F59E0B",
-          orange: "#FF9800",
+          orange: "#C2410C",
           red: "#FF2626",
           nodata: "#445577",
         },

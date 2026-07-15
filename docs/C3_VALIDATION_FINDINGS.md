@@ -36,12 +36,12 @@ recall, alerts correctly concentrated on the Sudd / White-Nile corridor.
 |--------------|----------|-------------|-----------------------|
 | Every Red alert has identical `p_red = 0.39` | High | No severity hierarchy between events | `Risk_State` (4 states) has a **single parent** `Compound_Risk` (4 states); `p_red = risk_cpt[3,:] @ compound_probs`. Once `Compound_Risk` saturates to *High*, `p_red = risk_cpt[3,3] ≈ 0.39`, constant. Continuous exceedance magnitude is discretised away upstream (`Forecast_Hazard`, 4 states). See `src/gik_icechain/risk/crma_model.py`. |
 | Severity driven by the cost-loss rule, not the posterior | Medium | The probabilistic score loses meaning | `_cost_loss_state` (`crma_model.py:162`) triggers the top tier where `P(≥T) ≥ tau_T`. In `configs/default.yaml` **`tau_orange = tau_red = 0.19`** (tau_red's raw optimum 0.06 was clamped up to keep non-decreasing order) → the Orange/Red boundary is degenerate. |
-| Local-rainfall bias — major riverine floods missed | **Very high** | Large fluvial floods systematically undetected | **All 8 BN evidence nodes are local** (`Forecast_Hazard` = local IFS exceedance, `Obs_Antecedent`, `API_State`, `Soil_Memory`, `Rainfall_Trend` = local IMERG). **No upstream / discharge / routing node exists.** The model structurally cannot see catchment-routed floods (Shabelle, Juba, Sudd). |
+| Local-rainfall bias  major riverine floods missed | **Very high** | Large fluvial floods systematically undetected | **All 8 BN evidence nodes are local** (`Forecast_Hazard` = local IFS exceedance, `Obs_Antecedent`, `API_State`, `Soil_Memory`, `Rainfall_Trend` = local IMERG). **No upstream / discharge / routing node exists.** The model structurally cannot see catchment-routed floods (Shabelle, Juba, Sudd). |
 | Very low recall (29 %) | **Very high** | Most flooded units never alerted | Direct consequence of the local-rainfall bias (measured 26/91 on the VIIRS panel). |
-| "False hotspots" in the northern Somali highlands | High | Over-grading in lightly-flooded zones | Not false positives in the binary sense — VIIRS confirms minor floods (Sool 69 km², Togdheer 13 km²). The fault is **over-grading**: a 13 km² flood receives the same Red as the undetected 3 016 km² Middle Shabelle flood. Same root cause as the `p_red` saturation. |
+| "False hotspots" in the northern Somali highlands | High | Over-grading in lightly-flooded zones | Not false positives in the binary sense  VIIRS confirms minor floods (Sool 69 km², Togdheer 13 km²). The fault is **over-grading**: a 13 km² flood receives the same Red as the undetected 3 016 km² Middle Shabelle flood. Same root cause as the `p_red` saturation. |
 | Country-level validation too coarse | Medium (resolved) | Local errors masked | Superseded by this admin-1 satellite panel. |
 
-### Diagnostic table — Somalia (VIIRS flood vs C3), the spatial mismatch
+### Diagnostic table  Somalia (VIIRS flood vs C3), the spatial mismatch
 
 | Region | Basin | Flood (km²) | Pop. exposed | C3 Orange+ days |
 |--------|-------|------------:|-------------:|----------------:|
@@ -64,10 +64,10 @@ recall, alerts correctly concentrated on the Sudd / White-Nile corridor.
 
 ## 4. Remediation roadmap (by decreasing leverage)
 
-1. **Add an upstream / riverine hazard node — the only real recall lever.**
+1. **Add an upstream / riverine hazard node  the only real recall lever.**
    - Introduce a `Riverine_Hazard` node feeding `Compound_Risk`, driven by
      **GloFAS river-discharge reforecast + flood-return thresholds** (Copernicus).
-   - Alternative without GloFAS: an **upstream-rainfall index** — route the IFS
+   - Alternative without GloFAS: an **upstream-rainfall index**  route the IFS
      exceedance along the river network (flow accumulation from a HydroSHEDS /
      MERIT DEM) so each unit sees its catchment's rainfall, not only local cells.
    - Expected to unblock the ~65 currently-missed units.
@@ -75,7 +75,7 @@ recall, alerts correctly concentrated on the Sudd / White-Nile corridor.
 2. **Restore probabilistic gradation (fixes `p_red` saturation + Orange/Red).**
    - Make `Risk_State` depend on a **continuous** severity signal (return period ×
      spatial coverage × population exposed) instead of the 4-state `Compound_Risk`.
-   - **Calibrate** `p_red` (isotonic / Platt) against observed flood frequency —
+   - **Calibrate** `p_red` (isotonic / Platt) against observed flood frequency 
      the VIIRS panel is now available as a calibration set.
    - Increase `Forecast_Hazard` granularity (> 4 states) so `p_red` actually
      varies between Orange- and Red-worthy events.
@@ -89,7 +89,7 @@ recall, alerts correctly concentrated on the Sudd / White-Nile corridor.
 
 4. **Extend the standing validation set.**
    - Adopt the FAO/VIIRS + UNOSAT admin-1 panel as the permanent validation
-     harness. ETH / KEN are absent from FAO EVE — cover them via GloFAS or UNOSAT.
+     harness. ETH / KEN are absent from FAO EVE  cover them via GloFAS or UNOSAT.
 
 ## 5. Implementation status
 
@@ -99,10 +99,10 @@ outputs unchanged); covered by `tests/unit/test_severity_gradation.py` and
 
 | Roadmap item | Status | How |
 |--------------|--------|-----|
-| 2 — Severity gradation | Done | `severity_index()` blends the continuous evidence into `severity_score` (config `component3.crma_model.severity`), emitted per unit. Additive; label unchanged. |
-| 3 — Orange/Red decoupling | Done | `cost_loss.severity_red_split` demotes a low-magnitude saturated Red to Orange. Arid floor (`component2.flood_floor_mm`) already clips GEV thresholds. |
-| 1 — Riverine hazard | Done (end to end) | `riverine_aware_hazard` escalates `Forecast_Hazard` on `riverine_ratio` (independent of local rain), folded into severity. The feed (`component3.riverine`) pools each unit's upstream tail ratios along a curated admin-1 river topology (`data/river_basins/upstream_admin1.yaml`) in `risk_engine`. GloFAS discharge is a drop-in upgrade for the feed. |
-| 4 — Satellite validation harness | Done | `scripts/satellite_validation.py` (FAO/VIIRS + UNOSAT). Gap: ETH/KEN absent from FAO EVE — cover via GloFAS/UNOSAT. |
+| 2  Severity gradation | Done | `severity_index()` blends the continuous evidence into `severity_score` (config `component3.crma_model.severity`), emitted per unit. Additive; label unchanged. |
+| 3  Orange/Red decoupling | Done | `cost_loss.severity_red_split` demotes a low-magnitude saturated Red to Orange. Arid floor (`component2.flood_floor_mm`) already clips GEV thresholds. |
+| 1  Riverine hazard | Done (end to end) | `riverine_aware_hazard` escalates `Forecast_Hazard` on `riverine_ratio` (independent of local rain), folded into severity. The feed (`component3.riverine`) pools each unit's upstream tail ratios along a curated admin-1 river topology (`data/river_basins/upstream_admin1.yaml`) in `risk_engine`. GloFAS discharge is a drop-in upgrade for the feed. |
+| 4  Satellite validation harness | Done | `scripts/satellite_validation.py` (FAO/VIIRS + UNOSAT). Gap: ETH/KEN absent from FAO EVE  cover via GloFAS/UNOSAT. |
 
 All levers are **enabled by default** in `configs/default.yaml`
 (`severity`, `cost_loss.severity_red_split: 0.30`, `riverine_aware_hazard: true`,
@@ -148,13 +148,13 @@ Residual limitations:
   gradation is carried by the additive `severity_score`, emitted on every
   scored unit-day.
 - Banadir (coastal, 94 km² but 562 k exposed), Bakool and Bay remain at 0
-  alert-days — coastal/urban flooding is not on the riverine topology; a
+  alert-days  coastal/urban flooding is not on the riverine topology; a
   coastal pathway is future work.
 - Recall is bounded near ~0.5 by units outside the curated river topology and
   outside FAO EVE's forecast-signal reach; extending the topology YAML and a
   GloFAS discharge feed are the next levers.
 
 Provenance note: every figure above comes from real ECMWF ensemble GRIBs
-(C1 store) and real GPM IMERG observations — no padded or synthetic values
+(C1 store) and real GPM IMERG observations  no padded or synthetic values
 remain in the full-window chain. The 7-day-tail pass is kept for the record
 because it isolates the riverine lever's marginal contribution.

@@ -14,7 +14,7 @@ export const TITILER_BASE =
 export const COG_BASE =
   process.env.NEXT_PUBLIC_COG_BASE || "https://gik-icechain-cogs.s3.eu-west-1.amazonaws.com/cogs";
 
-/** Accumulation windows (component2.windows_h) — labelled for the UI. */
+/** Accumulation windows (component2.windows_h)  labelled for the UI. */
 export const WINDOWS = ["3h", "6h", "12h", "24h", "48h", "72h", "7d"] as const;
 export const WINDOW_HOURS: Record<string, number> = {
   "3h": 3, "6h": 6, "12h": 12, "24h": 24, "48h": 48, "72h": 72, "7d": 168,

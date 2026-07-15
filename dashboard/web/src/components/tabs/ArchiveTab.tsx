@@ -1,21 +1,21 @@
 "use client";
 
-// ARCHIVE tab — one continuous cal-heatmap (GitHub-style) of worst daily risk.
+// ARCHIVE tab  one continuous cal-heatmap (GitHub-style) of worst daily risk.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getIndex, type CalendarIndex } from "@/lib/api";
 import { RISK_COLOR, RISK_LABEL, type RiskState, type UnitRisk } from "@/lib/risk";
 import "cal-heatmap/cal-heatmap.css";
 
-const MONTHS_SHOWN = 6;
 const NOT_IN_ARCHIVE = -2;
+const ARCHIVE_START = Date.UTC(2023, 0, 1);
+const LABEL_W = 26;
+const DOMAIN_GUTTER = 6;
+const CELL_GUTTER = 3;
 
 type CalInstance = {
   paint: (options: object, plugins?: unknown[][]) => Promise<unknown>;
-  previous: (n?: number) => Promise<unknown>;
-  next: (n?: number) => Promise<unknown>;
   on: (event: string, cb: (...args: never[]) => void) => void;
   destroy: () => Promise<unknown>;
 };
@@ -35,6 +35,7 @@ export default function ArchiveTab({
   const router = useRouter();
   const [index, setIndex] = useState<CalendarIndex>({});
   const calRef = useRef<CalInstance | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { getIndex().then(setIndex).catch(() => setIndex({})); }, []);
 
@@ -49,8 +50,10 @@ export default function ArchiveTab({
   useEffect(() => {
     if (dates.length === 0) return;
     let disposed = false;
+    let scrolledOnce = false;
 
     const paint = async () => {
+      const prevScroll = wrapRef.current?.scrollLeft ?? 0;
       const [{ default: CalHeatmap }, { default: Tooltip }, { default: CalendarLabel }] =
         await Promise.all([
           import("cal-heatmap"),
@@ -59,28 +62,29 @@ export default function ArchiveTab({
         ]);
       if (disposed) return;
 
-      const first = monthStart(dates[0].slice(0, 7));
-      const last = monthStart(dates[dates.length - 1].slice(0, 7));
-      // Initial view: the densest MONTHS_SHOWN-month window of the archive
-      // (a stray recent date must not drag the view to an empty span).
-      const perMonth = new Map<string, number>();
-      for (const d of dates) perMonth.set(d.slice(0, 7), (perMonth.get(d.slice(0, 7)) ?? 0) + 1);
-      let view = first;
-      let best = -1;
+      const first = new Date(ARCHIVE_START);
+      const now = new Date();
+      let last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const lastData = monthStart(dates[dates.length - 1].slice(0, 7));
+      if (lastData > last) last = lastData;
+      const end = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0));
+
+      const months: Date[] = [];
       for (const c = new Date(first); c <= last; c.setUTCMonth(c.getUTCMonth() + 1)) {
-        const w = new Date(c);
-        let count = 0;
-        for (let i = 0; i < MONTHS_SHOWN; i++) {
-          count += perMonth.get(w.toISOString().slice(0, 7)) ?? 0;
-          w.setUTCMonth(w.getUTCMonth() + 1);
-        }
-        if (count >= best) { best = count; view = new Date(c); }
+        months.push(new Date(c));
       }
+      // Week columns per month (ghDay): partial first week + full weeks.
+      const columns = months.reduce((n, m) => {
+        const daysInMonth = new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 0)).getUTCDate();
+        return n + Math.ceil((m.getUTCDay() + daysInMonth) / 7);
+      }, 0);
+      const avail = wrapRef.current?.clientWidth ?? 960;
+      const cell = Math.min(17, Math.max(10,
+        Math.floor((avail - LABEL_W - months.length * DOMAIN_GUTTER) / columns) - CELL_GUTTER));
 
       // Every day of the paintable span gets a value, so every cell is colored
       // by the scale (no reliance on the library's empty-cell CSS).
       const source: { date: string; value: number }[] = [];
-      const end = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0));
       for (let d = new Date(first); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
         const ds = d.toISOString().slice(0, 10);
         source.push({ date: ds, value: index[ds]?.worst_risk ?? NOT_IN_ARCHIVE });
@@ -94,8 +98,8 @@ export default function ArchiveTab({
         {
           itemSelector: "#risk-cal",
           data: { source, type: "json", x: "date", y: "value" },
-          date: { start: view, min: first, max: end },
-          range: MONTHS_SHOWN,
+          date: { start: first, min: first, max: end },
+          range: months.length,
           scale: {
             color: {
               type: "threshold",
@@ -111,7 +115,7 @@ export default function ArchiveTab({
             gutter: 6,
             label: { text: "MMM YYYY", textAlign: "start", position: "top" },
           },
-          subDomain: { type: "ghDay", radius: 2, width: 12, height: 12, gutter: 3 },
+          subDomain: { type: "ghDay", radius: 2, width: cell, height: cell, gutter: CELL_GUTTER },
         },
         [
           [
@@ -120,7 +124,7 @@ export default function ArchiveTab({
               text: (_ts: number, value: number | null, dayjsDate: { format: (f: string) => string }) => {
                 const day = dayjsDate.format("dddd, MMMM D, YYYY");
                 if (value === null || value === NOT_IN_ARCHIVE) return `Not in archive · ${day}`;
-                return `${RISK_LABEL[value as RiskState]} — worst unit risk · ${day}`;
+                return `${RISK_LABEL[value as RiskState]}  worst unit risk · ${day}`;
               },
             },
           ],
@@ -142,6 +146,25 @@ export default function ArchiveTab({
         onPick(ds);
         router.push(`/stories/${ds}`);
       }) as never);
+
+      const el = wrapRef.current;
+      if (el) {
+        let todayLeft: number | null = null;
+        for (const r of el.querySelectorAll<SVGRectElement>(".ch-subdomain-bg")) {
+          const d = (r as unknown as { __data__?: { t?: number } }).__data__;
+          if (d?.t == null) continue;
+          const dt = new Date(d.t);
+          if (dt.getFullYear() === now.getFullYear() && dt.getMonth() === now.getMonth()
+            && dt.getDate() === now.getDate()) {
+            r.classList.add("today-cell");
+            todayLeft = r.getBoundingClientRect().left - el.getBoundingClientRect().left + el.scrollLeft;
+            break;
+          }
+        }
+        el.scrollLeft = scrolledOnce ? prevScroll
+          : todayLeft != null ? Math.max(0, todayLeft - el.clientWidth / 2) : el.scrollWidth;
+        scrolledOnce = true;
+      }
     };
 
     paint();
@@ -150,9 +173,19 @@ export default function ArchiveTab({
     const observer = new MutationObserver(() => paint());
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
+    let lastW = wrapRef.current?.clientWidth ?? 0;
+    const resizeObserver = new ResizeObserver(() => {
+      const w = wrapRef.current?.clientWidth ?? 0;
+      if (Math.abs(w - lastW) < 8) return;
+      lastW = w;
+      paint();
+    });
+    if (wrapRef.current) resizeObserver.observe(wrapRef.current);
+
     return () => {
       disposed = true;
       observer.disconnect();
+      resizeObserver.disconnect();
       calRef.current?.destroy();
       calRef.current = null;
     };
@@ -179,34 +212,24 @@ export default function ArchiveTab({
 
       <div className="rounded-[10px] p-3" style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}>
         {dates.length === 0 ? (
-          <p className="text-xs" style={{ color: "var(--ts)" }}>No dates yet — run the data pipeline.</p>
+          <p className="text-xs" style={{ color: "var(--ts)" }}>No dates yet  run the data pipeline.</p>
         ) : (
           <>
-            <div className="overflow-x-auto pb-1">
+            <div className="overflow-x-auto pb-1" ref={wrapRef}>
               <div id="risk-cal" />
             </div>
-            <div className="flex items-center justify-between mt-2 flex-wrap gap-2">
-              <div className="flex gap-1.5">
-                <NavButton onClick={() => calRef.current?.previous()} label="Previous">
-                  <ChevronLeft size={12} /> Previous
-                </NavButton>
-                <NavButton onClick={() => calRef.current?.next()} label="Next">
-                  Next <ChevronRight size={12} />
-                </NavButton>
-              </div>
-              <div className="flex flex-wrap gap-3">
-                {([3, 2, 1, 0, -1] as RiskState[]).map((s) => (
-                  <span key={s} className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
-                    <span className="w-3 h-3 rounded shrink-0" style={{ background: RISK_COLOR[s] }} />
-                    {RISK_LABEL[s]}
-                  </span>
-                ))}
-                <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
-                  <span className="w-3 h-3 rounded shrink-0"
-                    style={{ background: "var(--c-nodata)", border: "1px solid var(--brd)" }} />
-                  Not in archive
+            <div className="flex items-center justify-end mt-2 flex-wrap gap-3">
+              {([3, 2, 1, 0, -1] as RiskState[]).map((s) => (
+                <span key={s} className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
+                  <span className="w-3 h-3 rounded shrink-0" style={{ background: RISK_COLOR[s] }} />
+                  {RISK_LABEL[s]}
                 </span>
-              </div>
+              ))}
+              <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
+                <span className="w-3 h-3 rounded shrink-0"
+                  style={{ background: "var(--c-nodata)", border: "1px solid var(--brd)" }} />
+                Not in archive
+              </span>
             </div>
           </>
         )}
@@ -218,20 +241,11 @@ export default function ArchiveTab({
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div className="rounded-[10px] p-2.5" style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}>
-      <div className="font-mono text-[8px] tracking-[1px] uppercase mb-1" style={{ color: "var(--td)" }}>{label}</div>
-      <div className="font-mono text-[20px] font-bold leading-none" style={{ color }}>{value}</div>
+      <div className="flex items-center gap-1 font-mono text-[8px] tracking-[1px] uppercase mb-1" style={{ color: "var(--td)" }}>
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+        {label}
+      </div>
+      <div className="font-mono text-[20px] font-bold leading-none" style={{ color: "var(--tp)" }}>{value}</div>
     </div>
-  );
-}
-
-function NavButton({
-  onClick, label, children,
-}: { onClick: () => void; label: string; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} aria-label={label}
-      className="flex items-center gap-1 font-mono text-[9px] px-2 py-1 rounded-[5px] cursor-pointer"
-      style={{ background: "var(--ele)", border: "1px solid var(--brd)", color: "var(--ts)" }}>
-      {children}
-    </button>
   );
 }

@@ -1,14 +1,19 @@
 "use client";
 
-// DOCS tab — methodology, GEV thresholds, metrics, data sources (ported from v4).
+// DOCS tab  methodology, GEV thresholds, metrics, data sources (ported from v4).
 
-const GEV_ROWS = [
-  ["100 years", "≥ 5%", "≥ 3", "Critical", "var(--r500)"],
-  ["50 years", "≥ 10%", "≥ 6", "Very High", "var(--r600)"],
-  ["20 years", "≥ 20%", "≥ 11", "High", "var(--r700)"],
-  ["10 years", "≥ 30%", "≥ 16", "Significant", "var(--r800)"],
-  ["5 years", "≥ 40%", "≥ 21", "Moderate", "var(--r900)"],
-  ["2 years", "≥ 50%", "≥ 26", "Low", "var(--r950)"],
+import { COUNTRIES, N_MEMBERS, WINDOWS } from "@/lib/config";
+import {
+  DISPLAY_BORDER_VAR, DISPLAY_LABEL, DISPLAY_TEXT_VAR, DISPLAY_VAR, type DisplayClass,
+} from "@/lib/risk";
+
+const GEV_ROWS: [string, string, string, DisplayClass][] = [
+  ["100 years", "≥ 5%", "≥ 3", "critical"],
+  ["50 years", "≥ 10%", "≥ 6", "very_high"],
+  ["20 years", "≥ 20%", "≥ 11", "high"],
+  ["10 years", "≥ 30%", "≥ 16", "significant"],
+  ["5 years", "≥ 40%", "≥ 21", "moderate"],
+  ["2 years", "≥ 50%", "≥ 26", "low"],
 ];
 
 const CHIPS = [
@@ -25,48 +30,59 @@ export default function DocsTab() {
         GIK-IceChain methodology, KPI definitions, GEV thresholds, data sources.
       </div>
 
-      <Doc title="Dependency Order — 5-Step Reload Logic">
+      <Doc title="Dependency Order  5-Step Reload Logic">
         <div className="font-mono text-[10px] leading-loose p-3 rounded-lg"
           style={{ background: "var(--ele)", border: "1px solid var(--brd)", color: "var(--ts)" }}>
           {[
             ["①", "Date selected", "IFS ENS forecast cycle (00z)"],
-            ["②", "Country + Admin-1", "16 East African countries, 238 admin-1"],
-            ["③", "Max severity per window", "7 windows (3h…7d)"],
+            ["②", "Country + Admin-1", `${COUNTRIES.length} East African countries, 238 admin-1`],
+            ["③", "Max severity per window", `${WINDOWS.length} windows (${WINDOWS[0]}…${WINDOWS[WINDOWS.length - 1]})`],
             ["④", "GEV results for window", "100y → 2y hierarchical evaluation"],
-            ["⑤", "Ensemble chart", "51 members, binary comparison"],
+            ["⑤", "Ensemble chart", `${N_MEMBERS} members, binary comparison`],
           ].map(([n, a, b]) => (
-            <div key={n}><span style={{ color: "var(--teal)" }}>{n}</span> <strong>{a}</strong> — {b}</div>
+            <div key={n}><span style={{ color: "var(--teal)" }}>{n}</span> <strong>{a}</strong>  {b}</div>
           ))}
         </div>
       </Doc>
 
-      <Doc title="GEV Thresholds — Minimum Operational Probabilities">
+      <Doc title="GEV Thresholds  Minimum Operational Probabilities">
         <p className="text-[11px] mb-2" style={{ color: "var(--ts)" }}>
           Evaluation order: 100y first → 2y last. First condition met = window severity.
         </p>
+        <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[10px]">
           <thead>
-            <tr>{["Return Period", "Min P%", "Min members / 51", "Severity"].map((h) => (
+            <tr>{["Return Period", "Min P%", `Min members / ${N_MEMBERS}`, "Severity"].map((h) => (
               <th key={h} className="font-mono text-[8px] tracking-[1px] text-left p-2"
                 style={{ color: "var(--td)", borderBottom: "1px solid var(--brd)" }}>{h}</th>
             ))}</tr>
           </thead>
           <tbody>
-            {GEV_ROWS.map((r) => (
-              <tr key={r[0]}>
-                <td className="font-mono p-2" style={{ borderBottom: "1px solid rgba(30,45,74,.25)" }}>{r[0]}</td>
-                <td className="font-mono p-2" style={{ borderBottom: "1px solid rgba(30,45,74,.25)" }}>{r[1]}</td>
-                <td className="font-mono p-2" style={{ borderBottom: "1px solid rgba(30,45,74,.25)" }}>{r[2]}</td>
-                <td className="font-mono p-2" style={{ color: r[4], borderBottom: "1px solid rgba(30,45,74,.25)" }}>{r[3]}</td>
-              </tr>
-            ))}
+            {GEV_ROWS.map(([period, minP, minM, cls]) => {
+              const border = "1px solid color-mix(in srgb, var(--brd) 55%, transparent)";
+              return (
+                <tr key={period}>
+                  <td className="font-mono p-2" style={{ borderBottom: border }}>{period}</td>
+                  <td className="font-mono p-2" style={{ borderBottom: border }}>{minP}</td>
+                  <td className="font-mono p-2" style={{ borderBottom: border }}>{minM}</td>
+                  <td className="p-2" style={{ borderBottom: border }}>
+                    <span className="font-mono text-[9px] font-bold px-1.5 py-0.5 rounded-[3px]"
+                      style={{ background: DISPLAY_VAR[cls], color: DISPLAY_TEXT_VAR[cls],
+                               border: `1px solid ${DISPLAY_BORDER_VAR[cls]}` }}>
+                      {DISPLAY_LABEL[cls]}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        </div>
       </Doc>
 
       <Doc title="Core Risk Metrics">
         {[
-          ["Exceedance Probability", "% of 51 ensemble members exceeding a GEV return-period threshold for a window. Source: IFS ENS · ECMWF."],
+          ["Exceedance Probability", `% of ${N_MEMBERS} ensemble members exceeding a GEV return-period threshold for a window. Source: IFS ENS · ECMWF.`],
           ["Return Period Triggered", "Highest GEV return period meeting its minimum probability (100y → 2y). Source: CMORPH/GPM GEV calibration."],
           ["Admin-1 Risk Level", "CRMA Bayesian Network output (Green/Yellow/Orange/Red) integrating exceedance, GPM IMERG, soil saturation. Source: Component 3."],
         ].map(([n, d]) => (
@@ -89,7 +105,7 @@ export default function DocsTab() {
       <div className="rounded-lg p-3 text-[10px] leading-relaxed mt-1"
         style={{ background: "rgba(59,130,246,.06)", border: "1px solid rgba(59,130,246,.18)", color: "var(--ts)" }}>
         <strong style={{ color: "var(--blue)" }}>Responsibility notice:</strong> a probabilistic
-        decision-support tool. Risk scores are probability estimates — they do not replace the
+        decision-support tool. Risk scores are probability estimates  they do not replace the
         operational judgment of competent authorities (NMAs, ICPAC/IGAD). Boundaries from GADM/HDX,
         no political implication.
       </div>

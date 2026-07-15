@@ -37,6 +37,8 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     });
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
       { subdomains: "abcd", maxZoom: 19 }).addTo(map);
+    L.control.attribution({ position: "bottomright", prefix: false })
+      .addAttribution("© CARTO · © OpenStreetMap · GADM/HDX").addTo(map);
     L.control.zoom({ position: "topright" }).addTo(map);
     map.fitBounds(EA_BOUNDS as L.LatLngBoundsExpression);
     mapRef.current = map;
@@ -78,9 +80,7 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
                 (e.target as L.Path).setStyle({ weight: 2, fillOpacity: 0.95 });
                 L.popup({ closeButton: false })
                   .setLatLng((e as L.LeafletMouseEvent).latlng)
-                  .setContent(
-                    `<div style="font-family:monospace;font-size:11px;background:#121E38;color:#EDF2FF;padding:5px 9px;border-radius:4px;border:1px solid #1E2D4A"><strong>${r?.name ?? pcode}</strong><br>${label} · ${rp}yr</div>`,
-                  )
+                  .setContent(`<strong>${r?.name ?? pcode}</strong><br>${label} · ${rp}yr`)
                   .openOn(map);
               },
               mouseout: (e) => {
@@ -98,7 +98,7 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // restyle on risk/RP/selection change — no refetch
+  // restyle on risk/RP/selection change  no refetch
   useEffect(() => {
     layerRef.current?.eachLayer((lyr) => {
       const pcode = (lyr as L.Path & { feature?: GeoJSON.Feature }).feature?.properties?.pcode;

@@ -1,6 +1,6 @@
 "use client";
 
-// Storymap index — lists available event narratives (one per signal date).
+// Storymap index  lists available event narratives (one per signal date).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -36,7 +36,7 @@ export default function StoriesIndex() {
               </span>
             </Link>
           ))}
-          {dates.length === 0 && <p>No storymaps yet — run the data pipeline.</p>}
+          {dates.length === 0 && <p>No storymaps yet  run the data pipeline.</p>}
         </div>
       </div>
     </div>

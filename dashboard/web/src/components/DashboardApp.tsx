@@ -1,6 +1,6 @@
 "use client";
 
-// Faithful Tailwind port of GIK-IceChain-Dashboard-v4.html — same layout, tabs
+// Faithful Tailwind port of GIK-IceChain-Dashboard-v4.html  same layout, tabs
 // and look (via the ported design tokens), but fed with REAL pipeline data.
 
 import { useEffect, useState } from "react";
@@ -42,7 +42,7 @@ export default function DashboardApp() {
         style={{ color: "var(--td)", background: "rgba(59,130,246,.05)",
                  borderBottom: "1px solid rgba(59,130,246,.1)" }}>
         <Info size={10} className="inline -mt-px mr-1" />
-        Decision-support tool only — does not replace operational judgment of
+        Decision-support tool only  does not replace operational judgment of
         competent authorities · ECMWF Open Licence · EM-DAT CC-BY · NASA Open Data
       </div>
 

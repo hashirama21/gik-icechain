@@ -1,6 +1,6 @@
 // TiTiler tile-URL builders. TiTiler turns a COG (on S3) into XYZ tiles on the
 // fly; MapLibre consumes the returned {z}/{x}/{y} template. Only RASTER layers
-// go through TiTiler — the admin-1 risk layer is vector (GeoJSON), no tiles.
+// go through TiTiler  the admin-1 risk layer is vector (GeoJSON), no tiles.
 
 import { COG_BASE, TITILER_BASE } from "./config";
 
@@ -23,7 +23,7 @@ export function cogTiles(key: string, opts: CogTileOpts = {}): string {
   return `${TITILER_BASE}/cog/tiles/{z}/{x}/{y}.png?${params.toString()}`;
 }
 
-/** Discrete risk colormap (0..3) — matches titiler_config.yaml risk_levels. */
+/** Discrete risk colormap (0..3)  matches titiler_config.yaml risk_levels. */
 const RISK_CMAP = JSON.stringify({
   "0": [76, 175, 80, 255], "1": [255, 235, 59, 255],
   "2": [255, 152, 0, 255], "3": [244, 67, 54, 255],

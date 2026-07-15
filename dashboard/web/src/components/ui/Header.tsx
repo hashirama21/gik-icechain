@@ -36,7 +36,7 @@ export default function Header({
       <nav className="hidden md:flex gap-0.5 flex-1 mx-2">
         {TABS.map((t) => (
           <button key={t.id} onClick={() => onTab(t.id)}
-            className="px-2.5 py-[5px] rounded-[5px] text-[11px] font-medium border transition-colors"
+            className="px-2.5 py-[5px] rounded-[5px] text-[11px] font-medium border transition-colors hover:bg-[var(--hov)]"
             style={tab === t.id
               ? { background: "var(--ele)", color: "var(--tp)", borderColor: "var(--brd)" }
               : { color: "var(--ts)", borderColor: "transparent" }}>

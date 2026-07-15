@@ -27,6 +27,7 @@
   --c-txt-n:var(--db500);--c-txt-l:#6B3333;--c-txt-m:#995555;
   --c-txt-s:#CC8888;--c-txt-h:#FFB0B0;--c-txt-v:#FFCCCC;--c-txt-c:#FFFFFF;
   --map-filter:brightness(.65) saturate(.5);--tag-border:rgba(255,255,255,.12);
+  --tag-ifs:#60A5FA;--tag-aifs:#C084FC;
 }
 [data-theme="light"]{
   --bg:var(--db50);--sur:#FFFFFF;--ele:var(--db50);
@@ -39,6 +40,7 @@
   --c-txt-n:#AAAAAA;--c-txt-l:#CC7777;--c-txt-m:#BB5555;
   --c-txt-s:#AA3333;--c-txt-h:#881111;--c-txt-v:#770000;--c-txt-c:#FFFFFF;
   --map-filter:none;--tag-border:rgba(0,0,0,.1);
+  --tag-ifs:#1D4ED8;--tag-aifs:#7E22CE;
 }
 
 @layer base {
@@ -63,13 +65,22 @@
 
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-thumb{background:var(--brd);border-radius:2px}
-[data-theme="dark"] .leaflet-tile{filter:brightness(.62) saturate(.45)}
-[data-theme="light"] .leaflet-tile{filter:none}
+.leaflet-tile{filter:var(--map-filter)}
 .leaflet-container{background:var(--bg)}
+/* Theme-aware popup + attribution (defaults are white-on-white in dark mode). */
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{
+  background:var(--ele);color:var(--tp);border:1px solid var(--brd);box-shadow:none}
+.leaflet-popup-content-wrapper{border-radius:5px}
+.leaflet-popup-content{margin:5px 9px;font-family:var(--mono);font-size:11px;line-height:1.45}
+.leaflet-control-attribution{
+  background:color-mix(in srgb,var(--sur) 85%,transparent)!important;
+  color:var(--td);font-family:var(--mono);font-size:8px}
+.leaflet-control-attribution a{color:var(--ts)}
 
 /* cal-heatmap (Archive tab): theme-aware labels, hover ring, tooltip */
 #risk-cal .ch-domain-text{fill:var(--ts);font-family:var(--mono);font-size:8px;letter-spacing:1px;text-transform:uppercase}
 #risk-cal .ch-plugin-calendar-label-text{fill:var(--td);font-family:var(--mono);font-size:7px}
 #risk-cal .ch-subdomain-bg:hover{stroke:var(--tp);stroke-width:1px;cursor:pointer}
+#risk-cal .today-cell{stroke:var(--blue);stroke-width:1.5px}
 #ch-tooltip{background:var(--ele);color:var(--tp);border:1px solid var(--brd);border-radius:5px;font-family:var(--mono);font-size:9px;padding:4px 8px}
 #ch-tooltip[data-popper-placement] .ch-tooltip-arrow:before{background:var(--ele);border:1px solid var(--brd)}

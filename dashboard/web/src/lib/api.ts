@@ -25,7 +25,7 @@ function fetchJson<T>(path: string, label: string): Promise<T> {
   return pending;
 }
 
-/** index.json — available dates and worst risk (drives the calendar). */
+/** index.json  available dates and worst risk (drives the calendar). */
 export interface CalendarIndex {
   [date: string]: { worst_risk: RiskState; risk_label: string; n_units: number };
 }
@@ -34,7 +34,7 @@ export function getIndex(): Promise<CalendarIndex> {
   return fetchJson<CalendarIndex>("index.json", "index.json");
 }
 
-/** {date}/region_risks.json — keyed by admin1_pcode. */
+/** {date}/region_risks.json  keyed by admin1_pcode. */
 export function getRegionRisks(date: string): Promise<Record<string, UnitRisk>> {
   return fetchJson(`${date}/region_risks.json`, `region_risks ${date}`);
 }

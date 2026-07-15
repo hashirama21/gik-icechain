@@ -1,4 +1,4 @@
-# Runbook — fermer les 3 écarts prioritaires avant le 31 août 2026
+# Runbook  fermer les 3 écarts prioritaires avant le 31 août 2026
 
 > Date : 2026-07-13 · Contexte : `docs/PROMESSES_VS_LIVRE_2026-07-13.md`
 > Objet : les 3 promesses du dossier de soumission qui sont **vérifiables en
@@ -24,7 +24,7 @@ désormais écrite (voir §3).
 > Les données 2023 **sont bien là**, sous `0p4-beta/`. Ma conclusion était un
 > artefact de mauvais chemin, pas un fait.
 
-Le bucket **n'est pas homogène** — c'est le vrai enjeu :
+Le bucket **n'est pas homogène**  c'est le vrai enjeu :
 
 | Période | Préfixe | Grille |
 |---|---|---|
@@ -48,7 +48,7 @@ Le bucket **n'est pas homogène** — c'est le vrai enjeu :
    GRIB (C1 gérait déjà le 0,4°, C2 non). Couvert par
    `TestBboxToSlicesMixedResolution`.
 
-3. **La fenêtre AIFS ∩ IFS = ~370 jours, couvrant les 4 saisons** — la comparaison
+3. **La fenêtre AIFS ∩ IFS = ~370 jours, couvrant les 4 saisons**  la comparaison
    « par saison et phase ENSO » du §7.2 est entièrement réalisable.
 
 4. **`ISSUES.md` (L3) est faux** : il parle d'une rétention de ~15 mois. Il n'y a
@@ -62,7 +62,7 @@ Le bucket **n'est pas homogène** — c'est le vrai enjeu :
 
 ---
 
-## Priorité 1 — Piste AIFS (l'écart le plus visible)
+## Priorité 1  Piste AIFS (l'écart le plus visible)
 
 **Diagnostic.** La chaîne est **déjà entièrement câblée** dans `run-all`
 (`cli.py:1023-1062`) : convert-AIFS → exceedance AIFS → `compute_aifs_ifs_delta`
@@ -73,7 +73,7 @@ Le seul verrou est `aifs_track.enabled: false` dans `configs/default.yaml`.
 **Risque résiduel identifié** : `aifs_to_virtual_dataset` utilise encore
 `kerchunk.combine.MultiZarrToZarr` au lieu de VirtualiZarr 2.x (résidu
 ISSUE-17). Ça fonctionne, mais c'est le point le plus susceptible de casser au
-premier run — à tester en premier sur **une seule date** avant de lancer une
+premier run  à tester en premier sur **une seule date** avant de lancer une
 fenêtre longue.
 
 ### Étapes
@@ -110,7 +110,7 @@ pas des jours. C'est le meilleur rapport valeur/effort des trois chantiers.
 
 ---
 
-## Priorité 2 — Benchmark (la promesse chiffrée la plus facile à vérifier)
+## Priorité 2  Benchmark (la promesse chiffrée la plus facile à vérifier)
 
 **Diagnostic.** `conversion/benchmark.py` est **fonctionnel et honnête** :
 `_measure_store_size_gb()` fait un vrai `s3fs.du()` sur le bucket, et
@@ -136,10 +136,10 @@ python scripts/tools.py benchmark \
    - *(propre)* trouver l'URI publique de leur store IceChunk IFS ENS et passer
      `--dynamical-store s3://...` → la ligne devient mesurée ;
    - *(honnête à défaut)* garder la constante et **l'étiqueter comme telle** dans
-     le README — ce que j'ai déjà fait aujourd'hui.
+     le README  ce que j'ai déjà fait aujourd'hui.
 
 2. **La cible « full-scan < 8 h sur 32 vCPU » (§7.1).** L'extrapolation interne
-   de `RESULT.md` donne **~50 h pour 1200 jours** — c'est-à-dire que **le chiffre
+   de `RESULT.md` donne **~50 h pour 1200 jours**  c'est-à-dire que **le chiffre
    actuellement disponible rate la cible annoncée**. Il faut soit mesurer
    réellement sur 32 vCPU (le chiffre de 50 h vient de runs à 1–4 workers, donc
    il n'est pas comparable), soit corriger la cible dans le rapport final.
@@ -148,7 +148,7 @@ python scripts/tools.py benchmark \
 
 ---
 
-## Priorité 3 — Ablation « GEV adaptatif vs statique » (la preuve manquante)
+## Priorité 3  Ablation « GEV adaptatif vs statique » (la preuve manquante)
 
 **Diagnostic.** C'est la seule justification de l'Innovation 2, et elle n'existe
 pas. Il manquait aussi **le code pour construire la ligne de base statique** :
@@ -159,18 +159,18 @@ je l'ai écrit aujourd'hui.
 `build_seasonal_thresholds(..., pool_seasons: bool)` + le flag CLI
 `--pool-seasons`. Les trois bras de l'ablation écrivent **les mêmes noms de
 fichiers**, donc le pipeline C2 charge n'importe lequel **sans modification de
-code** — il suffit de pointer `component2.thresholds` vers le bon dossier :
+code**  il suffit de pointer `component2.thresholds` vers le bon dossier :
 
 | Bras | Commande | Ce qui varie par cellule |
 |---|---|---|
 | **adaptatif** (livré) | défauts | saison × ENSO × IOD |
 | **saison seule** | `--min-years 999` | saison (bins ENSO/IOD repliés) |
-| **statique** (baseline) | `--min-years 999 --pool-seasons` | rien — un seul ajustement sur maxima annuels |
+| **statique** (baseline) | `--min-years 999 --pool-seasons` | rien  un seul ajustement sur maxima annuels |
 
 Bascule d'un bras à l'autre à l'exécution : `run-all --thresholds-dir <dossier>`.
 
 Couvert par `TestStaticBaselineArm` dans `tests/unit/test_gpm_seasonal.py`
-(le bras statique doit faire **disparaître** l'écart OND/MAM — c'est tout
+(le bras statique doit faire **disparaître** l'écart OND/MAM  c'est tout
 l'intérêt de la baseline).
 
 ### ⚠️ Ordre impératif
@@ -217,7 +217,7 @@ python scripts/satellite_validation.py --risk-dir results/abl_static/admin1_risk
 ```
 
 **Note** : `satellite_validation.py` est **codé en dur sur novembre 2024**
-(`days = [f"2024-11-{d:02d}" ...]`). C'est une contrainte, pas un bug — mais
+(`days = [f"2024-11-{d:02d}" ...]`). C'est une contrainte, pas un bug  mais
 elle impose que l'ablation se fasse sur cette fenêtre. C'est heureusement la
 meilleure vérité terrain disponible (FAO/VIIRS, vrais négatifs).
 
@@ -226,7 +226,7 @@ promettait et qui manque.
 
 > ⚖️ **Honnêteté requise sur le résultat.** Il est parfaitement possible que
 > l'ablation montre un gain faible ou nul. Le projet a déjà fait ce choix une
-> fois — le soft-evidence a été **désactivé par défaut après avoir mesuré qu'il
+> fois  le soft-evidence a été **désactivé par défaut après avoir mesuré qu'il
 > n'aidait pas**. C'est cette rigueur qui donne du poids au reste ; il faut
 > publier le résultat de l'ablation quel qu'il soit.
 
@@ -236,11 +236,11 @@ promettait et qui manque.
 
 Par rapport valeur/effort décroissant, et en tenant compte des dépendances :
 
-1. **Benchmark** (heures) — aucune dépendance, ferme une promesse chiffrée,
+1. **Benchmark** (heures)  aucune dépendance, ferme une promesse chiffrée,
    le code marche déjà.
-2. **AIFS, smoke test 1 jour** (minutes) — révèle immédiatement si le résidu
+2. **AIFS, smoke test 1 jour** (minutes)  révèle immédiatement si le résidu
    kerchunk casse. Puis fenêtre OND 2025 (heures).
-3. **Ablation GEV** (jours) — dépend du téléchargement GPM (long) et **doit**
+3. **Ablation GEV** (jours)  dépend du téléchargement GPM (long) et **doit**
    venir après la régénération des seuils post-correctif OND.
 
 En parallèle, deux corrections de récit à porter dans le rapport final, qui ne

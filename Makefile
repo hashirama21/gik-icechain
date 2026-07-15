@@ -1,4 +1,4 @@
-# GIK-IceChain v2.0 — Makefile
+# GIK-IceChain v2.0  Makefile
 
 .DEFAULT_GOAL := help
 PYTHON        ?= python3

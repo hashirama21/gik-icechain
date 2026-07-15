@@ -1,7 +1,7 @@
 """Unit tests for riverine-aware Forecast_Hazard (roadmap Item 1).
 
 An upstream/riverine ratio escalates Forecast_Hazard even when local exceedance
-is ~0 — the catchment-routed floods (Shabelle/Juba, Sudd) a local-rainfall
+is ~0  the catchment-routed floods (Shabelle/Juba, Sudd) a local-rainfall
 trigger misses. Mirrors the existing tail-aware escalation.
 """
 

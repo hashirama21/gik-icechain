@@ -48,9 +48,11 @@ export function severity(u: Pick<UnitRisk, "p_red" | "p_orange" | "p_yellow">): 
   return Math.min(1, u.p_red + 0.6 * u.p_orange + 0.3 * u.p_yellow);
 }
 
-/** 7-tone display class (template v4 look) derived from severity. */
+/** 7-tone display class (template v4 look) derived from severity, plus
+ *  "no_data" so missing data is never presented as Normal. */
 export type DisplayClass =
-  | "normal" | "low" | "moderate" | "significant" | "high" | "very_high" | "critical";
+  | "normal" | "low" | "moderate" | "significant" | "high" | "very_high" | "critical"
+  | "no_data";
 
 const DISPLAY_BANDS: [number, DisplayClass][] = [
   [0.85, "critical"], [0.7, "very_high"], [0.55, "high"],
@@ -58,32 +60,45 @@ const DISPLAY_BANDS: [number, DisplayClass][] = [
 ];
 
 export function displayClass(u: RiskFields): DisplayClass {
-  if (u.risk_state === -1) return "normal";
+  if (u.risk_state === -1) return "no_data";
   const s = severity(u);
   for (const [thr, cls] of DISPLAY_BANDS) if (s >= thr) return cls;
   return "normal";
 }
 
-export const DISPLAY_COLOR: Record<DisplayClass, string> = {
-  normal: "#2A3F6A", low: "#4D0808", moderate: "#7A0D0D", significant: "#B31515",
-  high: "#E01F1F", very_high: "#FF2626", critical: "#FF6B6B",
-};
-
 // 7-class display labels + CSS-var backgrounds (== v4 RLBL / .cal-cell.*).
 export const DISPLAY_LABEL: Record<DisplayClass, string> = {
   normal: "Normal", low: "Low", moderate: "Moderate", significant: "Significant",
-  high: "High", very_high: "Very High", critical: "Critical",
+  high: "High", very_high: "Very High", critical: "Critical", no_data: "No data",
 };
 
+/** Most severe first; no_data sorts after normal (least alarming). */
 export const DISPLAY_ORDER: DisplayClass[] = [
-  "critical", "very_high", "high", "significant", "moderate", "low", "normal",
+  "critical", "very_high", "high", "significant", "moderate", "low", "normal", "no_data",
 ];
 
 /** CSS variable for a display class background (matches globals.css tokens). */
-export const DISPLAY_VAR: Record<DisplayClass | "no_data", string> = {
+export const DISPLAY_VAR: Record<DisplayClass, string> = {
   critical: "var(--c-crit)", very_high: "var(--c-vhi)", high: "var(--c-high)",
   significant: "var(--c-sig)", moderate: "var(--c-mod)", low: "var(--c-low)",
   normal: "var(--c-normal)", no_data: "var(--c-nodata)",
+};
+
+/** Text colour readable ON the matching DISPLAY_VAR fill (globals.css --c-txt-*).
+ *  Fill colours must never be used as text: the low end of the ramp is
+ *  near-black in dark mode and near-white in light mode. */
+export const DISPLAY_TEXT_VAR: Record<DisplayClass, string> = {
+  critical: "var(--c-txt-c)", very_high: "var(--c-txt-v)", high: "var(--c-txt-h)",
+  significant: "var(--c-txt-s)", moderate: "var(--c-txt-m)", low: "var(--c-txt-l)",
+  normal: "var(--c-txt-n)", no_data: "var(--c-txt-n)",
+};
+
+/** Chip/cell border: risk classes get --c-brd-r so the dark low tones don't
+ *  melt into dark surfaces; normal/no_data stay on the neutral --c-brd. */
+export const DISPLAY_BORDER_VAR: Record<DisplayClass, string> = {
+  critical: "var(--c-brd-r)", very_high: "var(--c-brd-r)", high: "var(--c-brd-r)",
+  significant: "var(--c-brd-r)", moderate: "var(--c-brd-r)", low: "var(--c-brd-r)",
+  normal: "var(--c-brd)", no_data: "var(--c-brd)",
 };
 
 /** Pulse animation class for high-severity calendar cells. */

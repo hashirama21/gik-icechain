@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "East Africa Flood Risk · GIK-IceChain",
   description:
-    "Daily admin-1 flood-risk decision support for East Africa — ECMWF IFS ENS exceedance + ICPAC CRMA Bayesian Network.",
+    "Daily admin-1 flood-risk decision support for East Africa  ECMWF IFS ENS exceedance + ICPAC CRMA Bayesian Network.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

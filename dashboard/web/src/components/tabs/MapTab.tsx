@@ -1,14 +1,14 @@
 "use client";
 
-// MAP tab — country/region sidebar · admin-1 risk map · 5-step dependency chain.
+// MAP tab  country/region sidebar · admin-1 risk map · 5-step dependency chain.
 
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { Globe } from "lucide-react";
 import { COUNTRIES, COUNTRY_BY_CODE, RISK_RETURN_PERIODS } from "@/lib/config";
 import {
-  DISPLAY_LABEL, DISPLAY_VAR, displayClass, DISPLAY_ORDER, riskForRp,
-  type DisplayClass, type UnitRisk,
+  DISPLAY_BORDER_VAR, DISPLAY_LABEL, DISPLAY_TEXT_VAR, DISPLAY_VAR, displayClass,
+  DISPLAY_ORDER, riskForRp, type DisplayClass, type UnitRisk,
 } from "@/lib/risk";
 import { getDependency, type UnitDependency } from "@/lib/api";
 import DependencyPanel from "../map/DependencyPanel";
@@ -72,13 +72,15 @@ export default function MapTab({ date, risks, rp, onRp }: MapTabProps) {
               Countries
             </div>
             {COUNTRIES.map((c) => {
-              const cls = countryWorst[c.code] ?? "normal";
+              const cls = countryWorst[c.code] ?? "no_data";
               return (
                 <button key={c.code} onClick={() => setCountry(c.code)}
-                  className="w-full flex items-center gap-2 px-2 py-[7px] rounded-[5px] mb-0.5 text-left hover:brightness-110">
+                  className="w-full flex items-center gap-2 px-2 py-[7px] rounded-[5px] mb-0.5 text-left hover:bg-[var(--hov)]">
                   <span className="text-[14px]">{c.flag}</span>
                   <span className="text-[12px] font-medium flex-1" style={{ color: "var(--tp)" }}>{c.name}</span>
-                  <span className="font-mono text-[8px] font-bold" style={{ color: DISPLAY_VAR[cls] }}>
+                  <span className="font-mono text-[8px] font-bold px-1.5 py-0.5 rounded-[3px]"
+                    style={{ background: DISPLAY_VAR[cls], color: DISPLAY_TEXT_VAR[cls],
+                             border: `1px solid ${DISPLAY_BORDER_VAR[cls]}` }}>
                     {DISPLAY_LABEL[cls]}
                   </span>
                 </button>
@@ -90,18 +92,19 @@ export default function MapTab({ date, risks, rp, onRp }: MapTabProps) {
             <button onClick={() => { setCountry(null); setSelected(null); }}
               className="font-mono text-[10px] mb-1.5 block" style={{ color: "var(--blue)" }}>← Back</button>
             <div className="font-mono text-[8px] tracking-[1.5px] uppercase mb-2" style={{ color: "var(--td)" }}>
-              {COUNTRY_BY_CODE[country]?.flag} {COUNTRY_BY_CODE[country]?.name} — Admin-1
+              {COUNTRY_BY_CODE[country]?.flag} {COUNTRY_BY_CODE[country]?.name}  Admin-1
             </div>
             {regionList.map((u) => {
               const cls = displayClass(riskForRp(u, rp));
               return (
                 <button key={u.pcode} onClick={() => setSelected(u.pcode)}
-                  className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-[5px] mb-0.5 text-left hover:brightness-110"
-                  style={{ background: selected === u.pcode ? "var(--ele)" : "transparent" }}>
+                  className="w-full flex items-center gap-1.5 px-1.5 py-1.5 rounded-[5px] mb-0.5 text-left hover:bg-[var(--hov)]"
+                  style={{ background: selected === u.pcode ? "var(--ele)" : undefined }}>
                   <span className="w-[7px] h-[7px] rounded-sm shrink-0" style={{ background: DISPLAY_VAR[cls] }} />
                   <span className="text-[11px] flex-1" style={{ color: "var(--tp)" }}>{u.name}</span>
                   <span className="font-mono text-[8px] font-bold px-1.5 py-0.5 rounded-[3px]"
-                    style={{ background: `${DISPLAY_VAR[cls]}22`, color: DISPLAY_VAR[cls] }}>
+                    style={{ background: DISPLAY_VAR[cls], color: DISPLAY_TEXT_VAR[cls],
+                             border: `1px solid ${DISPLAY_BORDER_VAR[cls]}` }}>
                     {DISPLAY_LABEL[cls]}
                   </span>
                 </button>
@@ -118,7 +121,7 @@ export default function MapTab({ date, risks, rp, onRp }: MapTabProps) {
           <span className="font-mono text-[9px] flex-1 truncate" style={{ color: "var(--td)" }}>
             {country
               ? `${COUNTRY_BY_CODE[country]?.name} · admin-1`
-              : "East Africa Overview · 16 countries · 238 admin-1"}
+              : `East Africa Overview · ${COUNTRIES.length} countries · 238 admin-1`}
           </span>
           <div className="flex rounded p-[2px] gap-px" style={{ background: "var(--bg)", border: "1px solid var(--brd)" }}>
             {RISK_RETURN_PERIODS.map((opt) => (
@@ -134,9 +137,23 @@ export default function MapTab({ date, risks, rp, onRp }: MapTabProps) {
         </div>
         <div className="flex-1 relative">
           <LeafletMap risks={risks} rp={rp} selected={selected} onSelect={setSelected} />
-          <div className="absolute bottom-7 left-2 z-[400] font-mono text-[8px] px-2 py-1 rounded pointer-events-none max-w-[190px] leading-tight"
-            style={{ background: "rgba(7,12,23,.88)", border: "1px solid var(--brd)", color: "var(--td)" }}>
-            Boundaries: GADM/HDX · No political value
+          <div className="absolute bottom-7 left-2 z-[400] flex flex-col gap-1 pointer-events-none">
+            <div className="flex flex-wrap gap-x-2 gap-y-1 font-mono text-[8px] px-2 py-1.5 rounded max-w-[190px]"
+              style={{ background: "color-mix(in srgb, var(--sur) 88%, transparent)",
+                       border: "1px solid var(--brd)", color: "var(--ts)" }}>
+              {DISPLAY_ORDER.map((cls) => (
+                <span key={cls} className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-[2px] shrink-0"
+                    style={{ background: DISPLAY_VAR[cls], border: "1px solid var(--brd)" }} />
+                  {DISPLAY_LABEL[cls]}
+                </span>
+              ))}
+            </div>
+            <div className="font-mono text-[8px] px-2 py-1 rounded max-w-[190px] leading-tight"
+              style={{ background: "color-mix(in srgb, var(--sur) 88%, transparent)",
+                       border: "1px solid var(--brd)", color: "var(--td)" }}>
+              Boundaries: GADM/HDX · No political value
+            </div>
           </div>
         </div>
       </div>

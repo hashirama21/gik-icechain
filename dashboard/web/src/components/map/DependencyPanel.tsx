@@ -1,6 +1,6 @@
 "use client";
 
-// Faithful Tailwind port of the v4 #dep-panel — the 5-step dependency chain,
+// Faithful Tailwind port of the v4 #dep-panel  the 5-step dependency chain,
 // fed by REAL data ({date}/dependency.json + region_risks.json).
 
 import { useState } from "react";
@@ -8,12 +8,13 @@ import Link from "next/link";
 import { BarChart3, BookOpen, Check } from "lucide-react";
 import { N_MEMBERS, RETURN_PERIODS, WINDOWS } from "@/lib/config";
 import {
-  DISPLAY_LABEL, DISPLAY_VAR, displayClass, riskForRp, type RiskState, type UnitRisk,
+  DISPLAY_BORDER_VAR, DISPLAY_LABEL, DISPLAY_TEXT_VAR, DISPLAY_VAR, displayClass,
+  riskForRp, type DisplayClass, type RiskState, type UnitRisk,
 } from "@/lib/risk";
 import type { UnitDependency } from "@/lib/api";
 
-const SEV_LABEL = ["—", "Low", "Moderate", "High"];
-const SEV_VAR = ["var(--c-normal)", "var(--c-low)", "var(--c-sig)", "var(--c-crit)"];
+const SEV_LABEL = ["", "Low", "Moderate", "High"];
+const SEV_CLASS: DisplayClass[] = ["normal", "low", "moderate", "high"];
 
 export default function DependencyPanel({
   date, unit, dep, rp,
@@ -30,8 +31,13 @@ export default function DependencyPanel({
       {/* Hero */}
       <div className="rounded-lg p-2.5" style={{ background: "var(--ele)", border: "1px solid var(--brd)" }}>
         <div className="text-sm font-bold">{unit.name}</div>
-        <div className="font-mono text-[10px]" style={{ color: DISPLAY_VAR[cls] }}>
-          {DISPLAY_LABEL[cls]} · {risk.risk_label} · {rp}yr
+        <div className="font-mono text-[10px] mt-0.5">
+          <span className="font-bold px-1.5 py-0.5 rounded-[3px]"
+            style={{ background: DISPLAY_VAR[cls], color: DISPLAY_TEXT_VAR[cls],
+              border: `1px solid ${DISPLAY_BORDER_VAR[cls]}` }}>
+            {DISPLAY_LABEL[cls]}
+          </span>
+          <span style={{ color: "var(--ts)" }}> · {risk.risk_label} · {rp}yr</span>
         </div>
         <div className="font-mono text-[8px]" style={{ color: "var(--td)" }}>
           {unit.country} · {date} · IFS ENS 00z
@@ -44,12 +50,12 @@ export default function DependencyPanel({
         <BarChart3 size={12} style={{ color: "var(--ts)", flexShrink: 0 }} />
         <span className="font-mono text-[9px]" style={{ color: "var(--ts)" }}>
           {dep?.confidence?.m ?? 0}/{N_MEMBERS} members · <strong style={{ color: "var(--tp)" }}>
-            {dep?.confidence?.label ?? "—"}</strong>
+            {dep?.confidence?.label ?? ""}</strong>
         </span>
       </div>
 
       {/* ③ Windows */}
-      <Section title="③ Accumulation Windows — severity per window">
+      <Section title="③ Accumulation Windows  severity per window">
         <div className="grid grid-cols-4 gap-1">
           {WINDOWS.map((w) => {
             const sev = (dep?.win?.[w] ?? 0) as RiskState;
@@ -61,7 +67,8 @@ export default function DependencyPanel({
                   border: `1px solid ${win === w ? "var(--blue)" : "var(--brd)"}` }}>
                 <div className="font-mono text-[9px] font-bold" style={{ color: "var(--ts)" }}>{w}</div>
                 <div className="inline-block font-mono text-[7px] font-bold px-1 py-0.5 rounded-[3px] mt-0.5"
-                  style={{ background: `${SEV_VAR[s]}22`, color: SEV_VAR[s] }}>
+                  style={{ background: DISPLAY_VAR[SEV_CLASS[s]], color: DISPLAY_TEXT_VAR[SEV_CLASS[s]],
+                    border: `1px solid ${DISPLAY_BORDER_VAR[SEV_CLASS[s]]}` }}>
                   {SEV_LABEL[s]}
                 </div>
               </button>
@@ -71,7 +78,7 @@ export default function DependencyPanel({
       </Section>
 
       {/* ④ GEV */}
-      <Section title={`④ GEV — ${win} window · 100y → 2y`}>
+      <Section title={`④ GEV  ${win} window · 100y → 2y`}>
         <div className="space-y-1.5">
           {RETURN_PERIODS.slice().reverse().map((rp) => {
             const p = gev[String(rp)] ?? 0;
@@ -85,11 +92,11 @@ export default function DependencyPanel({
                   <div className="h-full rounded transition-[width] duration-500"
                     style={{ width: `${pct}%`, background: met ? "var(--c-high)" : "var(--bhi)" }} />
                 </div>
-                <span className="w-7 text-right font-mono" style={{ color: met ? "var(--c-high)" : "var(--td)" }}>
+                <span className="w-7 text-right font-mono" style={{ color: met ? "var(--c-txt-h)" : "var(--td)" }}>
                   {pct}%
                 </span>
                 <span className="w-3.5 inline-flex justify-center text-[10px]">
-                  {met ? <Check size={10} style={{ color: "var(--c-high)" }} /> : "·"}
+                  {met ? <Check size={10} style={{ color: "var(--c-txt-h)" }} /> : "·"}
                 </span>
               </div>
             );
@@ -102,7 +109,7 @@ export default function DependencyPanel({
         <div className="flex items-end gap-px h-9 my-1">
           {Array.from({ length: N_MEMBERS }, (_, i) => (
             <div key={i} className="flex-1 rounded-t-sm min-w-[2px]"
-              style={{ height: `${i < nExc ? 60 + (i % 5) * 8 : 18}%`,
+              style={{ height: i < nExc ? "72%" : "18%",
                 background: i < nExc ? "var(--c-high)" : "var(--bhi)",
                 opacity: i < nExc ? 0.9 : 0.5 }} />
           ))}
