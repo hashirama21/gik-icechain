@@ -713,9 +713,14 @@ def _run_risk(
         crma_models[cluster] = m
 
     # EM-DAT flood events tag each day × unit (emdat_flood_match) for validation
-    # overlays. run_risk_batch reads the file only if it exists, so passing the
-    # configured path unconditionally is safe.
+    # overlays. run_risk_batch reads the files only if they exist, so passing
+    # the configured paths unconditionally is safe.
     emdat_path = Path(cfg.sources.emdat_path) if cfg.sources.emdat_path else None
+    emdat_aliases_path = (
+        Path(cfg.sources.emdat_pcode_aliases_path)
+        if cfg.sources.emdat_pcode_aliases_path
+        else None
+    )
 
     crma_cfg = cfg.component3.crma_model
     riverine_feed = None
@@ -748,6 +753,7 @@ def _run_risk(
         # s3:// output (prod) reaches MinIO, not the default AWS endpoint.
         endpoint_url=cfg.outputs.endpoint_url or os.environ.get("AWS_ENDPOINT_URL") or None,
         emdat_path=emdat_path,
+        emdat_aliases_path=emdat_aliases_path,
         cpt_source="refined" if use_refined else "default",
         riverine_feed=riverine_feed,
     )

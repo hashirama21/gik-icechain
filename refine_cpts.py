@@ -20,6 +20,7 @@ from gik_icechain.risk.cpt_refinement import (
     refine_cpts_with_emdat,
 )
 from gik_icechain.risk.crma_model import CRMAModel, EastAfricaCluster
+from gik_icechain.risk.emdat_matching import load_pcode_aliases
 from gik_icechain.shared.logging import configure_logging
 
 configure_logging("INFO")  # silence per-step dynamic-BN debug logs (155k+ steps)
@@ -27,6 +28,7 @@ configure_logging("INFO")  # silence per-step dynamic-BN debug logs (155k+ steps
 ADMIN = Path("data/admin_boundaries/east_africa_admin1.geojson")
 GPM = Path("data/gpm_imerg")
 EMDAT = Path("data/emdat/east_africa_floods.csv")
+ALIASES = Path("data/emdat/pcode_aliases.csv")
 OUT = Path("results/validation/refined_cpts.json")
 TRAIN_OUT = Path("results/validation/emdat_training_set.parquet")
 
@@ -38,7 +40,8 @@ m = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
 m.build()
 
 train = build_training_dataset_from_gpm(
-    recs, admin, GPM, m, spinup_days=30, negative_sample_ratio=3.0, rp=5, graded_labels=True
+    recs, admin, GPM, m, spinup_days=30, negative_sample_ratio=3.0, rp=5, graded_labels=True,
+    pcode_aliases=load_pcode_aliases(ALIASES),
 )
 print(f"training rows: {len(train)}")
 if not train.empty:

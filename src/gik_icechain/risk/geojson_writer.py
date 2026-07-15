@@ -95,6 +95,7 @@ def build_score(
     result: dict[str, Any],
     evidence: Any,
     emdat_flood_match: bool = False,
+    emdat_match_level: str | None = None,
     risk_by_rp: dict[str, dict] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Build a (pcode, score_dict) pair from CRMA inference outputs - no geometry.
@@ -103,7 +104,11 @@ def build_score(
         unit:              pandas Series row from the admin-1 GeoDataFrame.
         result:            Output of ``CRMAModel.infer()``.
         evidence:          ``CRMAEvidence`` instance used for inference.
-        emdat_flood_match: True when this day × unit matches an EM-DAT event.
+        emdat_flood_match: True when this day × unit matches an EM-DAT event
+                           attributed (or alias-resolved) to this admin-1 unit.
+        emdat_match_level: ``"admin1"`` for an attributed match, ``"country"``
+                           when only a national-level EM-DAT event covers the
+                           unit's country that day, ``None`` otherwise.
 
     Returns:
         Tuple of (admin1_pcode, score_dict).
@@ -122,6 +127,7 @@ def build_score(
         "api_mm": round(evidence.api_mm, 2),
         "spatial_coverage": round(evidence.spatial_coverage_fraction, 4),
         "emdat_flood_match": emdat_flood_match,
+        "emdat_match_level": emdat_match_level,
     }
     if risk_by_rp:
         score["risk_by_rp"] = {

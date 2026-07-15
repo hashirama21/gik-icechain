@@ -42,6 +42,7 @@ from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
 from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel, EastAfricaCluster
 from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
 from gik_icechain.risk.dynamic_bn import step as bn_step
+from gik_icechain.risk.emdat_matching import FloodEventIndex
 from gik_icechain.risk.geojson_writer import build_score, write_boundaries, write_risk_scores
 from gik_icechain.risk.gpm_loader import load_gpm_daily
 from gik_icechain.risk.riverine import pool_upstream_ratio
@@ -95,6 +96,7 @@ def run_risk_batch(
     checkpoint_interval: int = _DEFAULT_CHECKPOINT_INTERVAL,
     endpoint_url: str | None = None,
     emdat_path: Path | None = None,
+    emdat_aliases_path: Path | None = None,
     cpt_source: str = "default",
     config_path: Path | None = None,
     riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
@@ -158,20 +160,20 @@ def run_risk_batch(
         "hazard_stat": hazard_stat,
     }
 
-    # Pre-compute set of (date_str, pcode) flood days from EM-DAT for tagging.
-    flood_event_days: frozenset[tuple[str, str]] = frozenset()
+    # Pre-compute the day x unit EM-DAT flood index for tagging. Admin1 codes
+    # are alias-resolved to boundary pcodes; unattributed (national) events
+    # fall back to a country-level match instead of being dropped.
+    flood_index = FloodEventIndex()
     if emdat_path and emdat_path.exists():
         from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+        from gik_icechain.risk.emdat_matching import (
+            build_flood_event_index,
+            load_pcode_aliases,
+        )
 
         records = load_emdat_east_africa(emdat_path)
-        days: set[tuple[str, str]] = set()
-        for rec in records:
-            current_ev = rec.start_date.date()
-            while current_ev <= rec.end_date.date():
-                days.add((str(current_ev), rec.admin1_pcode))
-                current_ev += timedelta(days=1)
-        flood_event_days = frozenset(days)
-        log.info("emdat_flood_days_loaded", n_days=len(flood_event_days))
+        aliases = load_pcode_aliases(emdat_aliases_path) if emdat_aliases_path else {}
+        flood_index = build_flood_event_index(records, set(unit_by_pcode), aliases)
 
     written: list[str] = []
     current = resume_date
@@ -193,7 +195,7 @@ def run_risk_batch(
             hazard_stat,
             min_coverage,
             rp_options,
-            flood_event_days=flood_event_days,
+            flood_index=flood_index,
             meta=meta,
             n_members=n_members,
             riverine_feed=riverine_feed,
@@ -292,7 +294,7 @@ def _process_day(
     hazard_stat: str = "max",
     min_coverage: float = 0.5,
     rp_options: list[int] | None = None,
-    flood_event_days: frozenset[tuple[str, str]] = frozenset(),
+    flood_index: FloodEventIndex | None = None,
     meta: dict | None = None,
     n_members: int = 51,
     riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
@@ -491,12 +493,13 @@ def _process_day(
                 gpm_missing=gpm_missing,
                 rp_years=rp_signal,
             )
-        emdat_match = (str(day), pcode) in flood_event_days
+        match_level = flood_index.match(str(day), pcode) if flood_index else None
         _, scores[pcode] = build_score(
             unit,
             primary_result or _NO_DATA_RESULT,
             primary_ev,
-            emdat_flood_match=emdat_match,
+            emdat_flood_match=match_level == "admin1",
+            emdat_match_level=match_level,
             risk_by_rp=risk_by_rp,
         )
         p24 = primary_ev.exceedance_prob_24h

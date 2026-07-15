@@ -1,0 +1,141 @@
+emdat_code,admin1_pcode
+COM_Ngazidja,COM_Grande Comore
+KEN_Central,KEN_Kiambu
+KEN_Central,KEN_Kirinyaga
+KEN_Central,KEN_Murang'a
+KEN_Central,KEN_Nyandarua
+KEN_Central,KEN_Nyeri
+KEN_Coast,KEN_Kilifi
+KEN_Coast,KEN_Kwale
+KEN_Coast,KEN_Lamu
+KEN_Coast,KEN_Mombasa
+KEN_Coast,KEN_Taita Taveta
+KEN_Coast,KEN_Tana River
+KEN_North Eastern,KEN_Garissa
+KEN_North Eastern,KEN_Mandera
+KEN_North Eastern,KEN_Wajir
+KEN_Nyanza,KEN_Homa Bay
+KEN_Nyanza,KEN_Kisii
+KEN_Nyanza,KEN_Kisumu
+KEN_Nyanza,KEN_Migori
+KEN_Nyanza,KEN_Nyamira
+KEN_Nyanza,KEN_Siaya
+KEN_Rift Valley,KEN_Baringo
+KEN_Rift Valley,KEN_Bomet
+KEN_Rift Valley,KEN_Elgeyo-Marakwet
+KEN_Rift Valley,KEN_Kajiado
+KEN_Rift Valley,KEN_Kericho
+KEN_Rift Valley,KEN_Laikipia
+KEN_Rift Valley,KEN_Nakuru
+KEN_Rift Valley,KEN_Nandi
+KEN_Rift Valley,KEN_Narok
+KEN_Rift Valley,KEN_Samburu
+KEN_Rift Valley,KEN_Trans Nzoia
+KEN_Rift Valley,KEN_Turkana
+KEN_Rift Valley,KEN_Uasin Gishu
+KEN_Rift Valley,KEN_West Pokot
+KEN_Western,KEN_Bungoma
+KEN_Western,KEN_Busia
+KEN_Western,KEN_Kakamega
+KEN_Western,KEN_Vihiga
+MDG_Alaotra Mangoro,MDG_Alaotra-Mangoro
+MDG_Atsimo Atsinanana,MDG_Atsimo-Atsinanana
+RWA_Kigali City/Umujyi wa Kigali,RWA_City of Kigali
+RWA_North/Amajyaruguru,RWA_Northern Province
+RWA_South/Amajyepfo,RWA_Southern Province
+RWA_West/Iburengerazuba,RWA_Western Province
+SDN_Al Jazeera,SDN_Gezira
+SDN_Gadaref,SDN_Gedaref
+SDN_Nile,SDN_River Nile
+SDN_Northern Darfur,SDN_North Darfur
+SDN_Northern Kordofan,SDN_North Kordofan
+SDN_Southern Darfur,SDN_South Darfur
+SDN_Southern Kordofan,SDN_South Kordofan
+SDN_Western Darfur,SDN_West Darfur
+SOM_Hiraan,SOM_Hiiraan
+SOM_Juba Dhexe,SOM_Middle Juba
+SOM_Juba Hoose,SOM_Lower Juba
+SOM_Shabelle Dhexe,SOM_Middle Shebelle
+SOM_Shabelle Hoose,SOM_Lower Shebelle
+SSD_El Buheyrat,SSD_Lakes
+SSD_Northern Bahr El Ghazal,SSD_Northern Bahr el Gha
+SSD_Warab,SSD_Warrap
+SSD_Western Bahr El Ghazal,SSD_Western Bahr el Ghaz
+SYC_Belombre,SYC_Bel Ombre
+SYC_La Digue,SYC_La Digue a
+SYC_Praslin,SYC_Baie Saint
+SYC_Praslin,SYC_Grand'Anse
+TZA_Dar-es-salaam,TZA_Dar es Salaam
+TZA_Kaskazini Unguja,TZA_Zanzibar North
+TZA_Kusini Unguja,TZA_Zanzibar South & Cen
+TZA_Mjini Magharibi,TZA_Zanzibar Urban/West
+UGA_Abim,UGA_Northern Region
+UGA_Adjumani,UGA_Northern Region
+UGA_Agago,UGA_Northern Region
+UGA_Alebtong,UGA_Northern Region
+UGA_Amolatar,UGA_Northern Region
+UGA_Amudat,UGA_Northern Region
+UGA_Amuria,UGA_Eastern Region
+UGA_Amuru,UGA_Northern Region
+UGA_Apac,UGA_Northern Region
+UGA_Arua,UGA_Northern Region
+UGA_Bududa,UGA_Eastern Region
+UGA_Bugiri,UGA_Eastern Region
+UGA_Buhweju,UGA_Western Region
+UGA_Bukedea,UGA_Eastern Region
+UGA_Bukwo,UGA_Eastern Region
+UGA_Bulambuli,UGA_Eastern Region
+UGA_Bundibugyo,UGA_Western Region
+UGA_Busia,UGA_Eastern Region
+UGA_Butaleja,UGA_Eastern Region
+UGA_Buyende,UGA_Eastern Region
+UGA_Dokolo,UGA_Northern Region
+UGA_Gulu,UGA_Northern Region
+UGA_Ibanda,UGA_Western Region
+UGA_Iganga,UGA_Eastern Region
+UGA_Kaabong,UGA_Northern Region
+UGA_Kabale,UGA_Western Region
+UGA_Kabarole,UGA_Western Region
+UGA_Kaberamaido,UGA_Eastern Region
+UGA_Kaliro,UGA_Eastern Region
+UGA_Kampala,UGA_Central Region
+UGA_Kamuli,UGA_Eastern Region
+UGA_Kapchorwa,UGA_Eastern Region
+UGA_Kasese,UGA_Western Region
+UGA_Katakwi,UGA_Eastern Region
+UGA_Kayunga,UGA_Central Region
+UGA_Kibaale,UGA_Western Region
+UGA_Kiboga,UGA_Central Region
+UGA_Kisoro,UGA_Western Region
+UGA_Kitgum,UGA_Northern Region
+UGA_Koboko,UGA_Northern Region
+UGA_Kole,UGA_Northern Region
+UGA_Kotido,UGA_Northern Region
+UGA_Kumi,UGA_Eastern Region
+UGA_Kween,UGA_Eastern Region
+UGA_Lamwo,UGA_Northern Region
+UGA_Lira,UGA_Northern Region
+UGA_Lwengo,UGA_Central Region
+UGA_Manafwa,UGA_Eastern Region
+UGA_Maracha,UGA_Northern Region
+UGA_Masaka,UGA_Central Region
+UGA_Mbale,UGA_Eastern Region
+UGA_Mbarara,UGA_Western Region
+UGA_Mitooma,UGA_Western Region
+UGA_Moroto,UGA_Northern Region
+UGA_Moyo,UGA_Northern Region
+UGA_Mpigi,UGA_Central Region
+UGA_Mukono,UGA_Central Region
+UGA_Nakapiripirit,UGA_Northern Region
+UGA_Napak,UGA_Northern Region
+UGA_Nebbi,UGA_Northern Region
+UGA_Ntoroko,UGA_Western Region
+UGA_Nwoya,UGA_Northern Region
+UGA_Otuke,UGA_Northern Region
+UGA_Oyam,UGA_Northern Region
+UGA_Pader,UGA_Northern Region
+UGA_Rukungiri,UGA_Western Region
+UGA_Sironko,UGA_Eastern Region
+UGA_Soroti,UGA_Eastern Region
+UGA_Yumbe,UGA_Northern Region
+UGA_Zombo,UGA_Northern Region

@@ -34,6 +34,7 @@ class SourcesConfig(BaseModel):
     ecmwf_s3_no_sign: bool = True
     gpm_imerg_path: str = "data/gpm_imerg/"
     emdat_path: str = "data/emdat/east_africa_floods.csv"
+    emdat_pcode_aliases_path: str = "data/emdat/pcode_aliases.csv"
     admin_boundaries_path: str = "data/admin_boundaries/east_africa_admin1.gpkg"
 
 

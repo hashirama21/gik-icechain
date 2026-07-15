@@ -84,6 +84,7 @@ class EMDATFloodRecord:
     deaths: int | None
     affected: int | None
     disaster_type: str = "Flood"
+    iso3: str = ""
 
 
 def load_emdat_east_africa(csv_path: Path, start_date: str | None = None) -> list[EMDATFloodRecord]:
@@ -114,6 +115,7 @@ def load_emdat_east_africa(csv_path: Path, start_date: str | None = None) -> lis
             end_date=pd.Timestamp(row.get("End Date", row["Start Date"])),
             deaths=int(row["Total Deaths"]) if pd.notna(row.get("Total Deaths")) else None,
             affected=int(row["No. Affected"]) if pd.notna(row.get("No. Affected")) else None,
+            iso3=_str_or_empty(row.get("ISO")),
         )
         for _, row in df.iterrows()
     ]
@@ -355,6 +357,7 @@ def build_training_dataset_from_gpm(
     signal_threshold: float = 0.15,
     graded_labels: bool = True,
     seed: int = 42,
+    pcode_aliases: dict[str, tuple[str, ...]] | None = None,
 ) -> pd.DataFrame:
     """Build a labeled training set from observed GPM, decoupled from C2.
 
@@ -366,20 +369,25 @@ def build_training_dataset_from_gpm(
     so positives scale from a handful to hundreds.
 
     Args:
-        admin_gdf: Admin-1 GeoDataFrame with an ``admin1_pcode`` column.
-        gpm_dir:   Directory of GPM IMERG daily files (data-complete window).
-        crma:      Built CRMAModel - supplies thresholds and O(1) inference.
+        admin_gdf:     Admin-1 GeoDataFrame with an ``admin1_pcode`` column.
+        gpm_dir:       Directory of GPM IMERG daily files (data-complete window).
+        crma:          Built CRMAModel - supplies thresholds and O(1) inference.
+        pcode_aliases: EM-DAT code -> boundary pcode targets (see
+                       :func:`gik_icechain.risk.emdat_matching.load_pcode_aliases`);
+                       reconciles historical/local-language attributions so
+                       those events feed the positives instead of being dropped.
     """
     import math
     from datetime import timedelta
 
     from gik_icechain.risk.aggregator import aggregate_to_admin1
     from gik_icechain.risk.dynamic_bn import init_state, step
+    from gik_icechain.risk.emdat_matching import resolve_records
     from gik_icechain.risk.gpm_loader import load_gpm_daily
 
     thresholds = crma.evidence_thresholds(rp)
     valid_pcodes = set(admin_gdf["admin1_pcode"].astype(str))
-    pos_records = [r for r in emdat_records if r.admin1_pcode in valid_pcodes]
+    pos_records = resolve_records(emdat_records, valid_pcodes, pcode_aliases or {})
     pcodes = sorted({r.admin1_pcode for r in pos_records})
     if not pcodes:
         log.warning("no_emdat_pcode_in_admin", n_records=len(emdat_records))

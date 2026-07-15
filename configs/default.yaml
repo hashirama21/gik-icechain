@@ -8,6 +8,7 @@ sources:
   ecmwf_s3_no_sign: true
   gpm_imerg_path: "data/gpm_imerg/"
   emdat_path: "data/emdat/east_africa_floods.csv"
+  emdat_pcode_aliases_path: "data/emdat/pcode_aliases.csv"
   admin_boundaries_path: "data/admin_boundaries/east_africa_admin1.geojson"
 
 outputs:
@@ -17,8 +18,6 @@ outputs:
   exceedance_store_uri: "s3://gik-icechain/exceedance-zarr"
   exceedance_icechunk_uri: ""
   risk_icechunk_uri: ""
-  # Risk outputs go to S3 by default (prod: no local disk). Override per run with
-  # `--output <local dir>` or set a local path here for dev.
   risk_output_dir: "s3://gik-icechain/admin1_risk"
   dashboard_data_dir: "dashboard/web/public/data/"
 
@@ -56,8 +55,6 @@ component2:
   step_resolution_h: 6
   max_forecast_h: null
   step_buffer: 1
-  # When a window is finer than the step resolution (e.g. 3h on 6-hourly data):
-  # true = skip it with a warning, false = raise an error and abort the day.
   skip_subresolution_windows: true
 
   windows_h: [3, 6, 12, 24, 48, 72, 168]

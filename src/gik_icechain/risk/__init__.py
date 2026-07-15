@@ -24,6 +24,13 @@ from gik_icechain.risk.dynamic_bn import (
     run_temporal_sequence,
     step,
 )
+from gik_icechain.risk.emdat_matching import (
+    FloodEventIndex,
+    build_flood_event_index,
+    load_pcode_aliases,
+    resolve_pcodes,
+    resolve_records,
+)
 from gik_icechain.risk.geojson_writer import (
     build_score,
     export_eahw_format,
@@ -44,7 +51,9 @@ __all__ = [
     "CRMAModel",
     "DynamicBNState",
     "EMDATFloodRecord",
+    "FloodEventIndex",
     "aggregate_to_admin1",
+    "build_flood_event_index",
     "build_score",
     "build_training_dataset",
     "build_training_dataset_from_gpm",
@@ -56,8 +65,11 @@ __all__ = [
     "load_emdat_east_africa",
     "load_gpm_daily",
     "load_gpm_range",
+    "load_pcode_aliases",
     "refine_cpts_hierarchical",
     "refine_cpts_with_emdat",
+    "resolve_pcodes",
+    "resolve_records",
     "run_risk_batch",
     "run_temporal_sequence",
     "step",

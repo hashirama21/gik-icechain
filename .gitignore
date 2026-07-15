@@ -15,6 +15,7 @@ data/*
 !data/emdat/
 !data/emdat/east_africa_floods.csv
 !data/emdat/pcode_mapping.csv
+!data/emdat/pcode_aliases.csv
 !data/river_basins/
 !data/river_basins/upstream_admin1.yaml
 .DS_Store
