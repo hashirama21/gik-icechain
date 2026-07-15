@@ -47,10 +47,16 @@ GIK-IceChain v2.0 solves this in three components:
 
 ## Architecture
 
+<details open>
+<summary><b>Pipeline diagram</b> — horizontal flow, scroll sideways</summary>
+
+<div style="overflow-x:auto;">
+
 ```mermaid
-flowchart TD
+flowchart LR
     %% ==================== SOURCES ====================
     subgraph Sources["DATA SOURCES"]
+        direction TB
         S3[AWS S3<br/><b>s3://ecmwf-forecasts</b><br/>~1 PB GRIB2]
         HF[HuggingFace<br/><b>E4DRR/gik-ecmwf-par</b><br/>150 246 Parquet files]
 
@@ -135,6 +141,9 @@ flowchart TD
     class C2,C3 process
     class Dashboard final
 ```
+
+</div>
+</details>
 
 ## Components
 
