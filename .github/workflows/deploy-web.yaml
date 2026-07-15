@@ -29,7 +29,7 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
   AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
-  AWS_DEFAULT_REGION: eu-west-1
+  AWS_DEFAULT_REGION: eu-north-1
 
 jobs:
   build:
