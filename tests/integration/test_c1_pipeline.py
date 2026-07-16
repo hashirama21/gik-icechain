@@ -207,6 +207,10 @@ class TestIceChunkCommit:
             def virtualize(self) -> _FakeVirtual:
                 return self
 
+            @property
+            def sizes(self):
+                return self._ds.sizes
+
             def to_icechunk(self, store, group: str) -> None:
                 self._ds.to_zarr(store, group=group, mode="w")
 

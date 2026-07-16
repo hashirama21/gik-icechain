@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from datetime import date
 
 import numpy as np
@@ -235,7 +236,7 @@ class TestRiskBatch:
         )
 
         assert len(written) == 1
-        data = json.loads(written[0].read_text())
+        data = json.loads(Path(written[0]).read_text())
         assert "date" in data
         units = data["units"]
         assert len(units) == 2  # two fake admin-1 units
@@ -264,7 +265,7 @@ class TestRiskBatch:
         )
 
         assert len(written) == 1
-        units = json.loads(written[0].read_text())["units"]
+        units = json.loads(Path(written[0]).read_text())["units"]
         prob_keys = ("p_green", "p_yellow", "p_orange", "p_red")
 
         any_differs = False
@@ -297,7 +298,7 @@ class TestRiskBatch:
             rp_signal=5,
             rp_signal_options=[5, 20],
         )
-        units = json.loads(written[0].read_text())["units"]
+        units = json.loads(Path(written[0]).read_text())["units"]
         spreads = []
         for u in units.values():
             if u["risk_label"] == "No_Data":
