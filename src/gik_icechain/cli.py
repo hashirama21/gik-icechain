@@ -305,26 +305,45 @@ def _process_exceedance_day(args: dict) -> dict:
     day = date.fromisoformat(date_str)
 
     try:
-        store_obj = IceChainStore(
-            args["store_uri"],
-            region=args["region"],
-            endpoint_url=args.get("endpoint_url"),
-            anonymous=args.get("store_anonymous", False),
-            manifest_preload=args.get("store_manifest_preload", True),
-        )
         layout = args.get("source_layout", "per_date")
-        if layout == "era_groups":
-            store_obj.open()
-        else:
-            store_obj.create_or_open()
-        session = store_obj.readonly_session()
+        session: Any = None
+        if layout != "ecmwf_direct":
+            store_obj = IceChainStore(
+                args["store_uri"],
+                region=args["region"],
+                endpoint_url=args.get("endpoint_url"),
+                anonymous=args.get("store_anonymous", False),
+                manifest_preload=args.get("store_manifest_preload", True),
+            )
+            if layout == "era_groups":
+                store_obj.open()
+            else:
+                store_obj.create_or_open()
+            session = store_obj.readonly_session()
 
         manifest_aware_enabled = args.get("manifest_aware_enabled", False)
         compute_vars = args.get("compute_variables", ["tp"])
         bbox = args.get("bbox")
         max_steps = args.get("max_steps")
 
-        if layout == "era_groups":
+        if layout == "ecmwf_direct":
+            from gik_icechain.exceedance.ecmwf_direct import load_day_ecmwf_direct
+
+            coalescing = args.get("coalescing_enabled", True)
+            day_ds = load_day_ecmwf_direct(
+                date_str,
+                variables=compute_vars,
+                max_step_h=args.get("max_step_h", 168),
+                step_resolution_h=args.get("step_resolution_h", 6),
+                step_buffer=args.get("step_buffer", 1),
+                bbox=bbox,
+                max_gap_bytes=(args.get("max_gap_bytes", 65536) if coalescing else 0),
+                max_merged_bytes=(args.get("max_merged_bytes", 5242880) if coalescing else 0),
+                fetch_workers=args.get("fetch_workers", 8),
+                min_members=args.get("min_members", 10),
+                s3_region=args.get("s3_region", "eu-central-1"),
+            )
+        elif layout == "era_groups":
             era_group = args.get("era_group")
             if not era_group:
                 return {
@@ -565,22 +584,36 @@ def _run_exceedance(
         store_uri = src.uri
     store_region = src.region or cfg.outputs.icechunk_store_region
     store_endpoint = src.endpoint_url or cfg.outputs.endpoint_url or None
-    store_obj = IceChainStore(
-        store_uri,
-        region=store_region,
-        endpoint_url=store_endpoint,
-        anonymous=src.anonymous,
-        manifest_preload=src.manifest_preload,
-    )
     era_by_date: dict[str, str] = {}
-    if src.layout == "era_groups":
+    if src.layout == "ecmwf_direct":
+        if not (start and end):
+            log.error("ecmwf_direct_requires_date_range", start=start, end=end)
+            return 0
+        committed_dates = [
+            (start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)
+        ]
+    elif src.layout == "era_groups":
         from gik_icechain.exceedance.era_store import list_era_dates
 
+        store_obj = IceChainStore(
+            store_uri,
+            region=store_region,
+            endpoint_url=store_endpoint,
+            anonymous=src.anonymous,
+            manifest_preload=src.manifest_preload,
+        )
         store_obj.open()
         eras = [(e.group, e.start, e.end) for e in src.era_groups]
         era_by_date = list_era_dates(store_obj.readonly_session().store, eras)
         committed_dates = sorted(era_by_date)
     else:
+        store_obj = IceChainStore(
+            store_uri,
+            region=store_region,
+            endpoint_url=store_endpoint,
+            anonymous=src.anonymous,
+            manifest_preload=src.manifest_preload,
+        )
         store_obj.create_or_open()
         snapshots = store_obj.list_snapshots()
         committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})

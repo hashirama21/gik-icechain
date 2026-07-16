@@ -1,0 +1,14 @@
+# Real-time C2 source: the day's .index files on s3://ecmwf-forecasts.
+# No store, no catalog - works for any published forecast, including
+# yesterday's and today's 00z. Outputs inherit configs/default.yaml.
+#
+# Usage:
+#   python -m gik_icechain exceedance --config configs/realtime.yaml \
+#     --store "" --output s3://gik-icechain/exceedance-zarr \
+#     --start 2026-07-15 --end 2026-07-15
+
+component2:
+  manifest_aware:
+    fetch_workers: 16
+  source_store:
+    layout: "ecmwf_direct"
