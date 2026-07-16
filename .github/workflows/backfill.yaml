@@ -1,0 +1,185 @@
+name: Archive Backfill (parallel)
+
+# One-shot parallel ingestion of the past archive, straight from the .index
+# files on s3://ecmwf-forecasts (ecmwf_direct source, both eras).
+#
+#   plan -> C2 shards (matrix, 20 concurrent) -> merge -> C3 (matrix, spin-up)
+#
+# Each C2 job writes an isolated shard zarr (no write contention); the merge
+# job appends them into the per-era stores and skips dates already present,
+# so reruns are idempotent. C3 is chunked with a 14-day spin-up for the
+# dynamic BN soil-memory state; spin-up dates are computed but not uploaded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First forecast date (YYYY-MM-DD)"
+        required: true
+        default: "2023-01-18"
+      end_date:
+        description: "Last forecast date (YYYY-MM-DD)"
+        required: true
+      c2_chunk_days:
+        description: "Days per C2 shard job"
+        required: false
+        default: "25"
+      run_c3:
+        description: "Run C3 risk after the merge"
+        type: boolean
+        default: true
+      keep_shards:
+        description: "Keep shard zarrs after a successful merge"
+        type: boolean
+        default: false
+
+concurrency:
+  group: backfill
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: eu-north-1
+  GIK_BUCKET: ${{ secrets.GIK_BUCKET || 'gik-icechain' }}
+  SHARD_PREFIX: s3://${{ secrets.GIK_BUCKET || 'gik-icechain' }}/backfill-shards
+  STORE_0P25: ${{ secrets.GIK_EXCEEDANCE_STORE_URI || 's3://gik-icechain/exceedance-zarr' }}
+  STORE_0P4: s3://${{ secrets.GIK_BUCKET || 'gik-icechain' }}/exceedance-zarr-0p4
+
+jobs:
+
+  plan:
+    name: "Plan chunks"
+    runs-on: ubuntu-latest
+    outputs:
+      c2: ${{ steps.plan.outputs.c2 }}
+      c3: ${{ steps.plan.outputs.c3 }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: plan
+        run: |
+          PLAN=$(python scripts/plan_backfill.py \
+            --start "${{ inputs.start_date }}" --end "${{ inputs.end_date }}" \
+            --c2-chunk-days "${{ inputs.c2_chunk_days }}")
+          echo "c2=$(echo "$PLAN" | python -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["c2"]))')" >> "$GITHUB_OUTPUT"
+          echo "c3=$(echo "$PLAN" | python -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["c3"]))')" >> "$GITHUB_OUTPUT"
+          echo "$PLAN" | python -m json.tool
+
+  c2-shards:
+    name: "C2 ${{ matrix.chunk.start }}..${{ matrix.chunk.end }}"
+    runs-on: ubuntu-latest
+    needs: plan
+    environment: production
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        chunk: ${{ fromJson(needs.plan.outputs.c2) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: cloud
+      - name: Install eccodes + ENSO/IOD index + GEV thresholds
+        run: |
+          sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
+          python scripts/tools.py download --component enso_iod
+          python scripts/tools.py download-thresholds
+      - env:
+          ECCODES_PYTHON_USE_FINDLIBS: "1"
+        run: |
+          gik-icechain exceedance \
+            --config configs/realtime.yaml \
+            --store  "unused-in-ecmwf-direct-mode" \
+            --output "$SHARD_PREFIX/${{ matrix.chunk.id }}.zarr" \
+            --thresholds data/cmorph_thresholds/ \
+            --workers 2 \
+            --start "${{ matrix.chunk.start }}" \
+            --end   "${{ matrix.chunk.end }}"
+
+  merge:
+    name: "Merge shards into per-era stores"
+    runs-on: ubuntu-latest
+    needs: c2-shards
+    environment: production
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: cloud
+      - run: |
+          python scripts/merge_exceedance_shards.py \
+            --shards "$SHARD_PREFIX/" \
+            --out-0p25 "$STORE_0P25" \
+            --out-0p4  "$STORE_0P4"
+      - name: Delete shards
+        if: ${{ !inputs.keep_shards }}
+        run: aws s3 rm --recursive --only-show-errors "$SHARD_PREFIX/"
+
+  c3-risk:
+    name: "C3 ${{ matrix.chunk.start }}..${{ matrix.chunk.end }}"
+    runs-on: ubuntu-latest
+    needs: [plan, merge]
+    if: ${{ inputs.run_c3 }}
+    environment: production
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        chunk: ${{ fromJson(needs.plan.outputs.c3) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: cloud
+      - name: Download admin boundaries + observed rainfall
+        run: |
+          python scripts/tools.py download --component admin
+          START=$(python -c "from datetime import date,timedelta;print(date.fromisoformat('${{ matrix.chunk.spinup_start }}')-timedelta(14))")
+          python scripts/tools.py download-gpm --source chirps \
+            --start "$START" --end "${{ matrix.chunk.end }}"
+      - name: Risk over spin-up + window (local output)
+        run: |
+          STORE="$STORE_0P25"
+          [ "${{ matrix.chunk.era }}" = "0p4" ] && STORE="$STORE_0P4"
+          gik-icechain risk \
+            --exceedance-store "$STORE" \
+            --output results/backfill_risk \
+            --start "${{ matrix.chunk.spinup_start }}" \
+            --end   "${{ matrix.chunk.end }}"
+      - name: Upload window days only (spin-up dates stay local)
+        run: |
+          for f in results/backfill_risk/*_risk_scores.json; do
+            [ -e "$f" ] || continue
+            d=$(basename "$f" | cut -c1-10)
+            if [[ "$d" < "${{ matrix.chunk.start }}" ]]; then continue; fi
+            aws s3 cp --only-show-errors "$f" "s3://$GIK_BUCKET/admin1_risk/"
+          done
+          if [ -e results/backfill_risk/admin1_boundaries.geojson ]; then
+            aws s3 cp --only-show-errors results/backfill_risk/admin1_boundaries.geojson \
+              "s3://$GIK_BUCKET/admin1_risk/"
+          fi
+
+  notify-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [plan, c2-shards, merge, c3-risk]
+    if: failure()
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `[BACKFILL FAILURE] ${{ inputs.start_date }}..${{ inputs.end_date }}`,
+              body:  `**Range**: ${{ inputs.start_date }} to ${{ inputs.end_date }}\n**Run**: ${runUrl}\n\nRe-dispatch with the same range: completed shards and merged dates are skipped (idempotent).`,
+              labels: ['pipeline-failure', 'automated'],
+            });
