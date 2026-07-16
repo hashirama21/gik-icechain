@@ -4,19 +4,19 @@ import StoryMap from "@/components/story/StoryMap";
 <Block>
 <Prose>
 
-# East Africa Flood Risk  19 November 2025
+# East Africa Flood Risk · 19 November 2025
 
 The **GIK-IceChain** pipeline assessed flood risk for all 238 admin-1 units
 across 16 East African countries on this OND (short-rains) date, combining the
 51-member ECMWF IFS ensemble, GPM IMERG observations, and the ICPAC CRMA
-Bayesian Network  at near-zero cost on open data.
+Bayesian Network, at near-zero cost on open data.
 
 Risk is computed from four evidence streams:
 
-- **Forecast hazard**  ensemble exceedance probability vs adaptive GEV thresholds
-- **Observed antecedent**  GPM IMERG daily precipitation
-- **Soil memory**  Antecedent Precipitation Index (API), exponential decay
-- **Spatial coverage**  fraction of grid cells with an active signal
+- **Forecast hazard**: ensemble exceedance probability vs adaptive GEV thresholds
+- **Observed antecedent**: GPM IMERG daily precipitation
+- **Soil memory**: Antecedent Precipitation Index (API), exponential decay
+- **Spatial coverage**: fraction of grid cells with an active signal
 
 </Prose>
 </Block>
@@ -43,7 +43,7 @@ Values above 0.4 (40% of members) map to a **High** forecast-hazard state.
 </Prose>
 <Figure>
   <StoryMap layer="exceedance" date="2025-11-19" windowH={24} rp={5} center={[38, 2]} zoom={5} />
-  <Caption>Ensemble exceedance probability  24 h window, 5-year return period.</Caption>
+  <Caption>Ensemble exceedance probability: 24 h window, 5-year return period.</Caption>
 </Figure>
 </Block>
 
