@@ -30,18 +30,21 @@ def register_gribberish_codec() -> None:
     """Register the gribberish Zarr v3 codec (idempotent).
 
     The published store's chunks decode through the ``gribberish`` codec;
-    importing ``gribberish.zarr`` registers it.
+    importing ``gribberish.zarr`` registers it. Missing gribberish is only a
+    warning: stores whose arrays use standard codecs still open fine, and
+    zarr raises on the codec name if a gribberish array is actually read.
     """
     global _gribberish_registered
     if _gribberish_registered:
         return
     try:
         import gribberish.zarr  # noqa: F401
-    except ImportError as exc:
-        raise ImportError(
-            "gribberish is required to read an era_groups store: "
-            "pip install 'gik-icechain[published]'"
-        ) from exc
+    except ImportError:
+        log.warning(
+            "gribberish_unavailable",
+            hint="pip install 'gik-icechain[published]' to decode the published store",
+        )
+        return
     _gribberish_registered = True
 
 

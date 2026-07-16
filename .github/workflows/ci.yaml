@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
-          extras: dev
+          extras: "dev,published"
       - run: |
           pytest tests/unit/ -v --tb=short \
             --cov=src/gik_icechain \
@@ -73,7 +73,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
-          extras: "dev,viz"
+          extras: "dev,viz,published"
       - name: Install eccodes system library (GRIB2 decode)
         run: sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
       - name: Download reference data (admin, thresholds, ENSO/IOD)
