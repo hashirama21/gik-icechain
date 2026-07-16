@@ -178,15 +178,17 @@ class EraGroupConfig(BaseModel):
 
 
 class SourceStoreConfig(BaseModel):
-    """Layout of the IceChunk store C2 reads from.
+    """Layout of the forecast source C2 reads from.
 
     ``per_date`` is the GIK C1 layout (one group per forecast date, chunk
     coords ``(member, step)``). ``era_groups`` is the published E4DRR
     full-archive layout (one group per IFS schema era with a ``time``
-    dimension, chunk coords ``(time, number, step)``).
+    dimension, chunk coords ``(time, number, step)``). ``ecmwf_direct``
+    reads byte ranges straight from the day's ``.index`` files on
+    ``s3://ecmwf-forecasts`` - real-time, no store or catalog involved.
     """
 
-    layout: Literal["per_date", "era_groups"] = "per_date"
+    layout: Literal["per_date", "era_groups", "ecmwf_direct"] = "per_date"
     # When set (era_groups only), C2 reads this store instead of the URI
     # passed on the command line / by run-all.
     uri: str | None = None
