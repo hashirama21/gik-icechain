@@ -1,0 +1,31 @@
+# Published E4DRR full-archive IceChunk store (source.coop) as the C2 source.
+# Covers 2023-01-18 -> present in one group per IFS schema era; anonymous read.
+#
+# Usage:
+#   python -m gik_icechain exceedance \
+#     --store s3://e4drr-project/forecasts/ecmwf_ifs_ens_aws_s3_icechunk_vd \
+#     --config configs/published_store.yaml \
+#     --output <exceedance-output-uri> --start 2023-06-15 --end 2023-06-15
+
+component2:
+  source_store:
+    layout: "era_groups"
+    anonymous: true
+    # source.coop returns sporadic HTTP 500s under the default parallel
+    # manifest prefetch; lazy loading keeps the open robust.
+    manifest_preload: false
+    region: "us-east-1"
+    endpoint_url: "https://data.source.coop"
+    era_groups:
+      - group: "0p4/00z"
+        start: "2023-01-18"
+        end: "2024-02-28"
+      - group: "49r1/00z"
+        start: "2024-02-29"
+        end: "2026-05-12"
+      - group: "50r1/00z"
+        start: "2026-05-13"
+    variable_aliases:
+      "2t": "t2m"
+      "10u": "u10"
+      "10v": "v10"
