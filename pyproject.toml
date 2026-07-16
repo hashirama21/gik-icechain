@@ -134,8 +134,13 @@ cloud = [
   "boto3>=1.34",
 ]
 
+# Reading the published era-groups store (gribberish Zarr v3 codec)
+published = [
+  "gribberish>=1.4",
+]
+
 full = [
-  "gik-icechain[viz,dev,cloud]",
+  "gik-icechain[viz,dev,cloud,published]",
 ]
 
 [project.scripts]
