@@ -80,23 +80,18 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: cloud
-      - name: Install eccodes + ENSO/IOD index (C2 prerequisites)
+      - name: Install eccodes + ENSO/IOD index + GEV thresholds (C2 prerequisites)
         run: |
           sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
           python scripts/tools.py download --component enso_iod
-      - name: Stage GEV thresholds in the store if absent
-        run: |
-          if ! aws s3 ls "s3://$GIK_BUCKET/cmorph_thresholds/" | grep -q .; then
-            python scripts/tools.py download-thresholds
-            python scripts/tools.py upload-thresholds
-          fi
+          python scripts/tools.py download-thresholds
       - env:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
         run: |
           gik-icechain exceedance \
             --store  "$GIK_ICECHUNK_STORE_URI" \
             --output "$GIK_EXCEEDANCE_STORE_URI" \
-            --thresholds "s3://$GIK_BUCKET/cmorph_thresholds/" \
+            --thresholds data/cmorph_thresholds/ \
             --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
             --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
 
