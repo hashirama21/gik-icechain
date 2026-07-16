@@ -61,12 +61,14 @@ class IceChainStore:
         manifest_splitting: bool = True,
         manifest_split_dim: str = "step",
         manifest_split_size: int = 1000,
+        anonymous: bool = False,
+        manifest_preload: bool = True,
     ) -> None:
         """
         Args:
             storage_uri:              S3 URI (s3://bucket/prefix) or local path.
             branch:                   IceChunk branch name.
-            endpoint_url:             Custom S3 endpoint (MinIO/on-prem).
+            endpoint_url:             Custom S3-compatible endpoint.
                                       Falls back to AWS_ENDPOINT_URL env var.
             region:                   AWS region for the S3 bucket.  Falls back to
                                       AWS_REGION / AWS_DEFAULT_REGION environment variables.
@@ -78,6 +80,11 @@ class IceChainStore:
                                       manifest fragment size at scale).
             manifest_split_dim:       Dimension name to split manifests along.
             manifest_split_size:      Max index positions per manifest fragment.
+            anonymous:                Open the store bucket with anonymous S3
+                                      credentials (public read-only stores).
+            manifest_preload:         False disables eager manifest prefetch on
+                                      open (endpoints like source.coop 500 under
+                                      the default parallel prefetch).
         """
         self.storage_uri = storage_uri
         self.branch = branch
@@ -86,6 +93,8 @@ class IceChainStore:
         self._manifest_splitting = manifest_splitting
         self._manifest_split_dim = manifest_split_dim
         self._manifest_split_size = manifest_split_size
+        self._anonymous = anonymous
+        self._manifest_preload = manifest_preload
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
         self._region: str | None = (
@@ -366,7 +375,7 @@ class IceChainStore:
         IceChunk requires explicit authorization per virtual chunk container
         prefix as a security measure.  We use explicit anonymous credentials
         rather than ``None`` (which falls back to env vars that may contain
-        MinIO credentials inappropriate for the ECMWF bucket).
+        store credentials inappropriate for the ECMWF bucket).
         """
         return icechunk.containers_credentials(
             {"s3://ecmwf-forecasts/": icechunk.s3_anonymous_credentials()}
@@ -384,8 +393,8 @@ class IceChainStore:
         that manifest fragments stay bounded as the archive grows (mitigates the
         single-growing-manifest problem from VirtualiZarr #884).
         """
-        # Explicitly set the AWS endpoint so that AWS_ENDPOINT_URL (used for
-        # the MinIO store) is not inherited by the ECMWF virtual-chunk store.
+        # Explicitly set the AWS endpoint so that a custom AWS_ENDPOINT_URL
+        # is not inherited by the ECMWF virtual-chunk store.
         ecmwf_store = icechunk.s3_store(
             region="eu-central-1",
             endpoint_url="https://s3.eu-central-1.amazonaws.com",
@@ -398,8 +407,9 @@ class IceChainStore:
         config = icechunk.RepositoryConfig.default()
         config.set_virtual_chunk_container(container)
 
+        manifest_kwargs: dict[str, Any] = {}
         if self._manifest_splitting:
-            split_cfg = icechunk.ManifestSplittingConfig(
+            manifest_kwargs["splitting"] = icechunk.ManifestSplittingConfig(
                 split_sizes=(
                     (
                         icechunk.ManifestSplitCondition.AnyArray(),
@@ -414,12 +424,19 @@ class IceChainStore:
                     ),
                 )
             )
-            config.manifest = icechunk.ManifestConfig(splitting=split_cfg)
             log.info(
                 "icechunk_manifest_splitting",
                 dim=self._manifest_split_dim,
                 size=self._manifest_split_size,
             )
+        if not self._manifest_preload:
+            manifest_kwargs["preload"] = icechunk.ManifestPreloadConfig(
+                max_total_refs=0,
+                max_arrays_to_scan=0,
+            )
+            log.info("icechunk_manifest_preload_disabled")
+        if manifest_kwargs:
+            config.manifest = icechunk.ManifestConfig(**manifest_kwargs)
         return config
 
     def _build_storage(self) -> Any:
@@ -436,21 +453,25 @@ class IceChainStore:
             kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix}
             if self._region:
                 kwargs["region"] = self._region
-            access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-            session_token = os.environ.get("AWS_SESSION_TOKEN")
-            if access_key and secret_key:
-                kwargs["access_key_id"] = access_key
-                kwargs["secret_access_key"] = secret_key
-                if session_token:
-                    kwargs["session_token"] = session_token
+            if self._anonymous:
+                kwargs["anonymous"] = True
+                kwargs["from_env"] = False
             else:
-                kwargs["from_env"] = True
+                access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+                secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                session_token = os.environ.get("AWS_SESSION_TOKEN")
+                if access_key and secret_key:
+                    kwargs["access_key_id"] = access_key
+                    kwargs["secret_access_key"] = secret_key
+                    if session_token:
+                        kwargs["session_token"] = session_token
+                else:
+                    kwargs["from_env"] = True
             if self._endpoint_url:
                 kwargs["endpoint_url"] = self._endpoint_url
                 kwargs["allow_http"] = True
                 kwargs["force_path_style"] = True
-                log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
+                log.info("icechunk_custom_endpoint", endpoint=self._endpoint_url, bucket=bucket)
             return icechunk.s3_storage(**kwargs)
 
         return icechunk.local_filesystem_storage(self.storage_uri)

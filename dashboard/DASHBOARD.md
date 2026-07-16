@@ -130,6 +130,6 @@ VEDA-UI et TiTiler sont **découplés** (voir section dédiée du design) :
 ## Blocage connu
 
 Run E2E 2025-11-19 : C1 ✅ + C2-compute ✅, échec à la **persistance C2** -
-`latitude 149 ≠ 159` (store MinIO `exceedance-zarr` écrit avec une bbox différente,
+`latitude 149 ≠ 159` (store S3 `exceedance-zarr` écrit avec une bbox différente,
 résidu stale). Correctif : pointer `outputs.exceedance_store_uri` sur un chemin neuf
 ou vider l'ancien store. N'empêche pas la Phase 1 (basée sur `results/` existant).

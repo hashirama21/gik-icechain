@@ -59,6 +59,50 @@ The pipeline is functionally validated end-to-end. Historical flood signal detec
 requires either (a) ECMWF full archive subscription or (b) running C2 within 5 days
 of the forecast initialization date.
 
+> **Superseded (2026-07-16).** The retention/Forbidden finding above no longer
+> holds: anonymous byte-range GETs against `s3://ecmwf-forecasts` succeed for
+> the whole archive, verified on 2023-01-18, 2023-06-15, 2024-04-26 (the exact
+> date that was Forbidden) and 2026-06-02 via the published E4DRR store. See
+> "Published-store runs (2026-07-16)" below.
+
+### Published-store runs (2026-07-16)
+
+> The full 00z corpus is published as an IceChunk virtual dataset on Source
+> Cooperative (`s3://e4drr-project/forecasts/ecmwf_ifs_ens_aws_s3_icechunk_vd`,
+> anonymous read): 1 246 dates, 2023-01-18 → 2026-07-02, in three schema-era
+> groups (`0p4/00z` 401 d, `49r1/00z` 794 d, `50r1/00z` 51 d). C2 consumes it
+> directly via `component2.source_store.layout: era_groups`
+> (`configs/published_store.yaml`) - no C1 run, no gap-fill. The per_date
+> layout (own C1 store) is unchanged.
+
+**Smoke runs - 2023-06-15 (0.4-deg era), both paths, local machine:**
+
+| Path | Duration | Notes |
+|---|---|---|
+| Fallback (gribberish codec) | ~12 min | lazy zarr reads through `xr.open_zarr(group=era)` |
+| Manifest-aware (eccodes) | ~15 min | 1 530 refs → 695 coalesced requests (×51 fewer per file), 1 145 MB fetched |
+
+Output: 7 windows × 6 return periods over East Africa (100×86 at 0.4-deg),
+exceedance_prob ∈ [0, 0.78], ~2.7 % non-zero - plausible June signal.
+Cross-validation of the two independent decode chains: positional
+correlation **0.991**, mean abs diff 2e-4 (residuals = the known half-cell
+alignment difference between the two subsetting implementations + one
+transient S3 GET failure costing 51 chunks on the manifest run).
+
+**Profiling (py-spy + Scalene) - where the wall time goes:**
+
+- Both paths are **network-bound on this machine** (~1.1 GB of GRIB bytes/day
+  at ~1.2 MB/s effective); on an in-region cloud box this collapses to the
+  ~1-2 min/day of the earlier runs.
+- Manifest-aware extraction costs **~6 min/day** on top of the fetch:
+  `array_chunk_iterator` streams the *whole era's* manifest (401 d × 51 × 85
+  ≈ 1.7 M chunk entries for `0p4/00z` tp) per call - Scalene attributes 90 %
+  of it to system (network) wait, ~0 % Python. Per-day calls over N days are
+  O(N²) in manifest streaming: batch runs should extract refs **once per
+  era** and group by date (follow-up).
+- Transient `fetch_file_failed` (1/30 files) suggests adding a retry in
+  `fetch_coalesced_ranges` (follow-up, shared path).
+
 ---
 
 ### 2-day run - 2025-01-01/02

@@ -21,7 +21,7 @@ Decision Support in East Africa using the ECMWF IFS Ensemble**
 
 ECMWF's open IFS ensemble archive on AWS S3 (`s3://ecmwf-forecasts`) holds over
 **1 petabyte** of GRIB2 weather forecast data: 51 ensemble members, 85 forecast steps
-(0-360 h), and more than 1 000 forecast days since May 2023 - all freely available.
+(0-360 h), and ~1 250 forecast days since 18 January 2023 - all freely available.
 Yet this data is almost completely inaccessible to the xarray/Dask ecosystem that
 East African disaster risk managers rely on.
 
@@ -29,8 +29,8 @@ GIK-IceChain v2.0 solves this in three components:
 
 | Component | What it does | Key output |
 |-----------|-------------|-----------|
-| **C1 - Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 000+ days, zero data duplication |
-| **C2 - Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 000 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
+| **C1 - Conversion** | GIK Parquet manifests → VirtualiZarr → IceChunk Zarr v3 virtual store | Single `zarr.open()` access to 1 200+ days, zero data duplication |
+| **C2 - Exceedance** | Retrospective rainfall exceedance probabilities for all ~1 200 days | Multi-dim Zarr: `date × lat × lon × window × return_period` |
 | **C3 - Risk (CRMA)** | Admin-1 daily flood risk using ICPAC's CRMA Bayesian Network | Daily GeoJSON risk layer, integrated in calendar-map storymaps |
 
 ### Key numbers
@@ -39,7 +39,7 @@ GIK-IceChain v2.0 solves this in three components:
 |--------|-------|
 | Archive size | ~1 PB (raw GRIB2) |
 | Virtual store size | ~18.5 GB (metadata only) ≈13 000× smaller than an equivalent full Zarr copy |
-| Days covered | ~1 200 (May 2023 - Aug 2026) |
+| Days covered | 1 246 (2023-01-18 → present, verified 2026-07 against the published store) |
 | Ensemble members | 51 |
 | Accumulation windows | 7 (3 h → 7 days) |
 | Return-period thresholds | 6 (2, 5, 10, 20, 40, 100 years) |
@@ -60,7 +60,7 @@ flowchart LR
         S3[AWS S3<br/><b>s3://ecmwf-forecasts</b><br/>~1 PB GRIB2]
         HF[HuggingFace<br/><b>E4DRR/gik-ecmwf-par</b><br/>150 246 Parquet files]
 
-        S3 ---|"51 members × 85 steps<br/>~1000 days since May 2023"| GRIB[GRIB2 Raw Files]
+        S3 ---|"51 members × 85 steps<br/>~1250 days since Jan 2023"| GRIB[GRIB2 Raw Files]
         HF ---|"Metadata only<br/>18.5 GB"| Parquet[Parquet Files]
     end
 

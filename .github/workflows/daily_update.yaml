@@ -1,14 +1,13 @@
 name: Daily Pipeline Update
 
-# Repo secrets: MINIO_ENDPOINT_URL, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+# Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 # GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
-# Credentials flow as plain AWS_* env vars: aws-actions/configure-aws-credentials
-# validates via STS and rejects MinIO keys. All prerequisites (thresholds,
-# admin boundaries, ENSO/IOD, eccodes, CHIRPS) are staged by the jobs themselves.
+# All prerequisites (thresholds, admin boundaries, ENSO/IOD, eccodes, CHIRPS)
+# are staged by the jobs themselves.
 
 on:
   schedule:
-    - cron: "0 8 * * *"
+    - cron: "20 10 * * *"
   workflow_dispatch:
     inputs:
       target_date:
@@ -18,9 +17,8 @@ on:
 
 env:
   PYTHONIOENCODING: utf-8
-  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: eu-north-1
 
 jobs:

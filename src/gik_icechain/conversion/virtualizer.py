@@ -224,8 +224,8 @@ def _build_ecmwf_registry() -> object:
     """Return an ObjectStoreRegistry for ECMWF GRIB2 byte-range reads.
 
     By default, targets the public AWS S3 bucket (anonymous access).
-    Set GIK_ECMWF_ENDPOINT_URL to redirect to a local MinIO mirror instead,
-    e.g. GIK_ECMWF_ENDPOINT_URL=http://minio.example.com:9000
+    Set GIK_ECMWF_ENDPOINT_URL to redirect to an S3-compatible mirror instead,
+    e.g. GIK_ECMWF_ENDPOINT_URL=http://mirror.example.com:9000
     """
     from obspec_utils.registry import ObjectStoreRegistry
     from obstore.store import S3Store
@@ -237,7 +237,7 @@ def _build_ecmwf_registry() -> object:
             endpoint_url=endpoint_url,
             virtual_hosted_style_request=False,
         )
-        log.info("ecmwf_registry_minio", endpoint=endpoint_url)
+        log.info("ecmwf_registry_custom_endpoint", endpoint=endpoint_url)
     else:
         store = S3Store(_ECMWF_BUCKET, region=_ECMWF_REGION, skip_signature=True)
     return ObjectStoreRegistry({_ECMWF_S3_PREFIX: store})
