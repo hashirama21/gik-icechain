@@ -49,6 +49,14 @@ class TestStepFileUri:
         assert _step_file_uri("2026-07-15", 0, 24, "grib2") == GRIB
         assert _step_file_uri("2026-07-15", 0, 24, "index") == GRIB.replace(".grib2", ".index")
 
+    def test_era_boundary(self):
+        assert "0p4-beta/enfo" in _step_file_uri("2024-02-28", 0, 24, "index")
+        assert "ifs/0p25/enfo" in _step_file_uri("2024-02-29", 0, 24, "index")
+        assert (
+            _step_file_uri("2023-06-15", 0, 24, "grib2")
+            == "s3://ecmwf-forecasts/20230615/00z/0p4-beta/enfo/20230615000000-24h-enfo-ef.grib2"
+        )
+
 
 class TestParseIndexLines:
     def test_perturbed_and_control_members(self):

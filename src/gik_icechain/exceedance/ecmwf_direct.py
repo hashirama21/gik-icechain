@@ -33,11 +33,17 @@ log = structlog.get_logger(__name__)
 # IFS ENS forecast horizon: 3-hourly to 144 h, then 6-hourly to 360 h.
 INDEX_STEP_HOURS = [*range(0, 145, 3), *range(150, 361, 6)]
 
+# The bucket serves 0.4 deg data under 0p4-beta/ before the 2024-02-29
+# schema change, 0.25 deg under ifs/0p25/ from it. Same file naming and
+# .index format in both eras.
+_ERA_0P25_FIRST_DAY = "20240229"
+
 
 def _step_file_uri(date_str: str, run_hour: int, step_h: int, suffix: str) -> str:
     ymd = date_str.replace("-", "")
+    era_dir = "ifs/0p25" if ymd >= _ERA_0P25_FIRST_DAY else "0p4-beta"
     return (
-        f"s3://ecmwf-forecasts/{ymd}/{run_hour:02d}z/ifs/0p25/enfo/"
+        f"s3://ecmwf-forecasts/{ymd}/{run_hour:02d}z/{era_dir}/enfo/"
         f"{ymd}000000-{step_h}h-enfo-ef.{suffix}"
     )
 
