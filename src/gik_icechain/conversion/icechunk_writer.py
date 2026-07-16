@@ -68,7 +68,7 @@ class IceChainStore:
         Args:
             storage_uri:              S3 URI (s3://bucket/prefix) or local path.
             branch:                   IceChunk branch name.
-            endpoint_url:             Custom S3 endpoint (MinIO/on-prem).
+            endpoint_url:             Custom S3-compatible endpoint.
                                       Falls back to AWS_ENDPOINT_URL env var.
             region:                   AWS region for the S3 bucket.  Falls back to
                                       AWS_REGION / AWS_DEFAULT_REGION environment variables.
@@ -375,7 +375,7 @@ class IceChainStore:
         IceChunk requires explicit authorization per virtual chunk container
         prefix as a security measure.  We use explicit anonymous credentials
         rather than ``None`` (which falls back to env vars that may contain
-        MinIO credentials inappropriate for the ECMWF bucket).
+        store credentials inappropriate for the ECMWF bucket).
         """
         return icechunk.containers_credentials(
             {"s3://ecmwf-forecasts/": icechunk.s3_anonymous_credentials()}
@@ -393,8 +393,8 @@ class IceChainStore:
         that manifest fragments stay bounded as the archive grows (mitigates the
         single-growing-manifest problem from VirtualiZarr #884).
         """
-        # Explicitly set the AWS endpoint so that AWS_ENDPOINT_URL (used for
-        # the MinIO store) is not inherited by the ECMWF virtual-chunk store.
+        # Explicitly set the AWS endpoint so that a custom AWS_ENDPOINT_URL
+        # is not inherited by the ECMWF virtual-chunk store.
         ecmwf_store = icechunk.s3_store(
             region="eu-central-1",
             endpoint_url="https://s3.eu-central-1.amazonaws.com",
@@ -471,7 +471,7 @@ class IceChainStore:
                 kwargs["endpoint_url"] = self._endpoint_url
                 kwargs["allow_http"] = True
                 kwargs["force_path_style"] = True
-                log.info("icechunk_minio_endpoint", endpoint=self._endpoint_url, bucket=bucket)
+                log.info("icechunk_custom_endpoint", endpoint=self._endpoint_url, bucket=bucket)
             return icechunk.s3_storage(**kwargs)
 
         return icechunk.local_filesystem_storage(self.storage_uri)

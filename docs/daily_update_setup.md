@@ -98,79 +98,28 @@ see [`deploy.md` §6](deploy.md). `notify-failure` depends on C1, C2, C3.
 
 ---
 
-## 6. MinIO / On-Premises S3 Storage
-
-Switching from AWS S3 to MinIO requires **no code changes** and **no new variable names**.
-You reuse the same 5 secrets with MinIO values and add exactly one extra secret for the
-endpoint URL.
-
-### Complete example - MinIO on `192.168.1.50:9000`
-
-#### Step 1 - Create the buckets once
+## 6. Full local run against AWS S3
 
 ```bash
-# Install MinIO Client: https://min.io/docs/minio/linux/reference/minio-mc.html
-mc alias set gik http://192.168.1.50:9000  123
-
-mc mb gik/gik-icechain-store     # IceChunk virtual store  (→ GIK_ICECHUNK_STORE_URI)
-mc mb gik/gik-exceedance-zarr    # Exceedance Zarr         (→ GIK_EXCEEDANCE_STORE_URI)
-mc mb gik/gik-data               # Thresholds + risk output (→ GIK_BUCKET)
-```
-
-#### Step 2 - GitHub Secrets (same 5 names, MinIO values)
-
-| Secret name | Value for MinIO |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | `` |
-| `AWS_SECRET_ACCESS_KEY` | `123` |
-| `GIK_ICECHUNK_STORE_URI` | `s3://gik-icechain-store` |
-| `GIK_EXCEEDANCE_STORE_URI` | `s3://gik-exceedance-zarr` |
-| `GIK_BUCKET` | `gik-data` |
-
-Add **one extra secret** - the MinIO endpoint:
-
-| Secret name | Value |
-|---|---|
-| `MINIO_ENDPOINT_URL` | `http://192.168.1.50:9000` |
-
-#### Step 3 - `daily_update.yaml` (already configured)
-
-`AWS_ENDPOINT_URL` is declared at the top-level `env:` block and reads from
-`MINIO_ENDPOINT_URL`. When the secret is empty it has no effect (standard AWS).
-When set, `IceChainStore` automatically enables `force_path_style` as required by MinIO.
-
-#### Step 4 - Full local run against MinIO
-
-```bash
-export AWS_ENDPOINT_URL="http://192.168.1.50:9000"
-export AWS_ACCESS_KEY_ID=""
-export AWS_SECRET_ACCESS_KEY="123"
-export AWS_REGION="us-east-1"          # dummy - required by the AWS SDK
+eval "$(python scripts/load_aws_credentials.py)"   # keys from develop_accessKeys.csv (repo root)
 
 # C1 - Ingest
-python -m gik_icechain convert \
-  --start 2024-10-01 --end 2024-10-01 \
-  --output-store  s3://gik-icechain-store \
-  --hf-dataset    E4DRR/gik-ecmwf-par \
-  --output-json   /tmp/result.json
+python -m gik_icechain convert   --start 2024-10-01 --end 2024-10-01   --output-store  s3://gik-icechain/gik-icechain-store   --hf-dataset    E4DRR/gik-ecmwf-par   --output-json   /tmp/result.json
 
 # C2 - Exceedance
-python -m gik_icechain exceedance \
-  --store       s3://gik-icechain-store \
-  --output      s3://gik-exceedance-zarr \
-  --thresholds  s3://gik-data/cmorph_thresholds/ \
-  --start 2024-10-01 --end 2024-10-01
+python -m gik_icechain exceedance   --store       s3://gik-icechain/gik-icechain-store   --output      s3://gik-icechain/exceedance-zarr   --start 2024-10-01 --end 2024-10-01
+
+# C2 from the published full-archive store (2023-01-18 -> present, no C1 needed)
+python -m gik_icechain exceedance   --store "" --config configs/published_store.yaml   --output s3://gik-icechain/exceedance-zarr   --start 2023-06-15 --end 2023-06-15
 
 # C3 - Risk
-python -m gik_icechain risk \
-  --exceedance-store s3://gik-exceedance-zarr \
-  --output           s3://gik-data/admin1_risk/ \
-  --start 2024-10-01 --end 2024-10-01
+python -m gik_icechain risk   --exceedance-store s3://gik-icechain/exceedance-zarr   --output           s3://gik-icechain/admin1_risk/   --start 2024-10-01 --end 2024-10-01
 ```
 
-> **Note:** ECMWF source data (`s3://ecmwf-forecasts`) is a public AWS bucket read
-> directly from AWS regardless of your output storage. Only the pipeline outputs
-> (IceChunk store, exceedance Zarr, risk GeoJSON) go to MinIO.
+> **Note:** ECMWF source data (`s3://ecmwf-forecasts`) and the published E4DRR
+> store (source.coop) are public and read anonymously regardless of your output
+> storage. Only the pipeline outputs (IceChunk store, exceedance Zarr, risk
+> GeoJSON) need credentials.
 
 ---
 

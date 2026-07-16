@@ -1,17 +1,24 @@
-# Published E4DRR full-archive IceChunk store (source.coop) as the C2 source.
-# Covers 2023-01-18 -> present in one group per IFS schema era; anonymous read.
+# Production end-to-end config (C1-C2-C3).
+#
+# C2 reads the published E4DRR full-archive IceChunk store on Source
+# Cooperative (2023-01-18 -> present, one group per IFS schema era, anonymous
+# read). Outputs inherit configs/default.yaml: s3://gik-icechain on AWS
+# eu-north-1. AWS credentials: run `python scripts/load_aws_credentials.py`
+# or export the keys from develop_accessKeys.csv (repo root, gitignored).
 #
 # Usage:
-#   python -m gik_icechain exceedance \
-#     --store s3://e4drr-project/forecasts/ecmwf_ifs_ens_aws_s3_icechunk_vd \
-#     --config configs/published_store.yaml \
-#     --output <exceedance-output-uri> --start 2023-06-15 --end 2023-06-15
+#   python -m gik_icechain run-all --config configs/published_store.yaml \
+#     --start 2023-06-15 --end 2023-06-15 --output results/
+#   python -m gik_icechain exceedance --config configs/published_store.yaml \
+#     --store "" --output s3://gik-icechain/exceedance-zarr \
+#     --start 2023-06-15 --end 2023-06-15
 
 component2:
   manifest_aware:
     fetch_workers: 16
   source_store:
     layout: "era_groups"
+    uri: "s3://e4drr-project/forecasts/ecmwf_ifs_ens_aws_s3_icechunk_vd"
     anonymous: true
     # source.coop returns sporadic HTTP 500s under the default parallel
     # manifest prefetch; lazy loading keeps the open robust.

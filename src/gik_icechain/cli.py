@@ -561,6 +561,8 @@ def _run_exceedance(
     from gik_icechain.exceedance.writer import write_exceedance_store
 
     src = cfg.component2.source_store
+    if src.layout == "era_groups" and src.uri:
+        store_uri = src.uri
     store_region = src.region or cfg.outputs.icechunk_store_region
     store_endpoint = src.endpoint_url or cfg.outputs.endpoint_url or None
     store_obj = IceChainStore(
@@ -822,7 +824,7 @@ def _run_risk(
         hazard_stat=cfg.component3.aggregation.method,
         min_coverage=cfg.component3.aggregation.min_coverage_fraction,
         # Resolve the S3 endpoint from config or the AWS_ENDPOINT_URL env so an
-        # s3:// output (prod) reaches MinIO, not the default AWS endpoint.
+        # s3:// output reaches a custom endpoint when one is configured.
         endpoint_url=cfg.outputs.endpoint_url or os.environ.get("AWS_ENDPOINT_URL") or None,
         emdat_path=emdat_path,
         emdat_aliases_path=emdat_aliases_path,

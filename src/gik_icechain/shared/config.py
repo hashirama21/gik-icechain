@@ -46,7 +46,7 @@ class SourcesConfig(BaseModel):
 class OutputsConfig(BaseModel):
     icechunk_store_uri: str = ""
     icechunk_store_region: str = "eu-west-1"
-    endpoint_url: str = ""  # S3-compatible endpoint (MinIO); empty = default AWS
+    endpoint_url: str = ""  # custom S3-compatible endpoint; empty = default AWS
     exceedance_store_uri: str = ""
     exceedance_icechunk_uri: str = ""
     risk_icechunk_uri: str = ""
@@ -187,6 +187,9 @@ class SourceStoreConfig(BaseModel):
     """
 
     layout: Literal["per_date", "era_groups"] = "per_date"
+    # When set (era_groups only), C2 reads this store instead of the URI
+    # passed on the command line / by run-all.
+    uri: str | None = None
     era_groups: list[EraGroupConfig] = Field(default_factory=list)
     # Canonical pipeline name -> name in the store (e.g. {"2t": "t2m"}).
     variable_aliases: dict[str, str] = Field(default_factory=dict)
