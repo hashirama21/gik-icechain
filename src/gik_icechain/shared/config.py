@@ -10,8 +10,10 @@ Usage:
 
 from __future__ import annotations
 
+import datetime as dt
+import itertools
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -48,8 +50,6 @@ class OutputsConfig(BaseModel):
     exceedance_store_uri: str = ""
     exceedance_icechunk_uri: str = ""
     risk_icechunk_uri: str = ""
-    # S3 by default so C3 writes risk JSON (+ boundaries + checkpoint) straight to
-    # object storage (no local disk in prod). Override with a local dir for dev.
     risk_output_dir: str = "s3://gik-icechain/admin1_risk"
     dashboard_data_dir: str = "dashboard/web/public/data/"
 
@@ -171,6 +171,52 @@ class ManifestAwareConfig(BaseModel):
     min_members: int = Field(default=10, ge=1)
 
 
+class EraGroupConfig(BaseModel):
+    group: str
+    start: dt.date
+    end: dt.date | None = None  # None = open-ended (current era)
+
+
+class SourceStoreConfig(BaseModel):
+    """Layout of the IceChunk store C2 reads from.
+
+    ``per_date`` is the GIK C1 layout (one group per forecast date, chunk
+    coords ``(member, step)``). ``era_groups`` is the published E4DRR
+    full-archive layout (one group per IFS schema era with a ``time``
+    dimension, chunk coords ``(time, number, step)``).
+    """
+
+    layout: Literal["per_date", "era_groups"] = "per_date"
+    era_groups: list[EraGroupConfig] = Field(default_factory=list)
+    # Canonical pipeline name -> name in the store (e.g. {"2t": "t2m"}).
+    variable_aliases: dict[str, str] = Field(default_factory=dict)
+    anonymous: bool = False
+    # source.coop returns sporadic HTTP 500s under the default parallel
+    # manifest prefetch; disabling preload makes the open robust.
+    manifest_preload: bool = True
+    region: str | None = None  # None = outputs.icechunk_store_region
+    endpoint_url: str | None = None  # None = outputs.endpoint_url
+
+    @model_validator(mode="after")
+    def _validate_era_groups(self) -> SourceStoreConfig:
+        if self.layout != "era_groups":
+            return self
+        if not self.era_groups:
+            raise ValueError("layout 'era_groups' requires at least one era_groups entry")
+        eras = sorted(self.era_groups, key=lambda e: e.start)
+        for prev, cur in itertools.pairwise(eras):
+            if prev.end is None:
+                raise ValueError(
+                    f"era group '{prev.group}' has no end date but '{cur.group}' starts after it"
+                )
+            if prev.end >= cur.start:
+                raise ValueError(
+                    f"era groups '{prev.group}' and '{cur.group}' overlap "
+                    f"({prev.end} >= {cur.start})"
+                )
+        return self
+
+
 class ParallelConfig(BaseModel):
     max_workers: int | None = None  # None = auto (os.cpu_count())
     multiprocessing: bool = True
@@ -275,6 +321,9 @@ class Component2Config(BaseModel):
     manifest_aware: ManifestAwareConfig = Field(
         default_factory=ManifestAwareConfig,
     )
+
+    #  Source store layout (per_date = GIK C1, era_groups = published archive)
+    source_store: SourceStoreConfig = Field(default_factory=SourceStoreConfig)
 
     #  Dimension 6: Parallelism
     parallel: ParallelConfig = Field(default_factory=ParallelConfig)
@@ -396,11 +445,6 @@ class SoftEvidenceConfig(BaseModel):
     (Temporal_Persist, Data_Confidence, Soil_Memory) stay one-hot.
     """
 
-    # Default OFF: on the April-2024 validation window (exc=0 misses, no
-    # near-threshold evidence to rescue) soft-binning is net-conservative
-    # (Yellow 105→94, Orange/Red flat). Theoretically sound and σ→0 == hard;
-    # enable + demonstrate on a partial-signal (convective) window before
-    # making it the production default. See docs/ISSUES.md A2 A/B.
     enabled: bool = False
     sigma_forecast: float = 0.05  # exceedance-probability units
     sigma_tail: float = 0.07  # tail-ratio units
@@ -557,8 +601,6 @@ class CRMAModelConfig(BaseModel):
     # exceeds that tier's cost-loss ratio. See CostLossConfig.
     cost_loss: CostLossConfig = Field(default_factory=CostLossConfig)
 
-    # Continuous within-tier severity score (additive; does not change the
-    # label). Restores event hierarchy lost to the discrete Risk_State CPT.
     severity: SeverityGradationConfig = Field(default_factory=SeverityGradationConfig)
 
     @model_validator(mode="after")
