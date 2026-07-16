@@ -164,9 +164,7 @@ class TestParseChunkLocation:
         assert offset == 50
 
     def test_tuple(self):
-        url, offset, length = _parse_chunk_location(
-            ("s3://bucket/key", 10, 20)
-        )
+        url, offset, length = _parse_chunk_location(("s3://bucket/key", 10, 20))
         assert url == "s3://bucket/key"
         assert offset == 10
         assert length == 20
@@ -209,18 +207,17 @@ class TestAssembleDataset:
 
         assert "tp" in ds.data_vars
         assert ds["tp"].dims == (
-            "member", "step", "latitude", "longitude",
+            "member",
+            "step",
+            "latitude",
+            "longitude",
         )
         assert ds.sizes["member"] == 3
         assert ds.sizes["step"] == 4
         assert ds.sizes["latitude"] == nlat
         assert ds.sizes["longitude"] == nlon
-        np.testing.assert_array_equal(
-            ds.coords["step"].values, [0, 6, 12, 18]
-        )
-        np.testing.assert_array_equal(
-            ds.coords["member"].values, [0, 1, 2]
-        )
+        np.testing.assert_array_equal(ds.coords["step"].values, [0, 6, 12, 18])
+        np.testing.assert_array_equal(ds.coords["member"].values, [0, 1, 2])
 
     def test_missing_grids_become_nan(self):
         """Positions without decoded grids should be NaN."""
@@ -267,9 +264,7 @@ class TestAssembleDataset:
 
         assert "tp" in ds.data_vars
         assert "2t" in ds.data_vars
-        assert float(ds["2t"].sel(member=0, step=0).mean()) == pytest.approx(
-            300.0
-        )
+        assert float(ds["2t"].sel(member=0, step=0).mean()) == pytest.approx(300.0)
 
 
 class TestLoadDayManifestAwareValidation:
@@ -283,15 +278,187 @@ class TestLoadDayManifestAwareValidation:
 
         mock_session = MagicMock()
 
-        with patch(
-            "gik_icechain.exceedance.manifest_store"
-            "._extract_virtual_chunk_refs",
-            return_value=[],
-        ), pytest.raises(ValueError, match="No virtual chunk refs"):
+        with (
+            patch(
+                "gik_icechain.exceedance.manifest_store._extract_virtual_chunk_refs",
+                return_value=[],
+            ),
+            pytest.raises(ValueError, match="No virtual chunk refs"),
+        ):
             load_day_manifest_aware(
                 mock_session,
                 "2024-01-01",
                 variables=["tp"],
+                max_step_h=24,
+                step_resolution_h=6,
+                step_buffer=1,
+                bbox=None,
+                min_members=10,
+            )
+
+
+class _AsyncBatchIter:
+    """Minimal async iterator over pre-built array_chunk_iterator batches."""
+
+    def __init__(self, batches):
+        self._batches = list(batches)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._batches:
+            raise StopAsyncIteration
+        return self._batches.pop(0)
+
+
+def _era_batch(rows):
+    """Build one (coords, types, uris, offsets, lengths, extra) batch.
+
+    rows: list of (time, member, step, chunk_type, uri, offset, length).
+    """
+    coords = np.array([[r[0], r[1], r[2], 0, 0] for r in rows], dtype=np.int64)
+    types = np.array([r[3] for r in rows], dtype=np.int8)
+    uris = [r[4] for r in rows]
+    offsets = np.array([r[5] for r in rows], dtype=np.int64)
+    lengths = np.array([r[6] for r in rows], dtype=np.int64)
+    return (coords, types, uris, offsets, lengths, None)
+
+
+class TestExtractVirtualChunkRefsEra:
+    """Tests for _extract_virtual_chunk_refs_era batch filtering."""
+
+    URI = "s3://ecmwf-forecasts/20230615/00z/0p4-beta/enfo/x.grib2"
+
+    def _session(self, batches_by_path):
+        session = MagicMock()
+        session.store.array_chunk_iterator = MagicMock(
+            side_effect=lambda path: _AsyncBatchIter(batches_by_path[path])
+        )
+        return session
+
+    def test_filters_on_time_index_and_max_steps(self):
+        from gik_icechain.exceedance.manifest_store import (
+            _extract_virtual_chunk_refs_era,
+        )
+
+        rows = [
+            (0, 0, 0, 2, self.URI, 0, 100),
+            (1, 0, 0, 2, self.URI, 100, 100),
+            (1, 1, 2, 2, self.URI, 200, 100),
+            (1, 0, 9, 2, self.URI, 300, 100),
+            (2, 0, 0, 2, self.URI, 400, 100),
+        ]
+        session = self._session({"0p4/00z/tp": [_era_batch(rows)]})
+
+        refs = _extract_virtual_chunk_refs_era(
+            session, "0p4/00z", time_idx=1, variables={"tp": "tp"}, max_steps=5
+        )
+
+        assert len(refs) == 2
+        assert {(r.metadata["member_idx"], r.metadata["step_idx"]) for r in refs} == {
+            (0, 0),
+            (1, 2),
+        }
+
+    def test_alias_maps_array_path_and_keeps_canonical_metadata(self):
+        from gik_icechain.exceedance.manifest_store import (
+            _extract_virtual_chunk_refs_era,
+        )
+
+        rows = [(0, 0, 0, 2, self.URI, 0, 100)]
+        session = self._session({"49r1/00z/t2m": [_era_batch(rows)]})
+
+        refs = _extract_virtual_chunk_refs_era(
+            session, "49r1/00z", time_idx=0, variables={"2t": "t2m"}, max_steps=5
+        )
+
+        session.store.array_chunk_iterator.assert_called_once_with("49r1/00z/t2m")
+        assert len(refs) == 1
+        assert refs[0].metadata["variable"] == "2t"
+
+    def test_skips_non_virtual_and_zero_length_chunks(self):
+        from gik_icechain.exceedance.manifest_store import (
+            _extract_virtual_chunk_refs_era,
+        )
+
+        rows = [
+            (0, 0, 0, 1, self.URI, 0, 100),
+            (0, 1, 0, 2, self.URI, 100, 0),
+            (0, 2, 0, 2, self.URI, 200, 100),
+        ]
+        session = self._session({"0p4/00z/tp": [_era_batch(rows)]})
+
+        refs = _extract_virtual_chunk_refs_era(
+            session, "0p4/00z", time_idx=0, variables={"tp": "tp"}, max_steps=5
+        )
+
+        assert len(refs) == 1
+        assert refs[0].metadata["member_idx"] == 2
+
+
+class TestEraTimeIndex:
+    """Tests for _era_time_index against a real zarr group."""
+
+    def _store(self, tmp_path, days):
+        import xarray as xr
+
+        store = str(tmp_path / "store.zarr")
+        times = np.array(days, dtype="datetime64[D]").astype("datetime64[ns]")
+        ds = xr.Dataset(
+            {"tp": (["time"], np.zeros(len(times), dtype="float32"))},
+            coords={"time": times},
+        )
+        ds.to_zarr(store, group="0p4/00z", zarr_format=3, consolidated=False)
+        return store
+
+    def test_resolves_index(self, tmp_path):
+        from types import SimpleNamespace
+
+        from gik_icechain.exceedance.manifest_store import _era_time_index
+
+        store = self._store(tmp_path, ["2023-06-14", "2023-06-15", "2023-06-16"])
+        session = SimpleNamespace(store=store)
+
+        assert _era_time_index(session, "0p4/00z", "2023-06-15") == 1
+
+    def test_missing_date_raises(self, tmp_path):
+        from types import SimpleNamespace
+
+        from gik_icechain.exceedance.manifest_store import _era_time_index
+
+        store = self._store(tmp_path, ["2023-06-14"])
+        session = SimpleNamespace(store=store)
+
+        with pytest.raises(ValueError, match="not found in era group"):
+            _era_time_index(session, "0p4/00z", "2023-06-15")
+
+
+class TestLoadDayManifestAwareEraValidation:
+    def test_no_refs_raises(self):
+        from gik_icechain.exceedance.manifest_store import (
+            load_day_manifest_aware_era,
+        )
+
+        mock_session = MagicMock()
+
+        with (
+            patch(
+                "gik_icechain.exceedance.manifest_store._extract_virtual_chunk_refs_era",
+                return_value=[],
+            ),
+            patch(
+                "gik_icechain.exceedance.manifest_store._era_time_index",
+                return_value=0,
+            ),
+            pytest.raises(ValueError, match="No virtual chunk refs"),
+        ):
+            load_day_manifest_aware_era(
+                mock_session,
+                "0p4/00z",
+                "2023-06-15",
+                variables=["tp"],
+                aliases=None,
                 max_step_h=24,
                 step_resolution_h=6,
                 step_buffer=1,

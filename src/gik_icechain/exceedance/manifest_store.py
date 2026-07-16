@@ -464,6 +464,250 @@ def load_day_manifest_aware(
     return ds
 
 
+def _era_time_index(session: Any, group: str, date_str: str) -> int:
+    """Resolve a forecast date to its index on an era group's ``time`` axis.
+
+    Reads only the ``time`` array (standard codecs), so it works without the
+    gribberish codec the data variables decode through.
+    """
+    import zarr
+    from xarray.coding.times import decode_cf_datetime
+
+    zg = zarr.open_group(session.store, mode="r")
+    arr = zg[f"{group}/time"]
+    raw = np.asarray(arr[:])  # type: ignore[index]
+    units = arr.attrs.get("units")
+    if isinstance(units, str):
+        calendar = arr.attrs.get("calendar", "standard")
+        raw = decode_cf_datetime(raw, units, calendar if isinstance(calendar, str) else None)
+    days = np.asarray(raw).astype("datetime64[D]")
+    idx = np.nonzero(days == np.datetime64(date_str, "D"))[0]
+    if idx.size == 0:
+        raise ValueError(f"date {date_str} not found in era group {group!r}")
+    return int(idx[0])
+
+
+def _extract_virtual_chunk_refs_era(
+    session: Any,
+    group: str,
+    time_idx: int,
+    variables: dict[str, str],
+    max_steps: int,
+) -> list[ByteRange]:
+    """Extract one day's byte-range references from an era-group array.
+
+    Era-group arrays are ``(time, number, step, lat, lon)`` with one chunk
+    per GRIB message, so chunk coords carry ``(time, number, step, 0, 0)``.
+    Batches are filtered vectorised on ``time == time_idx`` - the iterator
+    streams the whole era, but non-matching rows cost one numpy mask.
+
+    Args:
+        session:   An IceChunk readonly session.
+        group:     Era group name (e.g. ``"0p4/00z"``).
+        time_idx:  Index of the forecast date on the group's time axis.
+        variables: Canonical name -> store name (e.g. ``{"2t": "t2m"}``).
+        max_steps: Maximum number of forecast steps to include.
+
+    Returns:
+        List of :class:`ByteRange` with canonical variable names in metadata.
+    """
+    import asyncio
+
+    ic_store = session.store
+    refs: list[ByteRange] = []
+
+    async def _collect() -> None:
+        for canonical, store_name in variables.items():
+            array_path = f"{group}/{store_name}"
+            try:
+                it = ic_store.array_chunk_iterator(array_path)
+                async for batch in it:
+                    coords_arr = np.asarray(batch[0])
+                    if coords_arr.ndim != 2 or coords_arr.shape[1] < 3:
+                        continue
+                    types_arr = np.asarray(batch[1])
+                    uris, offsets, lengths = batch[2], batch[3], batch[4]
+                    mask = (
+                        (types_arr == _VIRTUAL_CHUNK_TYPE)
+                        & (coords_arr[:, 0] == time_idx)
+                        & (coords_arr[:, 2] < max_steps)
+                    )
+                    for i in np.nonzero(mask)[0]:
+                        uri = uris[i]
+                        length = int(lengths[i])
+                        if not uri or length == 0:
+                            continue
+                        refs.append(
+                            ByteRange(
+                                uri=uri,
+                                offset=int(offsets[i]),
+                                length=length,
+                                metadata={
+                                    "member_idx": int(coords_arr[i, 1]),
+                                    "step_idx": int(coords_arr[i, 2]),
+                                    "variable": canonical,
+                                },
+                            )
+                        )
+            except Exception as exc:
+                log.warning(
+                    "array_chunk_iterator_failed",
+                    array_path=array_path,
+                    error=str(exc)[:120],
+                )
+
+    try:
+        asyncio.run(_collect())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_collect())
+        finally:
+            loop.close()
+
+    log.info(
+        "virtual_chunk_refs_extracted_era",
+        group=group,
+        time_idx=time_idx,
+        n_refs=len(refs),
+        variables=list(variables),
+        max_steps=max_steps,
+    )
+    return refs
+
+
+def load_day_manifest_aware_era(
+    session: Any,
+    group: str,
+    date_str: str,
+    variables: list[str],
+    aliases: dict[str, str] | None,
+    max_step_h: int,
+    step_resolution_h: int,
+    step_buffer: int,
+    bbox: tuple[float, float, float, float] | None,
+    *,
+    max_gap_bytes: int = 65_536,
+    max_merged_bytes: int = 5_242_880,
+    fetch_workers: int = 8,
+    min_members: int = 10,
+    s3_region: str = "eu-central-1",
+) -> xr.Dataset:
+    """Load one forecast day from an era-group store via the manifest path.
+
+    Same pipeline as :func:`load_day_manifest_aware` (coalesce -> parallel S3
+    fetch -> eccodes decode -> assemble), addressing the day through its era
+    group and ``time`` index instead of a per-date group. The gribberish
+    codec is not involved: raw GRIB bytes decode through eccodes.
+
+    Args:
+        session:   IceChunk readonly session on the published store.
+        group:     Era group name covering *date_str*.
+        date_str:  Forecast date, ISO format.
+        variables: Canonical variable names (e.g. ``["tp"]``).
+        aliases:   Canonical name -> store name (e.g. ``{"2t": "t2m"}``).
+        (remaining arguments as in :func:`load_day_manifest_aware`)
+
+    Returns:
+        Concrete xr.Dataset with dims ``(member, step, latitude, longitude)``
+        and canonical variable names.
+    """
+    max_steps = (max_step_h // step_resolution_h) + step_buffer + 1
+    time_idx = _era_time_index(session, group, date_str)
+    store_names = {v: (aliases or {}).get(v, v) for v in variables}
+
+    byte_ranges = _extract_virtual_chunk_refs_era(session, group, time_idx, store_names, max_steps)
+    if not byte_ranges:
+        raise ValueError(f"No virtual chunk refs found for {date_str} in group {group!r}")
+
+    coalesced = coalesce_byte_ranges(
+        byte_ranges,
+        max_gap_bytes=max_gap_bytes,
+        max_merged_bytes=max_merged_bytes,
+    )
+
+    raw_data = fetch_coalesced_ranges(
+        coalesced,
+        max_workers=fetch_workers,
+        s3_region=s3_region,
+    )
+
+    decoded: dict[tuple, np.ndarray] = {}
+    for key in list(raw_data.keys()):
+        member_idx, step_idx, var = key
+        data = raw_data.pop(key)
+        grid = _decode_grib_message(
+            data,
+            uri=f"{group}/{var}",
+            offset=0,
+            member=member_idx if member_idx is not None else -1,
+            step=step_idx if step_idx is not None else -1,
+            bbox=bbox,
+        )
+        if grid is not None:
+            decoded[key] = grid
+
+    if not decoded:
+        raise ValueError(f"All GRIB2 decodes failed for {date_str}")
+
+    unique_members = sorted({k[0] for k in decoded})
+    if len(unique_members) < min_members:
+        raise ValueError(
+            f"Only {len(unique_members)} members decoded for {date_str}, "
+            f"minimum required: {min_members}"
+        )
+
+    step_hours = _read_step_hours_era(session, group, max_steps, step_resolution_h)
+
+    native_shape = shape_for_uri(byte_ranges[0].uri)
+    log.info(
+        "manifest_aware_era_load_complete",
+        date=date_str,
+        group=group,
+        n_members=len(unique_members),
+        n_decoded=len(decoded),
+        n_coalesced_requests=len(coalesced),
+        source_grid_deg=grid_deg(native_shape[0]) if native_shape else None,
+    )
+
+    ds = _assemble_dataset(
+        decoded,
+        variables,
+        unique_members,
+        max_steps,
+        step_hours,
+        bbox,
+    )
+    if native_shape is not None:
+        ds.attrs["source_grid_deg"] = grid_deg(native_shape[0])
+    return ds
+
+
+def _read_step_hours_era(
+    session: Any,
+    group: str,
+    max_steps: int,
+    step_resolution_h: int,
+) -> np.ndarray:
+    """Read the era group's ``step`` coordinate as integer forecast hours."""
+    try:
+        import zarr
+
+        zg = zarr.open_group(session.store, mode="r")
+        full = np.asarray(zg[f"{group}/step"][:])  # type: ignore[index]
+        if np.issubdtype(full.dtype, np.timedelta64):
+            full = full / np.timedelta64(1, "h")
+        return full[:max_steps].astype(np.int32)
+    except Exception as exc:
+        log.warning(
+            "step_coord_read_failed_uniform_fallback",
+            group=group,
+            step_resolution_h=step_resolution_h,
+            error=str(exc)[:120],
+        )
+        return np.arange(max_steps, dtype=np.int32) * step_resolution_h
+
+
 def _read_step_hours(
     session: Any,
     date_str: str,
