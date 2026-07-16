@@ -5,7 +5,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import Link from "next/link";
+import HeroImage from "@/components/story/HeroImage";
 import StoryMap from "@/components/story/StoryMap";
+import { GIBS_ATTRIBUTION } from "@/lib/gibs";
 import { RISK_COLOR, type RiskState } from "@/lib/risk";
 
 export const dynamicParams = false;
@@ -133,50 +135,71 @@ export default async function StoryPage({ params }: { params: Promise<{ date: st
         <span className="w-2.5 h-2.5 rounded-[2px]" style={{ background: riskColor }} />
       </div>
 
-      <header className="max-w-[68ch] mx-auto px-5 pt-12 pb-2">
-        <Eyebrow>GIK·ICECHAIN · EVENT BULLETIN</Eyebrow>
-        <h1
-          className="text-[clamp(26px,4.5vw,34px)] font-bold leading-[1.15] tracking-[-0.02em]"
-          style={{ textWrap: "balance" }}
-        >
-          East Africa flood risk
-          <span className="block" style={{ color: "var(--ts)" }}>
-            {longDate(date)}
-          </span>
-        </h1>
-
-        <div className="flex flex-wrap items-center gap-2 mt-5">
-          {entry && (
-            <span
-              className="inline-flex items-center gap-2 font-mono text-[10px] font-bold tracking-[1px] px-2.5 py-1 rounded-[var(--r)]"
-              style={{
-                color: riskColor,
-                background: "color-mix(in srgb, currentColor 12%, transparent)",
-                border: "1px solid color-mix(in srgb, currentColor 35%, transparent)",
-              }}
-            >
-              <span className="w-2 h-2 rounded-full" style={{ background: riskColor }} />
-              PEAK {entry.risk_label.toUpperCase()}
+      <header
+        className="relative overflow-hidden"
+        style={{ background: "linear-gradient(180deg, var(--db800), var(--db950))" }}
+      >
+        <HeroImage date={date} />
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(4,6,11,.35) 0%, rgba(4,6,11,.15) 40%, rgba(4,6,11,.82) 100%)",
+          }}
+        />
+        <div className="relative max-w-[68ch] mx-auto px-5 pt-24 pb-8">
+          <div
+            className="font-mono text-[9px] font-bold tracking-[2px] mb-2"
+            style={{ color: "var(--teal)" }}
+          >
+            GIK·ICECHAIN · EVENT BULLETIN
+          </div>
+          <h1
+            className="text-[clamp(26px,4.5vw,34px)] font-bold leading-[1.15] tracking-[-0.02em]"
+            style={{ textWrap: "balance", color: "var(--db50)" }}
+          >
+            East Africa flood risk
+            <span className="block" style={{ color: "var(--db300)" }}>
+              {longDate(date)}
             </span>
-          )}
-          <span
-            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
-            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
-          >
-            {entry ? entry.n_units : 238} admin-1 units
-          </span>
-          <span
-            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
-            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
-          >
-            {season(date)}
-          </span>
-          <span
-            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
-            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
-          >
-            IFS ENS · 51 members
-          </span>
+          </h1>
+
+          <div className="flex flex-wrap items-center gap-2 mt-5">
+            {entry && (
+              <span
+                className="inline-flex items-center gap-2 font-mono text-[10px] font-bold tracking-[1px] px-2.5 py-1 rounded-[var(--r)]"
+                style={{
+                  color: riskColor,
+                  background: "rgba(4,6,11,.55)",
+                  border: "1px solid color-mix(in srgb, currentColor 45%, transparent)",
+                }}
+              >
+                <span className="w-2 h-2 rounded-full" style={{ background: riskColor }} />
+                PEAK {entry.risk_label.toUpperCase()}
+              </span>
+            )}
+            {[`${entry ? entry.n_units : 238} admin-1 units`, season(date), "IFS ENS · 51 members"].map(
+              (chip) => (
+                <span
+                  key={chip}
+                  className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
+                  style={{
+                    color: "var(--db100)",
+                    border: "1px solid rgba(255,255,255,.18)",
+                    background: "rgba(4,6,11,.55)",
+                  }}
+                >
+                  {chip}
+                </span>
+              ),
+            )}
+          </div>
+        </div>
+        <div
+          className="absolute bottom-1.5 right-2.5 font-mono text-[8px] tracking-[0.5px]"
+          style={{ color: "rgba(255,255,255,.45)" }}
+        >
+          {GIBS_ATTRIBUTION} · {date}
         </div>
       </header>
 
