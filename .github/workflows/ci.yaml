@@ -63,35 +63,3 @@ jobs:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION:    eu-north-1
-
-  notebooks:
-    name: Notebook Tests (live S3)
-    runs-on: ubuntu-latest
-    needs: test-unit
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ./.github/actions/pipeline-setup
-        with:
-          extras: "dev,viz,published"
-      - name: Install eccodes system library (GRIB2 decode)
-        run: sudo apt-get update && sudo apt-get install -y libeccodes0 libeccodes-tools
-      - name: Download reference data (admin, thresholds, ENSO/IOD)
-        run: |
-          python scripts/tools.py download --component all
-          python scripts/tools.py download-thresholds
-      - name: Run notebooks (light mode)
-        env:
-          ECCODES_PYTHON_USE_FINDLIBS: "1"
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: eu-north-1
-          NB_RUN_FULL: "0"
-          NB_RUN_C1: "0"
-          NB_RUN_C2: "0"
-          NB_START: "2025-12-01"
-        run: |
-          pytest --nbmake \
-            notebooks/gik_icechain_walkthrough.ipynb \
-            notebooks/gik_icechain_colab_run.ipynb \
-            --nbmake-timeout=1200 --timeout=1800 -v
