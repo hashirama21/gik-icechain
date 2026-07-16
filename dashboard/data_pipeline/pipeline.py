@@ -13,7 +13,7 @@ Example:
     python -m dashboard.data_pipeline.pipeline all \
         --results results/oneday_20251119/admin1_risk \
         --exceedance-store s3://gik-icechain/exceedance-zarr \
-        --endpoint-url http://MINIO:9000 --out dashboard/web/public --date 2025-11-19
+        --out dashboard/web/public --date 2025-11-19
 """
 
 from __future__ import annotations

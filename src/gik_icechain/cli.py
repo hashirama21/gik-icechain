@@ -309,8 +309,14 @@ def _process_exceedance_day(args: dict) -> dict:
             args["store_uri"],
             region=args["region"],
             endpoint_url=args.get("endpoint_url"),
+            anonymous=args.get("store_anonymous", False),
+            manifest_preload=args.get("store_manifest_preload", True),
         )
-        store_obj.create_or_open()
+        layout = args.get("source_layout", "per_date")
+        if layout == "era_groups":
+            store_obj.open()
+        else:
+            store_obj.create_or_open()
         session = store_obj.readonly_session()
 
         manifest_aware_enabled = args.get("manifest_aware_enabled", False)
@@ -318,7 +324,56 @@ def _process_exceedance_day(args: dict) -> dict:
         bbox = args.get("bbox")
         max_steps = args.get("max_steps")
 
-        if manifest_aware_enabled:
+        if layout == "era_groups":
+            era_group = args.get("era_group")
+            if not era_group:
+                return {
+                    "date_str": date_str,
+                    "success": False,
+                    "error": f"no era group covers {date_str}",
+                }
+            if manifest_aware_enabled:
+                from gik_icechain.exceedance.manifest_store import (
+                    load_day_manifest_aware_era,
+                )
+
+                coalescing = args.get("coalescing_enabled", True)
+                day_ds = load_day_manifest_aware_era(
+                    session,
+                    era_group,
+                    date_str,
+                    variables=compute_vars,
+                    aliases=args.get("variable_aliases") or {},
+                    max_step_h=args.get("max_step_h", 168),
+                    step_resolution_h=args.get("step_resolution_h", 6),
+                    step_buffer=args.get("step_buffer", 1),
+                    bbox=bbox,
+                    max_gap_bytes=(args.get("max_gap_bytes", 65536) if coalescing else 0),
+                    max_merged_bytes=(args.get("max_merged_bytes", 5242880) if coalescing else 0),
+                    fetch_workers=args.get("fetch_workers", 8),
+                    min_members=args.get("min_members", 10),
+                    s3_region=args.get("s3_region", "eu-central-1"),
+                )
+            else:
+                from gik_icechain.exceedance.era_store import load_day_era_fallback
+
+                day_ds = load_day_era_fallback(
+                    session.store,
+                    era_group,
+                    date_str,
+                    variables=compute_vars,
+                    aliases=args.get("variable_aliases") or {},
+                )
+                if (
+                    max_steps is not None
+                    and "step" in day_ds.dims
+                    and max_steps < day_ds.sizes["step"]
+                ):
+                    day_ds = day_ds.isel(step=slice(0, max_steps))
+                if bbox is not None:
+                    day_ds = _subset_to_bbox(day_ds, bbox)
+                day_ds = day_ds.chunk(args["chunk_dims"])
+        elif manifest_aware_enabled:
             from gik_icechain.exceedance.manifest_store import (
                 load_day_manifest_aware,
             )
@@ -505,14 +560,30 @@ def _run_exceedance(
     from gik_icechain.conversion.icechunk_writer import IceChainStore
     from gik_icechain.exceedance.writer import write_exceedance_store
 
+    src = cfg.component2.source_store
+    if src.layout == "era_groups" and src.uri:
+        store_uri = src.uri
+    store_region = src.region or cfg.outputs.icechunk_store_region
+    store_endpoint = src.endpoint_url or cfg.outputs.endpoint_url or None
     store_obj = IceChainStore(
         store_uri,
-        region=cfg.outputs.icechunk_store_region,
-        endpoint_url=cfg.outputs.endpoint_url or None,
+        region=store_region,
+        endpoint_url=store_endpoint,
+        anonymous=src.anonymous,
+        manifest_preload=src.manifest_preload,
     )
-    store_obj.create_or_open()
-    snapshots = store_obj.list_snapshots()
-    committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})
+    era_by_date: dict[str, str] = {}
+    if src.layout == "era_groups":
+        from gik_icechain.exceedance.era_store import list_era_dates
+
+        store_obj.open()
+        eras = [(e.group, e.start, e.end) for e in src.era_groups]
+        era_by_date = list_era_dates(store_obj.readonly_session().store, eras)
+        committed_dates = sorted(era_by_date)
+    else:
+        store_obj.create_or_open()
+        snapshots = store_obj.list_snapshots()
+        committed_dates = sorted({s["forecast_date"] for s in snapshots if s["forecast_date"]})
     if start:
         committed_dates = [d for d in committed_dates if d >= start.isoformat()]
     if end:
@@ -553,8 +624,13 @@ def _run_exceedance(
         {
             "date_str": d,
             "store_uri": store_uri,
-            "region": cfg.outputs.icechunk_store_region,
-            "endpoint_url": cfg.outputs.endpoint_url or None,
+            "region": store_region,
+            "endpoint_url": store_endpoint,
+            "source_layout": src.layout,
+            "era_group": era_by_date.get(d),
+            "variable_aliases": dict(src.variable_aliases),
+            "store_anonymous": src.anonymous,
+            "store_manifest_preload": src.manifest_preload,
             "thresholds_path": str(Path(c2.thresholds.cmorph_path)),
             "enso_iod_path": c2.thresholds.enso_iod_index_path,
             "enso_thr": c2.thresholds.enso_nino34_threshold,
@@ -717,9 +793,7 @@ def _run_risk(
     # the configured paths unconditionally is safe.
     emdat_path = Path(cfg.sources.emdat_path) if cfg.sources.emdat_path else None
     emdat_aliases_path = (
-        Path(cfg.sources.emdat_pcode_aliases_path)
-        if cfg.sources.emdat_pcode_aliases_path
-        else None
+        Path(cfg.sources.emdat_pcode_aliases_path) if cfg.sources.emdat_pcode_aliases_path else None
     )
 
     crma_cfg = cfg.component3.crma_model
@@ -750,7 +824,7 @@ def _run_risk(
         hazard_stat=cfg.component3.aggregation.method,
         min_coverage=cfg.component3.aggregation.min_coverage_fraction,
         # Resolve the S3 endpoint from config or the AWS_ENDPOINT_URL env so an
-        # s3:// output (prod) reaches MinIO, not the default AWS endpoint.
+        # s3:// output reaches a custom endpoint when one is configured.
         endpoint_url=cfg.outputs.endpoint_url or os.environ.get("AWS_ENDPOINT_URL") or None,
         emdat_path=emdat_path,
         emdat_aliases_path=emdat_aliases_path,

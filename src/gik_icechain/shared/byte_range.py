@@ -162,7 +162,7 @@ def fetch_coalesced_ranges(
 
     Uses ``obstore.store.S3Store`` with ``skip_signature=True`` (anonymous,
     the same mechanism IceChunk uses internally) and an *explicit* AWS
-    endpoint, so the ``AWS_ENDPOINT_URL`` environment variable (set to MinIO
+    endpoint, so a custom ``AWS_ENDPOINT_URL`` environment variable (used by
     for the IceChunk store) is never inherited for ECMWF byte-range reads.
 
     A file whose fetch fails (after obstore's own retries) is logged and

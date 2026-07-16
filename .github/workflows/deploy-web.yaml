@@ -1,10 +1,9 @@
 name: Deploy Dashboard (Next.js)
 
-# Static export to GitHub Pages. The data contract is pulled from the store at
-# build time and served same-origin from Pages (a https page cannot fetch the
-# private http MinIO directly). If the store has no contract, the build
-# rebuilds it from admin1_risk and republishes; an empty artifact fails the
-# deploy.
+# Static export to GitHub Pages. The data contract is pulled from the S3
+# store at build time and served same-origin from Pages. If the store has no
+# contract, the build rebuilds it from admin1_risk and republishes; an empty
+# artifact fails the deploy.
 
 on:
   push:
@@ -26,9 +25,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.MINIO_ACCESS_KEY }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.MINIO_SECRET_KEY }}
-  AWS_ENDPOINT_URL: ${{ secrets.MINIO_ENDPOINT_URL }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: eu-north-1
 
 jobs:

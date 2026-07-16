@@ -204,7 +204,7 @@ def _measure_store_size_gb(store_uri: str) -> float:
 
     Sums object byte-sizes under the store prefix via s3fs (picks up
     AWS_* / AWS_ENDPOINT_URL from the environment, so it works against both
-    AWS S3 and a MinIO mirror). Falls back to the documented metadata estimate
+    AWS S3 and any S3-compatible mirror). Falls back to the documented metadata estimate
     if the bucket can't be listed. See ISSUE-18.
     """
     try:

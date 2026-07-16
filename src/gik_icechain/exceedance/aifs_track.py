@@ -99,7 +99,7 @@ def compare_ensemble_spreads(
             forecast snapshot; ``None`` = use latest snapshot.
         window_h: Accumulation window in hours for spread comparison.
         region: AWS region for the IceChunk S3 stores.
-        endpoint_url: Custom S3 endpoint (e.g. MinIO).
+        endpoint_url: Custom S3-compatible endpoint.
 
     Returns:
         :class:`xr.Dataset` with ``ifs_iqr``, ``aifs_iqr``, ``spread_ratio``.

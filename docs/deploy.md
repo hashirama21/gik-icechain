@@ -19,14 +19,14 @@ reference data, the daily forecast pipeline (C1 → C2 → C3), the dashboard
 | Python 3.12 | pipeline runtime | `pip install -e ".[dev]"` (extras: `dev`, `cloud`, `viz`, `full`) |
 | eccodes (C library) | decode ECMWF GRIB2 | Linux: `apt-get install -y libeccodes0 libeccodes-tools`; set `ECCODES_PYTHON_USE_FINDLIBS=1`. Windows: place the eccodes DLLs in `.venv/Scripts/` (extract from the `eccodes` cp312 wheel) |
 | Node 20+ | build the dashboard | only for `dashboard/web` |
-| An S3-compatible store | pipeline outputs | AWS S3 **or** MinIO (see §2) |
+| An AWS S3 bucket | pipeline outputs | `s3://gik-icechain` on `eu-north-1` (see §2) |
 
 The only **external read source** is the public ECMWF IFS ENS archive on
 `s3://ecmwf-forecasts` (anonymous); everything the pipeline *writes* goes to your store.
 
 ---
 
-## 2. Storage backend (MinIO or AWS S3)
+## 2. Storage backend (AWS S3)
 
 Three logical stores are needed (one bucket with prefixes, or separate buckets):
 
@@ -36,24 +36,20 @@ Three logical stores are needed (one bucket with prefixes, or separate buckets):
 | Exceedance Zarr | `s3://gik-icechain/exceedance-zarr` | C2 exceedance probabilities |
 | Bucket (`$GIK_BUCKET`) | `gik-icechain` | C3 risk JSON (`admin1_risk/`), CMORPH thresholds, `dashboard-data/`, COGs |
 
-### MinIO (on-prem / dev)
+C2 can also read the published E4DRR full-archive store on Source Cooperative
+instead of the C1 store (`configs/published_store.yaml`, anonymous, no bucket
+needed on your side).
 
-```bash
-# A local MinIO is provided for development:
-docker compose -f deploy/docker/docker-compose.yml up -d   # MinIO on :9000
-
-# Create the buckets (MinIO client `mc`):
-mc alias set gik http://<host>:9000 <ACCESS_KEY> <SECRET_KEY>
-mc mb gik/gik-icechain
-```
-
-### AWS S3 (cloud production)
-
-Create the bucket(s) in your region (the workflows use `eu-west-1`). For the public
+Create the bucket(s) in your region (the workflows use `eu-north-1`). For the public
 dashboard/COG assets, apply a public-read policy - see
 [`deploy/aws/public_store_bucket_policy.json`](../deploy/aws/public_store_bucket_policy.json)
 and add a CORS rule allowing `GET` from the Pages origin (needed for `dashboard-data/`,
 see §6).
+
+Local credentials: export your access keys from the AWS console to
+`develop_accessKeys.csv` at the repo root (gitignored), then
+`python scripts/load_aws_credentials.py` prints the exports
+(`--powershell` for PowerShell) and notebooks/scripts load it directly.
 
 ---
 
@@ -68,17 +64,11 @@ see §6).
 | `GIK_ICECHUNK_STORE_URI` | C1/C2 | e.g. `s3://gik-icechain/gik-icechain-store` |
 | `GIK_EXCEEDANCE_STORE_URI` | C2/C3 | e.g. `s3://gik-icechain/exceedance-zarr` |
 | `GIK_BUCKET` | C3, dashboard | bucket name only, e.g. `gik-icechain` |
-| `MINIO_ENDPOINT_URL` | all | MinIO endpoint, e.g. `` (leave unset for real AWS) |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | `e2e_run.yaml` | MinIO credentials (mapped to `AWS_*` in the workflow) |
 | `EARTHDATA_USER` / `EARTHDATA_PASSWORD` | GPM IMERG (NASA) download | optional; without them C3 falls back to CHIRPS |
 
-`AWS_ENDPOINT_URL` is set from `MINIO_ENDPOINT_URL` inside the workflows; when empty,
-the AWS SDK targets real S3. `IceChainStore` enables `force_path_style` automatically
-for MinIO.
-
 > Note: ECMWF virtual-chunk reads are forced to public AWS S3 internally
-> (`icechunk_writer._build_repo_config`), so `AWS_ENDPOINT_URL=MinIO` does not
-> misroute them.
+> (`icechunk_writer._build_repo_config`), so a custom `AWS_ENDPOINT_URL` does
+> not misroute them.
 
 ---
 
@@ -182,14 +172,12 @@ pip install -e ".[dev]"
 pre-commit install            # REQUIRED once per clone - enables the ruff + mypy hooks
 ```
 
-Credentials for a local MinIO run: the code reads the standard `AWS_*` env vars and does
-**not** auto-load `.env`. The dev `.env` uses `MINIO` / `MINIO_ACCESS_KEY` /
-`MINIO_SECRET_KEY`, so map them before running:
+Local credentials: the code reads the standard `AWS_*` env vars and does
+**not** auto-load any file. Export your keys from `develop_accessKeys.csv`
+(repo root, gitignored):
 
 ```bash
-export AWS_ACCESS_KEY_ID=$MINIO_ACCESS_KEY
-export AWS_SECRET_ACCESS_KEY=$MINIO_SECRET_KEY
-export AWS_ENDPOINT_URL="http://$MINIO"        # e.g. 
+eval "$(python scripts/load_aws_credentials.py)"
 export ECCODES_PYTHON_USE_FINDLIBS=1
 ```
 
@@ -200,7 +188,7 @@ The single end-to-end notebook is `notebooks/gik_icechain_walkthrough.ipynb`.
 
 ## 9. Deployment checklist
 
-- [ ] S3/MinIO buckets created (§2)
+- [ ] S3 buckets created (§2)
 - [ ] 8-10 repo Secrets set (§3)
 - [ ] 3 repo Variables set (§4)
 - [ ] `production` environment created (§4)
