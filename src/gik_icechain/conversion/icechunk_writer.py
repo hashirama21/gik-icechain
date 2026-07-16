@@ -61,6 +61,8 @@ class IceChainStore:
         manifest_splitting: bool = True,
         manifest_split_dim: str = "step",
         manifest_split_size: int = 1000,
+        anonymous: bool = False,
+        manifest_preload: bool = True,
     ) -> None:
         """
         Args:
@@ -78,6 +80,11 @@ class IceChainStore:
                                       manifest fragment size at scale).
             manifest_split_dim:       Dimension name to split manifests along.
             manifest_split_size:      Max index positions per manifest fragment.
+            anonymous:                Open the store bucket with anonymous S3
+                                      credentials (public read-only stores).
+            manifest_preload:         False disables eager manifest prefetch on
+                                      open (endpoints like source.coop 500 under
+                                      the default parallel prefetch).
         """
         self.storage_uri = storage_uri
         self.branch = branch
@@ -86,6 +93,8 @@ class IceChainStore:
         self._manifest_splitting = manifest_splitting
         self._manifest_split_dim = manifest_split_dim
         self._manifest_split_size = manifest_split_size
+        self._anonymous = anonymous
+        self._manifest_preload = manifest_preload
         self._repo: Any | None = None
         self._endpoint_url: str | None = endpoint_url or os.environ.get("AWS_ENDPOINT_URL")
         self._region: str | None = (
@@ -398,8 +407,9 @@ class IceChainStore:
         config = icechunk.RepositoryConfig.default()
         config.set_virtual_chunk_container(container)
 
+        manifest_kwargs: dict[str, Any] = {}
         if self._manifest_splitting:
-            split_cfg = icechunk.ManifestSplittingConfig(
+            manifest_kwargs["splitting"] = icechunk.ManifestSplittingConfig(
                 split_sizes=(
                     (
                         icechunk.ManifestSplitCondition.AnyArray(),
@@ -414,12 +424,19 @@ class IceChainStore:
                     ),
                 )
             )
-            config.manifest = icechunk.ManifestConfig(splitting=split_cfg)
             log.info(
                 "icechunk_manifest_splitting",
                 dim=self._manifest_split_dim,
                 size=self._manifest_split_size,
             )
+        if not self._manifest_preload:
+            manifest_kwargs["preload"] = icechunk.ManifestPreloadConfig(
+                max_total_refs=0,
+                max_arrays_to_scan=0,
+            )
+            log.info("icechunk_manifest_preload_disabled")
+        if manifest_kwargs:
+            config.manifest = icechunk.ManifestConfig(**manifest_kwargs)
         return config
 
     def _build_storage(self) -> Any:
@@ -436,16 +453,20 @@ class IceChainStore:
             kwargs: dict[str, Any] = {"bucket": bucket, "prefix": prefix}
             if self._region:
                 kwargs["region"] = self._region
-            access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-            session_token = os.environ.get("AWS_SESSION_TOKEN")
-            if access_key and secret_key:
-                kwargs["access_key_id"] = access_key
-                kwargs["secret_access_key"] = secret_key
-                if session_token:
-                    kwargs["session_token"] = session_token
+            if self._anonymous:
+                kwargs["anonymous"] = True
+                kwargs["from_env"] = False
             else:
-                kwargs["from_env"] = True
+                access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+                secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                session_token = os.environ.get("AWS_SESSION_TOKEN")
+                if access_key and secret_key:
+                    kwargs["access_key_id"] = access_key
+                    kwargs["secret_access_key"] = secret_key
+                    if session_token:
+                        kwargs["session_token"] = session_token
+                else:
+                    kwargs["from_env"] = True
             if self._endpoint_url:
                 kwargs["endpoint_url"] = self._endpoint_url
                 kwargs["allow_http"] = True
