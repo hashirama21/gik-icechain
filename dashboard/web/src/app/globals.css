@@ -52,6 +52,34 @@
   }
 }
 
+/* Storymap prose. The dashboard is a fixed-viewport app (body overflow
+   hidden); /stories pages scroll inside their own container and set their
+   type here since Tailwind preflight strips all heading/list styling. */
+@layer components {
+  .story { max-width: 68ch; margin: 0 auto; padding: 0 20px; }
+  .story h1 {
+    font-size: clamp(24px, 4vw, 30px); font-weight: 700; line-height: 1.2;
+    letter-spacing: -0.02em; text-wrap: balance; margin: 0 0 14px;
+  }
+  .story h2 {
+    font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0 0 10px;
+  }
+  .story p { font-size: 14.5px; line-height: 1.7; color: var(--ts); margin: 0 0 12px; }
+  .story p strong, .story li strong { color: var(--tp); font-weight: 600; }
+  .story ul { margin: 0 0 12px; padding-left: 2px; display: grid; gap: 6px; }
+  .story li {
+    font-size: 13.5px; line-height: 1.55; color: var(--ts);
+    padding-left: 16px; position: relative;
+  }
+  .story li::before {
+    content: ""; position: absolute; left: 0; top: 8px;
+    width: 6px; height: 2px; background: var(--teal);
+  }
+  .story a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
+  .story figure { margin: 0; }
+}
+
 /* Keyframes + things Tailwind can't express cleanly (kept minimal). */
 @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 @keyframes cpulse { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 10px 2px var(--c-crit)} }

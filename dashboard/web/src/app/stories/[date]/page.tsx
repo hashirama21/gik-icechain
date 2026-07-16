@@ -5,8 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import Link from "next/link";
-import { Block, Prose, Figure, Caption } from "@/components/story/Blocks";
 import StoryMap from "@/components/story/StoryMap";
+import { RISK_COLOR, type RiskState } from "@/lib/risk";
 
 export const dynamicParams = false;
 
@@ -44,20 +44,79 @@ export function generateStaticParams() {
 
 function season(date: string): string {
   const m = Number(date.slice(5, 7));
-  if (m >= 3 && m <= 5) return "MAM (long rains)";
-  if (m >= 10 && m <= 12) return "OND (short rains)";
+  if (m >= 3 && m <= 5) return "MAM · long rains";
+  if (m >= 10 && m <= 12) return "OND · short rains";
   if (m >= 6 && m <= 9) return "JJAS";
-  return "JF (dry season)";
+  return "JF · dry season";
+}
+
+function longDate(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+const EVIDENCE = [
+  {
+    label: "FORECAST HAZARD",
+    text: "Ensemble exceedance probability against adaptive GEV thresholds",
+  },
+  { label: "OBSERVED ANTECEDENT", text: "Daily precipitation observations over the unit" },
+  { label: "SOIL MEMORY", text: "Antecedent Precipitation Index with exponential decay" },
+  { label: "SPATIAL COVERAGE", text: "Fraction of grid cells carrying an active signal" },
+];
+
+function Eyebrow({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono text-[9px] font-bold tracking-[2px] mb-2"
+      style={{ color: "var(--teal)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function MapPanel({
+  eyebrow,
+  caption,
+  children,
+}: {
+  eyebrow: string;
+  caption: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <figure
+      className="rounded-[var(--rl)] overflow-hidden"
+      style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}
+    >
+      <div className="px-4 pt-3">
+        <Eyebrow>{eyebrow}</Eyebrow>
+      </div>
+      {children}
+      <figcaption
+        className="font-mono text-[10px] leading-relaxed px-4 py-3"
+        style={{ color: "var(--td)", borderTop: "1px solid var(--brd)" }}
+      >
+        {caption}
+      </figcaption>
+    </figure>
+  );
 }
 
 export default async function StoryPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params;
   const entry = readIndex()[date];
+  const riskColor = entry ? RISK_COLOR[entry.worst_risk as RiskState] : "var(--td)";
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-full pb-16" style={{ background: "var(--bg)" }}>
       <div
-        className="flex items-center gap-2.5 px-3.5 shrink-0"
+        className="sticky top-0 z-20 flex items-center gap-2.5 px-3.5"
         style={{
           height: "var(--hdr)",
           background: "var(--sur)",
@@ -70,81 +129,132 @@ export default async function StoryPage({ params }: { params: Promise<{ date: st
         <Link href="/stories" className="font-mono text-[10px]" style={{ color: "var(--blue)" }}>
           Storymaps
         </Link>
-        <span className="font-mono text-[10px] font-bold tracking-[1.5px]">{date}</span>
+        <span className="font-mono text-[10px] font-bold tracking-[1.5px] ml-auto">{date}</span>
+        <span className="w-2.5 h-2.5 rounded-[2px]" style={{ background: riskColor }} />
       </div>
 
-      <Block>
-        <Prose>
-          <h1>East Africa Flood Risk — {date}</h1>
-          <p>
-            The <strong>GIK-IceChain</strong> pipeline assessed flood risk for all{" "}
-            {entry ? entry.n_units : 238} admin-1 units across 16 East African countries on this{" "}
-            {season(date)} date, combining the 51-member ECMWF IFS ensemble, observed
-            precipitation, and the ICPAC CRMA Bayesian Network.
-            {entry && (
-              <>
-                {" "}
-                Peak signal: <strong>{entry.risk_label}</strong>.
-              </>
-            )}
-          </p>
-          <ul>
-            <li>
-              <strong>Forecast hazard</strong> — ensemble exceedance probability vs adaptive GEV
-              thresholds
-            </li>
-            <li>
-              <strong>Observed antecedent</strong> — daily precipitation observations
-            </li>
-            <li>
-              <strong>Soil memory</strong> — Antecedent Precipitation Index (API), exponential
-              decay
-            </li>
-            <li>
-              <strong>Spatial coverage</strong> — fraction of grid cells with an active signal
-            </li>
-          </ul>
-        </Prose>
-      </Block>
+      <header className="max-w-[68ch] mx-auto px-5 pt-12 pb-2">
+        <Eyebrow>GIK·ICECHAIN · EVENT BULLETIN</Eyebrow>
+        <h1
+          className="text-[clamp(26px,4.5vw,34px)] font-bold leading-[1.15] tracking-[-0.02em]"
+          style={{ textWrap: "balance" }}
+        >
+          East Africa flood risk
+          <span className="block" style={{ color: "var(--ts)" }}>
+            {longDate(date)}
+          </span>
+        </h1>
 
-      <Block>
-        <Figure>
+        <div className="flex flex-wrap items-center gap-2 mt-5">
+          {entry && (
+            <span
+              className="inline-flex items-center gap-2 font-mono text-[10px] font-bold tracking-[1px] px-2.5 py-1 rounded-[var(--r)]"
+              style={{
+                color: riskColor,
+                background: "color-mix(in srgb, currentColor 12%, transparent)",
+                border: "1px solid color-mix(in srgb, currentColor 35%, transparent)",
+              }}
+            >
+              <span className="w-2 h-2 rounded-full" style={{ background: riskColor }} />
+              PEAK {entry.risk_label.toUpperCase()}
+            </span>
+          )}
+          <span
+            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
+            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
+          >
+            {entry ? entry.n_units : 238} admin-1 units
+          </span>
+          <span
+            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
+            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
+          >
+            {season(date)}
+          </span>
+          <span
+            className="font-mono text-[10px] px-2.5 py-1 rounded-[var(--r)]"
+            style={{ color: "var(--ts)", border: "1px solid var(--brd)", background: "var(--sur)" }}
+          >
+            IFS ENS · 51 members
+          </span>
+        </div>
+      </header>
+
+      <section className="story mt-8">
+        <p>
+          The <strong>GIK-IceChain</strong> pipeline assessed flood risk for every admin-1 unit
+          across 16 East African countries on this date, combining the 51-member ECMWF IFS
+          ensemble, observed precipitation, and the ICPAC CRMA Bayesian Network. Four evidence
+          streams feed each unit&apos;s daily verdict:
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
+          {EVIDENCE.map((e) => (
+            <div
+              key={e.label}
+              className="rounded-[var(--r)] p-3"
+              style={{ background: "var(--sur)", border: "1px solid var(--brd)" }}
+            >
+              <div
+                className="font-mono text-[9px] font-bold tracking-[1.5px] mb-1.5"
+                style={{ color: "var(--teal)" }}
+              >
+                {e.label}
+              </div>
+              <div className="text-[12.5px] leading-snug" style={{ color: "var(--ts)" }}>
+                {e.text}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="max-w-[840px] mx-auto px-5 mt-10 space-y-10">
+        <MapPanel
+          eyebrow="DECISION LAYER · CRMA ADMIN-1 RISK"
+          caption="Traffic-light risk state per admin-1 unit from the CRMA Bayesian Network: Green, Yellow, Orange, Red."
+        >
           <StoryMap layer="risk" date={date} center={[38, 2]} zoom={5} />
-          <Caption>
-            CRMA admin-1 risk state. Green/Yellow/Orange/Red traffic-light from the Bayesian
-            Network.
-          </Caption>
-        </Figure>
-      </Block>
+        </MapPanel>
 
-      <Block>
-        <Prose>
-          <h2>Exceedance probability (24 h, 5-year return period)</h2>
+        <section className="story">
+          <h2>Forecast signal: exceedance probability</h2>
           <p>
             Fraction of the 51 ensemble members whose worst-case 24-hour accumulation exceeds the
-            5-year return-period GEV threshold. Values above 0.4 map to a <strong>High</strong>{" "}
-            forecast-hazard state.
+            5-year return-period GEV threshold. Values above 0.4 map to a{" "}
+            <strong>High</strong> forecast-hazard state in the Bayesian Network.
           </p>
-        </Prose>
-        <Figure>
+        </section>
+        <MapPanel
+          eyebrow="FORECAST LAYER · 24 H WINDOW · 5-YEAR RETURN PERIOD"
+          caption="Ensemble exceedance probability, 24 h accumulation against the 5-year GEV threshold."
+        >
           <StoryMap layer="exceedance" date={date} windowH={24} rp={5} center={[38, 2]} zoom={5} />
-          <Caption>Ensemble exceedance probability — 24 h window, 5-year return period.</Caption>
-        </Figure>
-      </Block>
+        </MapPanel>
 
-      <Block>
-        <Prose>
+        <section className="story">
           <h2>Observed rainfall</h2>
           <p>
-            Observed daily precipitation provides the observational counterpart used by the CRMA
+            Observed daily precipitation is the observational counterpart used by the CRMA
             model&apos;s antecedent-precipitation evidence node.
           </p>
-        </Prose>
-        <Figure>
+        </section>
+        <MapPanel
+          eyebrow="OBSERVATION LAYER · DAILY RAINFALL"
+          caption="Observed daily rainfall (mm/day)."
+        >
           <StoryMap layer="gpm" date={date} center={[38, 2]} zoom={5} />
-          <Caption>Observed daily rainfall (mm/day).</Caption>
-        </Figure>
-      </Block>
+        </MapPanel>
+      </div>
+
+      <footer className="max-w-[68ch] mx-auto px-5 mt-12">
+        <Link
+          href="/stories"
+          className="font-mono text-[10px] tracking-[1px]"
+          style={{ color: "var(--blue)" }}
+        >
+          ← All storymaps
+        </Link>
+      </footer>
     </div>
   );
 }
