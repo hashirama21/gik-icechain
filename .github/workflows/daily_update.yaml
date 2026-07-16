@@ -8,7 +8,7 @@ name: Daily Pipeline Update
 
 on:
   schedule:
-    - cron: "20 10 * * *"
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       target_date:
