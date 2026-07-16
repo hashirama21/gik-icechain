@@ -1,9 +1,10 @@
 name: Daily Pipeline Update
 
-# Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
-# GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI.
-# All prerequisites (thresholds, admin boundaries, ENSO/IOD, eccodes, CHIRPS)
-# are staged by the jobs themselves.
+# Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (required);
+# GIK_BUCKET, GIK_ICECHUNK_STORE_URI, GIK_EXCEEDANCE_STORE_URI (optional,
+# default to the s3://gik-icechain production stores). All prerequisites
+# (thresholds, admin boundaries, ENSO/IOD, eccodes, CHIRPS) are staged by
+# the jobs themselves.
 
 on:
   schedule:
@@ -20,6 +21,9 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: eu-north-1
+  GIK_ICECHUNK_STORE_URI: ${{ secrets.GIK_ICECHUNK_STORE_URI || 's3://gik-icechain/gik-icechain-store' }}
+  GIK_EXCEEDANCE_STORE_URI: ${{ secrets.GIK_EXCEEDANCE_STORE_URI || 's3://gik-icechain/exceedance-zarr' }}
+  GIK_BUCKET: ${{ secrets.GIK_BUCKET || 'gik-icechain' }}
 
 jobs:
 
@@ -42,7 +46,11 @@ jobs:
           set -euo pipefail
           TARGET_DATE="${{ inputs.target_date }}"
           if [ -z "$TARGET_DATE" ]; then
-            TARGET_DATE=$(date -u -d "yesterday" +%F)
+            # Latest date in the GIK catalog not after yesterday: the HF
+            # dataset can lag real time, and ingesting an absent date makes
+            # C1 a silent no-op that aborts the rest of the pipeline.
+            TARGET_DATE=$(python -c "from datetime import date, timedelta; from gik_icechain.conversion.gik_loader import GIKCatalog; ds = GIKCatalog().list_available_dates(); t = date.today() - timedelta(days=1); a = [d for d in ds if d <= t]; print((a[-1] if a else t).isoformat())")
+            echo "Resolved TARGET_DATE=$TARGET_DATE (latest available in catalog)"
           fi
           if ! [[ "$TARGET_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
             echo "::error::invalid TARGET_DATE: '$TARGET_DATE'" && exit 1
@@ -50,7 +58,7 @@ jobs:
           gik-icechain convert \
             --start "$TARGET_DATE" \
             --end   "$TARGET_DATE" \
-            --output-store ${{ secrets.GIK_ICECHUNK_STORE_URI }} \
+            --output-store "$GIK_ICECHUNK_STORE_URI" \
             --output-json /tmp/ingest_result.json
           echo "processed_date=$TARGET_DATE" >> $GITHUB_OUTPUT
           echo "commit_hash=$(python -c "import json; print(json.load(open('/tmp/ingest_result.json'))['commit_hash'])")" >> $GITHUB_OUTPUT
@@ -76,9 +84,7 @@ jobs:
           python scripts/tools.py download --component enso_iod
       - name: Stage GEV thresholds in the store if absent
         run: |
-          EP=""
-          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
-          if ! aws s3 ls $EP "s3://${{ secrets.GIK_BUCKET }}/cmorph_thresholds/" | grep -q .; then
+          if ! aws s3 ls "s3://$GIK_BUCKET/cmorph_thresholds/" | grep -q .; then
             python scripts/tools.py download-thresholds
             python scripts/tools.py upload-thresholds
           fi
@@ -86,9 +92,9 @@ jobs:
           ECCODES_PYTHON_USE_FINDLIBS: "1"
         run: |
           gik-icechain exceedance \
-            --store  ${{ secrets.GIK_ICECHUNK_STORE_URI }} \
-            --output ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
-            --thresholds s3://${{ secrets.GIK_BUCKET }}/cmorph_thresholds/ \
+            --store  "$GIK_ICECHUNK_STORE_URI" \
+            --output "$GIK_EXCEEDANCE_STORE_URI" \
+            --thresholds "s3://$GIK_BUCKET/cmorph_thresholds/" \
             --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
             --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
 
@@ -111,8 +117,8 @@ jobs:
           python scripts/tools.py download-gpm --source chirps --start "$START" --end "$PROC"
       - run: |
           gik-icechain risk \
-            --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
-            --output s3://${{ secrets.GIK_BUCKET }}/admin1_risk \
+            --exceedance-store "$GIK_EXCEEDANCE_STORE_URI" \
+            --output "s3://$GIK_BUCKET/admin1_risk" \
             --start ${{ needs.ingest-daily-gik.outputs.processed_date }} \
             --end   ${{ needs.ingest-daily-gik.outputs.processed_date }}
 
@@ -130,14 +136,11 @@ jobs:
       - name: Build dashboard contract and publish to the store (no commit)
         run: |
           PROC="${{ needs.ingest-daily-gik.outputs.processed_date }}"
-          BUCKET="${{ secrets.GIK_BUCKET }}"
-          EP=""
-          [ -n "$AWS_ENDPOINT_URL" ] && EP="--endpoint-url $AWS_ENDPOINT_URL"
           # Pull the existing contract first: index.json merges, keeping date history.
-          aws s3 sync $EP "s3://$BUCKET/dashboard-data/" dashboard/web/public/data/ || true
-          aws s3 sync $EP "s3://$BUCKET/admin1_risk/" results/admin1_risk/
+          aws s3 sync "s3://$GIK_BUCKET/dashboard-data/" dashboard/web/public/data/ || true
+          aws s3 sync "s3://$GIK_BUCKET/admin1_risk/" results/admin1_risk/
           python -m dashboard.data_pipeline.pipeline contract \
-            --exceedance-store ${{ secrets.GIK_EXCEEDANCE_STORE_URI }} \
+            --exceedance-store "$GIK_EXCEEDANCE_STORE_URI" \
             --results results/admin1_risk \
             --out dashboard/web/public \
             --date "$PROC"
@@ -145,7 +148,7 @@ jobs:
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
           bash scripts/publish_dashboard_data.sh \
-            dashboard/web/public/data "s3://$BUCKET/dashboard-data" $EP
+            dashboard/web/public/data "s3://$GIK_BUCKET/dashboard-data"
 
   redeploy-pages:
     name: "Dashboard: redeploy Pages with fresh contract"
