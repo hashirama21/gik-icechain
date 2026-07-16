@@ -8,6 +8,8 @@
 #     --output <exceedance-output-uri> --start 2023-06-15 --end 2023-06-15
 
 component2:
+  manifest_aware:
+    fetch_workers: 16
   source_store:
     layout: "era_groups"
     anonymous: true
