@@ -54,3 +54,16 @@ export function getDependency(date: string): Promise<Record<string, UnitDependen
 export function getGeoJson(countryCode: string): Promise<GeoJSON.FeatureCollection> {
   return fetchJson(`geojson/${countryCode}.json`, `geojson ${countryCode}`);
 }
+
+/** {date}/overlays/overlays.json - static exceedance PNGs with their bounds. */
+export interface OverlayManifest {
+  [file: string]: { bounds: [[number, number], [number, number]]; window: number; rp: number };
+}
+
+export function getOverlays(date: string): Promise<OverlayManifest> {
+  return fetchJson(`${date}/overlays/overlays.json`, `overlays ${date}`);
+}
+
+export function overlayUrl(date: string, file: string): string {
+  return `${DATA_BASE}/${date}/overlays/${file}`;
+}

@@ -99,6 +99,11 @@ jobs:
               ${AWS_ENDPOINT_URL:+--endpoint-url "$AWS_ENDPOINT_URL"} \
               || echo "::warning::contract failed for $D"
           done
+          python -m dashboard.data_pipeline.pipeline overlays \
+            --out dashboard/web/public \
+            ${GIK_EXCEEDANCE_STORE_URI:+--exceedance-store "$GIK_EXCEEDANCE_STORE_URI"} \
+            --exceedance-store-0p4 "s3://$BUCKET/exceedance-zarr-0p4" \
+          || echo "::warning::overlay batch failed"
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
