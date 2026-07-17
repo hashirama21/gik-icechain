@@ -255,17 +255,17 @@ export default async function StoryPage({ params }: { params: Promise<{ date: st
         </MapPanel>
 
         <section className="story">
-          <h2>Observed rainfall</h2>
+          <h2>Ensemble confidence</h2>
           <p>
-            Observed daily precipitation is the observational counterpart used by the CRMA
-            model&apos;s antecedent-precipitation evidence node.
+            Number of the 51 ensemble members converging on an active signal over each unit. High
+            member agreement separates a robust forecast from a single-member outlier.
           </p>
         </section>
         <MapPanel
-          eyebrow="OBSERVATION LAYER · DAILY RAINFALL"
-          caption="Observed daily rainfall (mm/day)."
+          eyebrow="CONFIDENCE LAYER · MEMBER AGREEMENT"
+          caption="Members (out of 51) agreeing on an active signal per admin-1 unit."
         >
-          <StoryMap layer="gpm" date={date} center={[38, 2]} zoom={5} />
+          <StoryMap layer="confidence" date={date} center={[38, 2]} zoom={5} />
         </MapPanel>
       </div>
 

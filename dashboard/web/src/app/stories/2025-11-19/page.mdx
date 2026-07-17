@@ -26,7 +26,7 @@ Risk is computed from four evidence streams:
   <StoryMap layer="risk" date="2025-11-19" center={[38, 2]} zoom={5} />
   <Caption>
     CRMA admin-1 risk state. Green/Yellow/Orange/Red traffic-light from the
-    Bayesian Network. Rendered on-the-fly from a COG via TiTiler.
+    Bayesian Network, rendered from the static data contract.
   </Caption>
 </Figure>
 </Block>
@@ -50,14 +50,14 @@ Values above 0.4 (40% of members) map to a **High** forecast-hazard state.
 <Block>
 <Prose>
 
-## Observed rainfall (GPM IMERG)
+## Ensemble confidence
 
-GPM IMERG daily precipitation provides the observational counterpart used by the
-CRMA model's antecedent-precipitation evidence node.
+Member agreement (out of 51) on an active signal over each unit separates a
+robust forecast from a single-member outlier.
 
 </Prose>
 <Figure>
-  <StoryMap layer="gpm" date="2025-11-19" center={[38, 2]} zoom={5} />
-  <Caption>GPM IMERG observed daily rainfall (mm/day).</Caption>
+  <StoryMap layer="confidence" date="2025-11-19" center={[38, 2]} zoom={5} />
+  <Caption>Members (out of 51) agreeing on an active signal per admin-1 unit.</Caption>
 </Figure>
 </Block>
