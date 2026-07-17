@@ -75,6 +75,9 @@ dependencies = [
   "pyproj>=3.7",
   "rioxarray>=0.17",
 
+  # Dashboard overlay rendering (data_pipeline/overlays.py)
+  "pillow>=10.0",
+
   "pgmpy>=1.0",
 
   # Configuration
