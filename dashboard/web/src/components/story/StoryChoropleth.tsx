@@ -8,7 +8,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { COUNTRIES, EA_BOUNDS, N_MEMBERS } from "@/lib/config";
-import { getDependency, getGeoJson, getRegionRisks } from "@/lib/api";
+import { getDependency, getGeoJson, getOverlays, getRegionRisks, overlayUrl } from "@/lib/api";
 import { RISK_COLOR, type RiskState } from "@/lib/risk";
 
 export type ChoroplethKind = "risk" | "exceedance" | "confidence";
@@ -101,6 +101,26 @@ export default function StoryChoropleth({
 
     let cancelled = false;
     (async () => {
+      // Exceedance: prefer the pre-rendered raster field (continuous pixels)
+      // when the contract carries one; the choropleth then becomes a light
+      // hover/outline layer on top. Missing manifest = vector-only fallback.
+      let rasterOn = false;
+      if (kind === "exceedance") {
+        try {
+          const manifest = await getOverlays(date);
+          const file = `exceedance_${windowH}h_${rp}y.png`;
+          const entry = manifest[file];
+          if (entry && !cancelled) {
+            L.imageOverlay(overlayUrl(date, file), entry.bounds as L.LatLngBoundsExpression, {
+              opacity: 0.82,
+            }).addTo(map);
+            rasterOn = true;
+          }
+        } catch {
+          rasterOn = false;
+        }
+      }
+
       const [style, settled] = await Promise.all([
         valueMap(kind, date, windowH, rp),
         Promise.allSettled(COUNTRIES.map((c) => getGeoJson(c.code))),
@@ -123,7 +143,7 @@ export default function StoryChoropleth({
             color: "rgba(120,140,180,.45)",
             weight: 0.7,
             fillColor: style.fill(feat?.properties?.pcode),
-            fillOpacity: 0.88,
+            fillOpacity: rasterOn ? 0.08 : 0.88,
           }),
           onEachFeature: (feat, lyr) => {
             const pcode = feat.properties?.pcode as string;

@@ -374,6 +374,58 @@ def contract(results: Results, out: Out, date: Date,
     _do_contract(results, out, date, exceedance_store, endpoint_url)
 
 
+@app.command()
+def overlays(
+    out: Out,
+    exceedance_store: Store = None,
+    exceedance_store_0p4: Annotated[
+        str | None,
+        typer.Option("--exceedance-store-0p4", help="store for pre-2024-02-29 dates"),
+    ] = None,
+    endpoint_url: Endpoint = None,
+    date: Annotated[str | None, typer.Option(help="one date; omit for every contract date")] = None,
+    windows: Annotated[list[int] | None, typer.Option()] = None,
+    rps: Annotated[list[int] | None, typer.Option()] = None,
+) -> None:
+    """Static exceedance PNG overlays into data/<date>/overlays/.
+
+    Batch mode (no --date) renders every date directory under data/, opening
+    each era store once. Dates whose era store is not configured or that are
+    absent from it are skipped with a warning.
+    """
+    import xarray as xr
+    from dashboard.data_pipeline.overlays import render_date_overlays
+
+    data_dir = _data(out)
+    if date:
+        days = [date]
+    else:
+        days = sorted(d.name for d in data_dir.iterdir()
+                      if d.is_dir() and re.match(r"\d{4}-\d{2}-\d{2}$", d.name))
+    if not days:
+        log.warning("overlays_no_dates", data_dir=str(data_dir))
+        return
+
+    so = {"endpoint_url": endpoint_url} if endpoint_url else None
+    era_stores = {"0p25": exceedance_store, "0p4": exceedance_store_0p4}
+    opened: dict[str, object] = {}
+    total = failed = 0
+    for day in days:
+        era = "0p25" if day >= "2024-02-29" else "0p4"
+        uri = era_stores[era]
+        if not uri:
+            continue
+        if era not in opened:
+            opened[era] = xr.open_zarr(uri, consolidated=False, storage_options=so)
+        try:
+            ds = opened[era].sel(date=day)
+            total += render_date_overlays(ds, day, data_dir, windows or [24, 72], rps or [5])
+        except (KeyError, ValueError) as exc:
+            failed += 1
+            log.warning("overlays_date_skipped", date=day, error=str(exc)[:120])
+    log.info("overlays_done", n_dates=len(days), n_pngs=total, n_skipped=failed)
+
+
 @app.command("geojson")
 def geojson_split(
     boundaries: Annotated[Path, typer.Option("--boundaries", help="admin-1 boundaries GeoJSON")],

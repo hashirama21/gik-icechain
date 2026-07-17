@@ -123,6 +123,11 @@ jobs:
             --results results/admin1_risk \
             --out dashboard/web/public \
             --date "$PROC"
+          python -m dashboard.data_pipeline.pipeline overlays \
+            --exceedance-store "$GIK_EXCEEDANCE_STORE_URI" \
+            --out dashboard/web/public \
+            --date "$PROC" \
+          || echo "::warning::overlays failed for $PROC"
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
