@@ -36,19 +36,37 @@ All green: parallel shards both eras, merge routed to both stores,
 daily's dates preserved by dedup, C3 spin-up chunks on both eras,
 4 risk JSONs on `s3://gik-icechain/admin1_risk/`.
 
-## After the run completes
+## Outcome (2026-07-17)
 
-1. Check all 53+ jobs green; on partial failure use "Re-run failed jobs"
-   (chunks and merge are idempotent).
-2. Verify store date counts (~407 dates 0p4, ~867 + daily dates 0p25).
-3. Delete the shards:
-   `aws s3 rm --recursive s3://gik-icechain/backfill-shards/`
-4. Rebuild the dashboard contract for the backfilled dates (the backfill
-   does not touch `dashboard-data/`): loop
-   `python -m dashboard.data_pipeline.pipeline contract --date <d>` over
-   the new risk JSONs, then `scripts/publish_dashboard_data.sh` and a
-   `deploy-web` dispatch. Storymap pages generate automatically from the
-   refreshed `index.json` at the next Pages build.
-5. The daily real-time pipeline (`daily_update.yaml`, 08:00 UTC,
-   `ecmwf_direct`) is independent and keeps running during the backfill;
-   the merge dedup makes any overlap harmless.
+Run 29521673050 finished green: **66 jobs success, 1 skipped**
+(notify-failure). Verified in S3:
+
+| Store | Dates | Range | Missing in era |
+|---|---|---|---|
+| exceedance-zarr-0p4 | 401 | 2023-01-18 -> 2024-02-28 | 6 (2023-04-27..05-02: absent from the ECMWF bucket itself, 404) |
+| exceedance-zarr | 863 | 2024-02-29 -> 2026-07-15 | 6 (5 transient fetch failures + 2026-07-16 handled by the daily) |
+
+1 264 risk JSONs on `s3://gik-icechain/admin1_risk/`
+(2023-01-18 -> 2026-07-15). Shards deleted.
+
+## Post-run steps executed
+
+1. Shards deleted (`backfill-shards/` empty).
+2. Catch-up dispatched for the 5 recoverable dates (2025-10-16,
+   2025-10-18, 2026-04-05, 2026-04-30, 2026-07-08), sequentially:
+   GitHub keeps at most ONE pending run per concurrency group, so
+   parallel dispatches cancel each other - always wait between
+   dispatches to the backfill group.
+3. Dashboard contract rebuild: `dashboard-data/` cleared, then a
+   deploy-web dispatch - its "Rebuild the contract from admin1_risk"
+   step fires when the pulled contract is empty and loops every risk
+   JSON (1 264 dates). `dependency()` falls back gracefully for
+   0p4-era dates absent from the 0.25-deg store.
+
+The 2023-04-27..2023-05-02 gap is unrecoverable from the open bucket
+(files were never published); it is also absent from the GIK/E4DRR
+catalogs. Permanent hole, documented here.
+
+The daily real-time pipeline (`daily_update.yaml`, 08:00 UTC,
+`ecmwf_direct`) is independent and keeps running; merge dedup makes
+any overlap harmless.
