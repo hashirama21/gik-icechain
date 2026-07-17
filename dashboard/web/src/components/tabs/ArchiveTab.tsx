@@ -1,11 +1,18 @@
 "use client";
 
-// ARCHIVE tab  one continuous cal-heatmap (GitHub-style) of worst daily risk.
+// ARCHIVE tab  one continuous cal-heatmap (GitHub-style) of daily alert extent.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getIndex, type CalendarIndex } from "@/lib/api";
-import { RISK_COLOR, RISK_LABEL, type RiskState, type UnitRisk } from "@/lib/risk";
+import {
+  EXTENT_THRESHOLDS,
+  RISK_COLOR,
+  alertExtent,
+  extentClass,
+  type RiskState,
+  type UnitRisk,
+} from "@/lib/risk";
 import "cal-heatmap/cal-heatmap.css";
 
 const NOT_IN_ARCHIVE = -2;
@@ -43,7 +50,7 @@ export default function ArchiveTab({
 
   const stats = useMemo(() => {
     const entries = Object.values(index);
-    const signal = entries.filter((d) => d.worst_risk >= 1).length;
+    const signal = entries.filter((d) => extentClass(d) >= 2).length;
     return { days: entries.length, signal, units: Object.keys(risks).length };
   }, [index, risks]);
 
@@ -87,7 +94,7 @@ export default function ArchiveTab({
       const source: { date: string; value: number }[] = [];
       for (let d = new Date(first); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
         const ds = d.toISOString().slice(0, 10);
-        source.push({ date: ds, value: index[ds]?.worst_risk ?? NOT_IN_ARCHIVE });
+        source.push({ date: ds, value: index[ds] ? extentClass(index[ds]) : NOT_IN_ARCHIVE });
       }
 
       await calRef.current?.destroy();
@@ -121,10 +128,14 @@ export default function ArchiveTab({
           [
             Tooltip,
             {
-              text: (_ts: number, value: number | null, dayjsDate: { format: (f: string) => string }) => {
+              text: (ts: number, value: number | null, dayjsDate: { format: (f: string) => string }) => {
                 const day = dayjsDate.format("dddd, MMMM D, YYYY");
                 if (value === null || value === NOT_IN_ARCHIVE) return `Not in archive · ${day}`;
-                return `${RISK_LABEL[value as RiskState]}  worst unit risk · ${day}`;
+                const entry = index[new Date(ts).toISOString().slice(0, 10)];
+                const n = entry ? alertExtent(entry) : null;
+                const extent = n === null ? "" : `${n} Orange+ units · `;
+                const worst = entry ? `worst ${entry.risk_label}` : "";
+                return `${extent}${worst} · ${day}`;
               },
             },
           ],
@@ -201,12 +212,12 @@ export default function ArchiveTab({
         </span>
       </div>
       <div className="text-[11px] mb-3" style={{ color: "var(--ts)" }}>
-        Max daily flood-risk per day · East Africa · click a day → storymap
+        Daily alert extent (admin-1 units at Orange or Red) · East Africa · click a day → storymap
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mb-3.5">
         <Stat label="Days in archive" value={String(stats.days)} color="var(--teal)" />
-        <Stat label="Active signal days" value={String(stats.signal)} color="var(--r500)" />
+        <Stat label="Widespread-alert days" value={String(stats.signal)} color="var(--r500)" />
         <Stat label="Admin-1 units" value={String(stats.units)} color="var(--green)" />
       </div>
 
@@ -219,10 +230,17 @@ export default function ArchiveTab({
               <div id="risk-cal" />
             </div>
             <div className="flex items-center justify-end mt-2 flex-wrap gap-3">
-              {([3, 2, 1, 0, -1] as RiskState[]).map((s) => (
+              {(
+                [
+                  [3, `≥${EXTENT_THRESHOLDS[2]} units`],
+                  [2, `${EXTENT_THRESHOLDS[1]}-${EXTENT_THRESHOLDS[2] - 1}`],
+                  [1, `${EXTENT_THRESHOLDS[0]}-${EXTENT_THRESHOLDS[1] - 1}`],
+                  [0, `<${EXTENT_THRESHOLDS[0]}`],
+                ] as [RiskState, string][]
+              ).map(([s, label]) => (
                 <span key={s} className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>
                   <span className="w-3 h-3 rounded shrink-0" style={{ background: RISK_COLOR[s] }} />
-                  {RISK_LABEL[s]}
+                  {label}
                 </span>
               ))}
               <span className="flex items-center gap-1 font-mono text-[9px]" style={{ color: "var(--ts)" }}>

@@ -12,7 +12,13 @@ import { RISK_COLOR, type RiskState } from "@/lib/risk";
 
 export const dynamicParams = false;
 
-type IndexEntry = { worst_risk: number; risk_label: string; n_units: number };
+type IndexEntry = {
+  worst_risk: number;
+  risk_label: string;
+  n_units: number;
+  n_orange?: number;
+  n_red?: number;
+};
 
 function readIndex(): Record<string, IndexEntry> {
   try {
@@ -176,6 +182,9 @@ export default async function StoryPage({ params }: { params: Promise<{ date: st
               >
                 <span className="w-2 h-2 rounded-full" style={{ background: riskColor }} />
                 PEAK {entry.risk_label.toUpperCase()}
+                {entry.n_orange !== undefined &&
+                  entry.n_red !== undefined &&
+                  ` · ${entry.n_orange + entry.n_red} UNITS ALERTED`}
               </span>
             )}
             {[`${entry ? entry.n_units : 238} admin-1 units`, season(date), "IFS ENS · 51 members"].map(

@@ -25,9 +25,17 @@ function fetchJson<T>(path: string, label: string): Promise<T> {
   return pending;
 }
 
-/** index.json  available dates and worst risk (drives the calendar). */
+/** index.json  available dates, worst risk and alert extent (drives the calendar). */
+export interface CalendarEntry {
+  worst_risk: RiskState;
+  risk_label: string;
+  n_units: number;
+  n_orange?: number;
+  n_red?: number;
+}
+
 export interface CalendarIndex {
-  [date: string]: { worst_risk: RiskState; risk_label: string; n_units: number };
+  [date: string]: CalendarEntry;
 }
 
 export function getIndex(): Promise<CalendarIndex> {
