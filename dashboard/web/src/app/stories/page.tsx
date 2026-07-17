@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getIndex, type CalendarIndex } from "@/lib/api";
-import { RISK_COLOR, type RiskState } from "@/lib/risk";
+import { RISK_COLOR, alertExtent, extentClass } from "@/lib/risk";
 
 export default function StoriesIndex() {
   const [index, setIndex] = useState<CalendarIndex>({});
@@ -29,10 +29,12 @@ export default function StoriesIndex() {
             <Link key={d} href={`/stories/${d}`}
               className="flex items-center gap-3 panel rounded-lg p-3 hover:opacity-90">
               <span className="w-3 h-3 rounded-sm"
-                style={{ background: RISK_COLOR[index[d].worst_risk as RiskState] }} />
+                style={{ background: RISK_COLOR[extentClass(index[d])] }} />
               <span className="font-medium">{d}</span>
               <span className="mono text-[10px]" style={{ color: "var(--td)" }}>
-                {index[d].risk_label} · {index[d].n_units} units
+                {alertExtent(index[d]) !== null
+                  ? `${alertExtent(index[d])} Orange+ units · worst ${index[d].risk_label}`
+                  : `${index[d].risk_label} · ${index[d].n_units} units`}
               </span>
             </Link>
           ))}

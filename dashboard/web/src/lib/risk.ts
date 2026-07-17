@@ -15,6 +15,32 @@ export const RISK_COLOR: Record<RiskState, string> = {
   [-1]: "#445577", 0: "#10B981", 1: "#F59E0B", 2: "#C2410C", 3: "#FF2626",
 };
 
+/** Alert-extent scale for calendar-level severity. worst_risk (max over 238
+ *  units) saturates at archive scale: with a chronic riverine background of
+ *  ~25 Orange+ units/day, some unit is Red almost every day. Class by how
+ *  MANY units alert instead. Thresholds are quartile-anchored on the
+ *  1 270-day archive (median 25, p95 51): <15 background, 15-29 elevated,
+ *  30-49 widespread, >=50 exceptional. */
+export const EXTENT_THRESHOLDS = [15, 30, 50] as const;
+
+export function alertExtent(entry: { n_orange?: number; n_red?: number }): number | null {
+  if (entry.n_orange === undefined || entry.n_red === undefined) return null;
+  return entry.n_orange + entry.n_red;
+}
+
+export function extentClass(entry: {
+  worst_risk: RiskState;
+  n_orange?: number;
+  n_red?: number;
+}): RiskState {
+  const n = alertExtent(entry);
+  if (n === null) return entry.worst_risk;
+  if (n >= EXTENT_THRESHOLDS[2]) return 3;
+  if (n >= EXTENT_THRESHOLDS[1]) return 2;
+  if (n >= EXTENT_THRESHOLDS[0]) return 1;
+  return 0;
+}
+
 /** Risk fields for one return period. */
 export interface RiskFields {
   risk_state: RiskState;

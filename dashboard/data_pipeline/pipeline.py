@@ -190,9 +190,14 @@ def update_index(data_dir: Path, day: str, scores: dict) -> None:
     p = data_dir / "index.json"
     idx = json.loads(p.read_text()) if p.exists() else {}
     units = scores.get("units", {})
-    worst = max((int(u.get("risk_state", -1)) for u in units.values()), default=-1)
-    idx[day] = {"worst_risk": worst, "risk_label": RISK_LABELS.get(worst, "No_Data"),
-                "n_units": len(units)}
+    states = [int(u.get("risk_state", -1)) for u in units.values()]
+    # worst_risk saturates at archive scale (max over 238 units is Red almost
+    # daily); n_orange/n_red let the calendar encode alert EXTENT instead.
+    idx[day] = {"worst_risk": max(states, default=-1),
+                "risk_label": RISK_LABELS.get(max(states, default=-1), "No_Data"),
+                "n_units": len(units),
+                "n_orange": sum(1 for s in states if s == 2),
+                "n_red": sum(1 for s in states if s == 3)}
     data_dir.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(dict(sorted(idx.items())), indent=1))
 

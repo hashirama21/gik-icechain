@@ -45,6 +45,31 @@ pas concurrents : ce sont les deux livrables, alimentés par le même pipeline.
 **rasters** (exceedance gridé, GPM, extent EM-DAT) dans la storymap B ; Lambda est
 facturé à l'invocation (≈ 0 € au repos).
 
+## Échelle du calendrier : étendue d'alerte, pas max
+
+Le calendrier de l'archive était coloré par `worst_risk` (max des 238
+unités). À l'échelle de l'archive complète (1 270 jours), ce max sature :
+le fond chronique riverain (Sudd, Shabelle, Nil Blanc) maintient une
+médiane de **25 unités Orange+/jour**, donc au moins une unité Red existe
+presque chaque jour — 79 % de jours « Red », 0 % « Green », aucun pouvoir
+discriminant. Le risque par unité, lui, est sain (4-12 % d'unités Red un
+jour ordinaire, précision 0,96 à Orange+ sur la validation satellite).
+
+Correctif (2026-07-17) : `index.json` porte `n_orange` / `n_red` par jour
+(`update_index`), et le calendrier classe par **étendue** = unités Orange+
+du jour, seuils ancrés sur les quartiles de l'archive (médiane 25, p95 51) :
+
+| Classe | Unités Orange+ | Part de l'archive |
+|---|---|---|
+| vert | < 15 | 29 % |
+| jaune | 15-29 | 31 % |
+| orange | 30-49 | 33 % |
+| rouge | ≥ 50 | 7 % |
+
+Seuils dans `web/src/lib/risk.ts` (`EXTENT_THRESHOLDS`). Les entrées
+d'index sans compteurs (anciens contrats) retombent sur `worst_risk`.
+Le `worst_risk` reste exposé (tooltip, chip « PEAK » des storymaps).
+
 ## Contrat de données : sortie pipeline → couche
 
 | Couche (template.mdx) | Source pipeline | Producteur | Statut |
