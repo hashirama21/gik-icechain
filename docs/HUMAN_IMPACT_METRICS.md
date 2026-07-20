@@ -171,7 +171,83 @@ ce pipeline seul ne garantit pas.
   extrapolations). C'est un travail faisable - `risk/lead_time_skill.py`
   existe déjà pour ça - mais qui n'a pas encore été fait pour 2025.
 
-## 7. Ce qu'on ne peut pas dire à partir de ces chiffres
+## 7. Deuxième ordre : maladies hydriques et paludisme, même bilan 2025
+
+Une inondation ne s'arrête pas le jour où l'eau se retire : elle laisse une
+eau stagnante qui couve le choléra pendant des semaines et des gîtes
+larvaires à moustiques pendant des mois. C'est un effet **de deuxième
+ordre** - trois maillons causaux après ce que le système mesure
+(prévision → alerte → action en amont de la crue → moins de cas de
+maladie) - donc traité ici avec encore plus de prudence qu'au § 6.
+
+### 7.1 Choléra 2025 : un fait rapporté, un lien partiel avec les crues
+
+| Pays | Cas (2025) | Décès | Lien documenté avec les inondations |
+|---|---:|---:|---|
+| Soudan du Sud | **77 388** (1er jan-28 sept) | **1 249** | Crues ayant endommagé 63 établissements de santé et déplacé ~230 000 personnes (OMS/OCHA) |
+| Soudan | **71 728** | **2 012** | Les autorités sanitaires pointent le mélange eaux de crue / eaux usées comme voie de contamination (OCHA) |
+
+**Ce lien n'est pas causal ni exclusif.** Ces deux épidémies sont
+dominées par le **conflit armé et l'effondrement des systèmes
+eau-assainissement** - les inondations sont **une voie de contamination
+documentée parmi d'autres**, pas la cause unique. L'Afrique CDC qualifie
+2025 de pire année pour le choléra sur le continent depuis 25 ans, un
+phénomène bien plus large que l'Afrique de l'Est. **Je ne calcule
+délibérément aucun « nombre de cas de choléra évités par notre
+système »** - la chaîne causale est trop confondue (conflit, déplacement,
+capacité WASH) pour qu'un chiffre soit autre chose qu'une invention.
+
+### 7.2 Paludisme : un mécanisme mieux quantifié dans la littérature
+
+Contrairement au choléra, le lien inondation → paludisme est établi par
+des études épidémiologiques dédiées, avec un ordre de grandeur répété :
+
+| Étude | Contexte | Effet mesuré |
+|---|---|---|
+| Kasese, Ouganda (crue de mai 2013) | Villages riverains vs éloignés | **+30 %** de risque de test paludisme positif après la crue, dans les villages riverains |
+| Gezira, Soudan (crue de 2013) | Sites sentinelles | Incidence passée de 6,09 à 8,24 pour 100 000 personnes-jours (**+35 %** relatif) |
+
+Mécanisme : l'eau stagnante et les flaques de décrue créent de nouveaux
+gîtes larvaires pour les moustiques *Anopheles*, sur une fenêtre de
+plusieurs semaines à plusieurs mois après la crue - bien après que le
+signal hydrologique soit retombé.
+
+**Le lien avec ce qui a été construit aujourd'hui (§ extension à 10
+jours) :** la lutte antivectorielle (pulvérisation intra-domiciliaire,
+distribution de moustiquaires, démoustication des nouveaux gîtes) demande
+un délai d'organisation - souvent **plus long** que celui nécessaire à
+une évacuation d'urgence. C'est précisément ce que l'extension d'horizon
+à 240h (10 jours), calibrée aujourd'hui même sur 9 ans de données GPM
+IMERG (voir le journal de run), vise à fournir : plus de jours de préavis
+pour organiser une réponse qui ne se limite pas à l'évacuation immédiate.
+
+**Estimation, prudemment bornée** : les ~1,33 million de personnes déjà
+comptées au § 6.1 comme affectées par les crues 2025 sont, par ce
+mécanisme, la population dont le risque paludisme se trouve élevé
+pendant les semaines/mois suivant la crue - **pas un nombre de cas**,
+faute d'un décompte 2025 spécifique au paludisme post-crue pour ces
+événements précis. Il est notable (mais ne constitue pas une preuve) que
+l'ordre de grandeur « +30 % » revienne indépendamment dans la littérature
+épidémiologique du paludisme (Ouganda, Soudan) et dans la statistique
+généraliste ONU/OMM déjà citée au § 6.2 (« 24h de préavis réduisent les
+dégâts de jusqu'à 30 % ») - une coïncidence de grandeur, pas une preuve
+que le même mécanisme est à l'œuvre.
+
+### 7.3 Ce que ce paragraphe ne dit pas
+
+- **Aucun cas de choléra ou de paludisme évité n'est chiffré.** La
+  distance causale (prévision → alerte → action → moins de crue subie →
+  moins de maladie) est trop longue pour un nombre défendable avec les
+  sources disponibles.
+- Le choléra 2025 Soudan/Soudan du Sud est **majoritairement** un
+  phénomène conflit + WASH, pas un phénomène météo - ne pas lire le
+  tableau du § 7.1 comme « notre système aurait pu éviter 77 388 cas ».
+  Ce serait faux et trompeur.
+- Les effets « +30 %/+35 % » du paludisme viennent d'études sur des
+  crues de **2013** en Ouganda et au Soudan - des contextes précis, pas
+  une loi universelle transposable telle quelle à chaque crue 2025.
+
+## 8. Ce qu'on ne peut pas dire à partir de ces chiffres
 
 - **Le §6 est un ordre de grandeur de plaidoyer, pas un résultat de
   recherche.** Les ~64 vies et ~203 000 personnes sont une statistique
@@ -197,6 +273,10 @@ ce pipeline seul ne garantit pas.
   jeux de données FAO/VIIRS et UNOSAT cités - ce sont des estimations
   satellite de population dans la zone inondée, pas des dénombrements
   vérifiés au sol.
+- **§ 7 (choléra/paludisme) ne chiffre aucun cas ou décès évité.** Le
+  choléra 2025 au Soudan/Soudan du Sud est majoritairement un phénomène
+  conflit + WASH ; le paludisme n'a qu'un ordre de grandeur d'effet
+  (études 2013), pas un décompte 2025 pour ces événements précis.
 
 ---
 
@@ -208,4 +288,15 @@ ce pipeline seul ne garantit pas.
 *Early Warnings for All*, 22 octobre 2025
 ([wmo.int](https://wmo.int/news/media-centre/early-warnings-all-initiative-scaled-action-ground),
 [undrr.org](https://www.undrr.org/implementing-sendai-framework/sendai-framework-action/early-warnings-for-all)).
+Choléra 2025 (§ 7.1) : OMS *Cholera – Multi-country* DON
+([who.int](https://www.who.int/emergencies/disease-outbreak-news/item/2025-DON579)),
+OMS AFRO South Sudan
+([afro.who.int](https://www.afro.who.int/countries/south-sudan/news/sustained-response-curbing-cholera-outbreak-south-sudan)),
+OCHA Sudan Cholera Operational Update, 3 juillet 2025
+([unocha.org](https://www.unocha.org/publications/report/sudan/sudan-cholera-operational-update-3-july-2025)).
+Paludisme post-crue (§ 7.2) : Uganda highlands 2013,
+*J Infect Dis* 214(9):1403
+([PMC5079365](https://pmc.ncbi.nlm.nih.gov/articles/PMC5079365/)) ;
+Gezira, Soudan, 2013
+([PMC6209411](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6209411/)).
 Reproductible via `python scripts/satellite_validation.py`.*
