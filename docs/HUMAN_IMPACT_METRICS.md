@@ -80,8 +80,105 @@ pour les décisions lourdes et coûteuses.
   et calcul dédié, celui-ci le fait à coût quasi nul - ce qui compte pour
   des services météo nationaux à budget contraint.
 
-## 6. Ce qu'on ne peut pas dire à partir de ces chiffres
+## 6. Étude de cas : les inondations réelles de 2025 en Afrique de l'Est
 
+**Question posée : si ce système avait existé et alerté à temps en 2025,
+combien de vies aurait-on pu épargner ?** Voici comment y répondre
+honnêtement - avec le vrai bilan 2025, une statistique externe citée (pas
+inventée), et une lecture doublement prudente.
+
+### 6.1 Le bilan réel 2025 (données EM-DAT, `data/emdat/east_africa_floods.csv`)
+
+| Événement | Pays | Période | Morts | Personnes affectées |
+|---|---|---|---:|---:|
+| 2025-0109-MDG | Madagascar | 15-16 fév | - | 3 688 |
+| 2025-0128-MDG | Madagascar | 15-28 fév | 11 | - |
+| 2025-0226-MWI | Malawi | jan-mars | 39 | 180 801 |
+| 2025-0306-SOM | Somalie | 15-30 avr | 4 | 45 000 |
+| 2025-0346-SOM | Somalie | 9-10 mai | 14 | 84 000 |
+| 2025-0373-TZA | Tanzanie | 14-15 mai | 26 | 3 150 |
+| 2025-0719-UGA | Ouganda | 17-19 août | 5 | 15 000 |
+| 2025-0735-SDN | Soudan | 27-28 août | 32 | 10 000 |
+| 2025-0764-SSD | Soudan du Sud | juin-sept | 20 | 960 000 |
+| 2025-1081-ZMB | Zambie | déc 2025-jan 2026 | - | 25 000 |
+| **Total (champs renseignés)** | **10 événements** | | **151 morts** | **~1 326 600 personnes** |
+
+*Provenance : extrait EM-DAT au format utilisé en interne par
+`risk/cpt_refinement.py` pour calibrer/valider le modèle - le même jeu de
+données que le système utilise déjà pour se juger lui-même. Le fichier
+source se documente lui-même comme un extrait **curé, potentiellement
+approximatif**, pas l'export EM-DAT officiel en temps réel - certains
+champs morts/affectés sont vides quand la donnée n'était pas disponible ;
+les vrais totaux sont donc probablement **supérieurs** à ceux ci-dessus.*
+
+### 6.2 La statistique externe utilisée (citée, pas inventée)
+
+> « La mortalité liée aux catastrophes est au moins **6 fois plus faible**
+> dans les pays dotés d'un système d'alerte précoce de qualité, et **24h de
+> préavis** avant un aléa peuvent réduire les dégâts de **jusqu'à 30 %**. »
+> - António Guterres, Secrétaire général de l'ONU, 22 octobre 2025,
+> initiative *Early Warnings for All* (OMM, UNDRR, UIT, FICR).
+> [wmo.int](https://wmo.int/news/media-centre/early-warnings-all-initiative-scaled-action-ground) ·
+> [undrr.org](https://www.undrr.org/implementing-sendai-framework/sendai-framework-action/early-warnings-for-all)
+
+**Ce que cette statistique mesure et ce qu'elle ne mesure pas** : c'est une
+association mondiale, cross-pays, entre la présence d'un **système
+d'alerte précoce complet** (prévision **+ diffusion dernier kilomètre +
+préparation communautaire + capacité d'évacuation**) et la mortalité liée
+aux catastrophes - toutes catastrophes, tous pays confondus. **Ce n'est ni
+un essai contrôlé, ni une mesure spécifique aux inondations d'Afrique de
+l'Est, ni une évaluation de notre système en particulier.** Notre pipeline
+ne fournit que **la couche prévision/détection** - une pièce nécessaire
+mais pas suffisante de ce système complet.
+
+### 6.3 Estimation illustrative - deux lectures
+
+| Lecture | Méthode | Morts évitées (illustratif) | Personnes moins affectées (illustratif) |
+|---|---|---:|---:|
+| **Plafond théorique** | Si un système d'alerte *complet* et de qualité avait couvert ces 10 événements (mortalité ÷ 6, dégâts × 0,70) | **~126** (151 → ~25) | **~398 000** (30 % de 1 326 600) |
+| **Réalisable aujourd'hui** | Le plafond ci-dessus, pondéré par le **recall réellement mesuré de notre couche prévision** (0,51 @ Orange+, § 2) - la moitié des crues comparables ne déclenchent pas encore d'alerte à temps | **~64** | **~203 000** |
+
+**Comment lire ce tableau** : la colonne « réalisable aujourd'hui » n'est
+**pas une prédiction** - c'est le plafond théorique multiplié par notre
+propre métrique de couverture déjà mesurée (0,51), pour éviter de
+s'attribuer un bénéfice qui suppose un système parfait. Elle suppose aussi
+que, **quand** le système alerte à temps, la chaîne complète (diffusion,
+préparation, évacuation) existe et fonctionne en aval - une hypothèse que
+ce pipeline seul ne garantit pas.
+
+### 6.4 Pourquoi ce chiffre doit être manié avec précaution
+
+- **151 morts et ~1,33 M de personnes affectées sont des faits mesurés**
+  (sous réserve des limites de la source EM-DAT curée, § 6.1). **~64 vies**
+  et **~203 000 personnes** ne sont **pas** des faits - ce sont des
+  extrapolations à deux niveaux (statistique mondiale externe × recall
+  mesuré localement), à traiter comme un ordre de grandeur de plaidoyer,
+  pas comme un résultat scientifique.
+- Le facteur 6× vient d'une comparaison **entre pays** (bons systèmes vs
+  pas de système), pas d'une expérience avant/après sur les mêmes
+  événements - l'appliquer événement par événement suppose que la relation
+  se transpose, ce qui n'est pas démontré ici.
+- Le Soudan du Sud (960 000 affectés, 20 morts rapportés) illustre la
+  limite : c'est une crue **fluviale et durable** (Sudd/Nil Blanc), le
+  profil que notre levier rivière détecte le mieux (§ 2) - le potentiel de
+  bénéfice y est plausiblement plus proche du plafond que la moyenne.
+  Madagascar (cyclogénique, côtière) est plus proche du profil « Banadir »
+  que le système rate encore aujourd'hui (§ 2).
+- Aucun de ces dix événements n'a fait l'objet d'une reconstitution
+  rétrospective événement par événement avec les alertes que notre système
+  aurait réellement émises (contrairement à la Somalie/Deyr et au Soudan du
+  Sud, novembre 2024, § 2-3, qui sont des validations réelles, pas des
+  extrapolations). C'est un travail faisable - `risk/lead_time_skill.py`
+  existe déjà pour ça - mais qui n'a pas encore été fait pour 2025.
+
+## 7. Ce qu'on ne peut pas dire à partir de ces chiffres
+
+- **Le §6 est un ordre de grandeur de plaidoyer, pas un résultat de
+  recherche.** Les ~64 vies et ~203 000 personnes sont une statistique
+  mondiale externe appliquée à un bilan réel - une reconstitution
+  événement par événement (comme celle déjà faite pour le Deyr somalien et
+  le Soudan du Sud, novembre 2024) donnerait un chiffre bien plus solide,
+  et reste à faire pour 2025.
 - **Aucune vie sauvée mesurée.** Précision et recall mesurent la qualité du
   signal, pas l'effet d'une action qui en découle - ça demanderait un essai
   de terrain avec des populations qui reçoivent l'alerte et d'autres non.
@@ -106,5 +203,9 @@ pour les décisions lourdes et coûteuses.
 *Sources : `README.md` (validation IFRC + admin-1 satellite),
 `docs/C3_VALIDATION_FINDINGS.md` (audit complet, avant/après par levier),
 `configs/default.yaml` (seuils REV calibrés,
-`risk/cost_loss_calibration.py`). Reproductible via
-`python scripts/satellite_validation.py`.*
+`risk/cost_loss_calibration.py`), `data/emdat/east_africa_floods.csv`
+(bilan 2025). Statistique externe § 6.2 : ONU/OMM/UNDRR/UIT/FICR,
+*Early Warnings for All*, 22 octobre 2025
+([wmo.int](https://wmo.int/news/media-centre/early-warnings-all-initiative-scaled-action-ground),
+[undrr.org](https://www.undrr.org/implementing-sendai-framework/sendai-framework-action/early-warnings-for-all)).
+Reproductible via `python scripts/satellite_validation.py`.*
