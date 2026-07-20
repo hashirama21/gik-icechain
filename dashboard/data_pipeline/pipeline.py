@@ -32,8 +32,10 @@ log = structlog.get_logger(__name__)
 app = typer.Typer(add_completion=False, help=__doc__)
 
 RISK_LABELS = {0: "Green", 1: "Yellow", 2: "Orange", 3: "Red", -1: "No_Data"}
-WINDOWS_H = [3, 6, 12, 24, 48, 72, 168]
-WINDOW_LABELS = {3: "3h", 6: "6h", 12: "12h", 24: "24h", 48: "48h", 72: "72h", 168: "7d"}
+WINDOWS_H = [3, 6, 12, 24, 48, 72, 168, 240]
+WINDOW_LABELS = {
+    3: "3h", 6: "6h", 12: "12h", 24: "24h", 48: "48h", 72: "72h", 168: "7d", 240: "10d",
+}
 RETURN_PERIODS = [2, 5, 10, 20, 40, 100]
 N_MEMBERS = 51
 EA_BBOX = [22.0, -14.5, 54.0, 25.0]  # west, south, east, north
@@ -164,10 +166,14 @@ def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict
             inside[len(jj) // 2] = True
         sj, si = jj[inside], ii[inside]
         gev = {}
-        for wi, wh in enumerate(WINDOWS_H):
+        for wh in WINDOWS_H:
             gev[WINDOW_LABELS[wh]] = {}
-            for ri, rp in enumerate(RETURN_PERIODS):
-                vmax = float(np.nanmax(exc.values[sj, si, wi, ri]))
+            if wh not in exc["window"].values:
+                continue  # window not (yet) in this store, e.g. 240h pre-activation
+            for rp in RETURN_PERIODS:
+                if rp not in exc["return_period"].values:
+                    continue
+                vmax = float(np.nanmax(exc.sel(window=wh, return_period=rp).values[sj, si]))
                 if not np.isnan(vmax):
                     gev[WINDOW_LABELS[wh]][str(rp)] = round(vmax, 4)
         conf_m = 0

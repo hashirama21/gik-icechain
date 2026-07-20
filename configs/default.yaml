@@ -74,6 +74,14 @@ component2:
       windows_h: [3, 6, 12, 24, 48, 72, 168]
       return_periods: [2, 5, 10, 20, 40, 100]
       max_forecast_h: 168
+    # Opt-in: extends the horizon to 10 days (ECMWF IFS ENS publishes to 15,
+    # 360h). NOT active by default - thresholds_*_240h.nc must exist first
+    # (build-thresholds-gpm --windows-h ...,240, see docs/LEAD_TIME_10D.md).
+    # Activate with `--profile extended_10d` once calibrated and validated.
+    extended_10d:
+      windows_h: [3, 6, 12, 24, 48, 72, 168, 240]
+      return_periods: [2, 5, 10, 20, 40, 100]
+      max_forecast_h: 240
 
   spatial:
     bbox: [-14.5, 25, 20, 54]   # [lat_min, lat_max, lon_min, lon_max]
