@@ -40,6 +40,8 @@ jobs:
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: dev
+      - name: Download ENSO/IOD index
+        run: python scripts/tools.py download --component enso_iod
       - name: Build thresholds from GPM IMERG
         env:
           EARTHDATA_USER: ${{ secrets.EARTHDATA_USER }}
