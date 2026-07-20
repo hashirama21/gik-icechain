@@ -26,6 +26,9 @@ on:
       workers:
         description: "Parallel download workers"
         default: "6"
+      windows_h:
+        description: "Comma-separated accumulation windows (hours). Add 240 for the 10-day / extended_10d profile"
+        default: "3,6,12,24,48,72,168"
 
 jobs:
   build-thresholds:
@@ -51,6 +54,7 @@ jobs:
             --start "${{ inputs.start }}" \
             --end "${{ inputs.end }}" \
             --workers "${{ inputs.workers }}" \
+            --windows-h "${{ inputs.windows_h }}" \
             --output data/thresholds_gpm
       - name: Upload thresholds artifact
         uses: actions/upload-artifact@v4

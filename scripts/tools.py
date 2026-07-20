@@ -430,6 +430,15 @@ def build_thresholds_gpm(
         bool, typer.Option(help="Download missing GPM files first (needs Earthdata).")
     ] = False,
     workers: Annotated[int, typer.Option(help="Parallel download workers.")] = 12,
+    windows_h: Annotated[
+        str | None,
+        typer.Option(
+            "--windows-h",
+            help="Comma-separated accumulation windows in hours. Default matches "
+            "the production set (3,6,12,24,48,72,168); add 240 to also calibrate "
+            "the 10-day / extended_10d profile.",
+        ),
+    ] = None,
 ) -> None:
     """Build season x ENSO x IOD Gumbel thresholds from GPM IMERG daily data.
 
@@ -438,13 +447,17 @@ def build_thresholds_gpm(
 
     Example:
       python scripts/tools.py build-thresholds-gpm --start 2001-01-01 --end 2023-12-31
+      python scripts/tools.py build-thresholds-gpm --start 2001-01-01 --end 2023-12-31 \\
+        --windows-h 3,6,12,24,48,72,168,240
     """
     from gik_icechain.thresholds.gpm_seasonal import (
+        WINDOWS_H,
         build_seasonal_thresholds,
         download_gpm_ea,
         load_gpm_daily_ea,
     )
 
+    window_list = [int(w.strip()) for w in windows_h.split(",")] if windows_h else WINDOWS_H
     s, e = date.fromisoformat(start), date.fromisoformat(end)
 
     if download:
@@ -469,7 +482,8 @@ def build_thresholds_gpm(
     season_list = [x.strip() for x in seasons.split(",")]
     arm = "static (unstratified)" if pool_seasons else "season-stratified"
     typer.echo(
-        f"Fitting thresholds [{arm}]: seasons={season_list}, min_years={min_years} ..."
+        f"Fitting thresholds [{arm}]: seasons={season_list}, "
+        f"windows_h={window_list}, min_years={min_years} ..."
     )
     written = build_seasonal_thresholds(
         daily_da=daily_da,
@@ -478,6 +492,7 @@ def build_thresholds_gpm(
         min_years=min_years,
         seasons=season_list,
         pool_seasons=pool_seasons,
+        windows_h=window_list,
     )
     typer.echo(f"Wrote {len(written)} threshold files to {output}")
 
