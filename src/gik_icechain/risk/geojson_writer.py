@@ -169,7 +169,8 @@ def export_eahw_format(
     boundaries_data = json.loads(boundaries_path.read_text())
     issue_date = scores_data["date"]
     if horizon_days is None:
-        horizon_days = int(scores_data.get("meta", {}).get("forecast_horizon_days", _DEFAULT_HORIZON_DAYS))
+        meta = scores_data.get("meta", {})
+        horizon_days = int(meta.get("forecast_horizon_days", _DEFAULT_HORIZON_DAYS))
     valid_end = (date.fromisoformat(issue_date) + timedelta(days=horizon_days)).isoformat()
     units_by_pcode = scores_data["units"]
 

@@ -57,7 +57,7 @@ def _write_store_with_lead(tmp_path, windows_h, return_periods, leads, horizon_v
     """Store with a constant max-horizon field and a per-lead field (constant per lead)."""
     lats = np.array([4.5, 3.5, 2.5, 1.5], dtype="float64")
     lons = np.array([33.5, 34.5, 35.5, 36.5], dtype="float64")
-    nw, nr, nl = len(windows_h), len(return_periods), len(leads)
+    nw, nr = len(windows_h), len(return_periods)
     by_lead = np.stack(
         [np.full((4, 4, nw, nr), v, dtype="float32") for v in lead_vals], axis=0
     )

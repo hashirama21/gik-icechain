@@ -183,7 +183,10 @@ def _zonal(
     if "date" in ds.dims:
         ds = ds.sel(date=day)
     exc_var = ds["exceedance_prob"]
-    has_lead = "exceedance_prob_by_lead" in ds.data_vars and "lead" in ds["exceedance_prob_by_lead"].dims
+    has_lead = (
+        "exceedance_prob_by_lead" in ds.data_vars
+        and "lead" in ds["exceedance_prob_by_lead"].dims
+    )
     if lead is not None and has_lead and lead in ds["exceedance_prob_by_lead"]["lead"].values:
         exc_var = ds["exceedance_prob_by_lead"].sel(lead=lead)
     exc = exc_var.transpose("latitude", "longitude", "window", "return_period").load()

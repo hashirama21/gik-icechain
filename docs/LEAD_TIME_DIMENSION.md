@@ -52,26 +52,27 @@ Mapping pas → lead : `lead_day = floor((forecast_hour - 1) / 24)`.
 
 ## Activation en production (⚠ pas un simple flip de flag)
 
-Le store de prod (`exceedance-zarr`, deux ères) contient déjà ~1264 dates **sans**
-la variable `exceedance_prob_by_lead`. Or l'append refuse d'introduire une variable
-absente du store (garde-fou anti-corruption, cf. `writer._align_append_schema` et
-`test_introducing_lead_on_legacy_store_raises`). **Activer `emit_lead_dimension: true`
-tel quel casserait le job quotidien** à l'étape append.
+**Contrainte** : l'append refuse d'introduire une variable absente du store
+(garde-fou anti-corruption, cf. `writer._align_append_schema` et
+`test_introducing_lead_on_legacy_store_raises`). Activer `emit_lead_dimension: true`
+sur un store existant qui n'a pas encore `exceedance_prob_by_lead` casserait donc
+le job quotidien à l'étape append.
 
-Chemin sûr (forward-only), au choix :
+**Chemin retenu — wipe + recompute complet.** Les stores par ère
+(`exceedance-zarr`, `exceedance-zarr-0p4`) sont **vidés puis entièrement
+recalculés avec toutes les variables**. Comme le premier write d'un store vide est
+un `mode="w"` (cf. `write_exceedance_store` : `FileNotFoundError` → création), chaque
+store est créé en portant `exceedance_prob_by_lead` dès l'origine ; les merges/append
+suivants trouvent la variable et s'alignent. Le flag est donc activé globalement :
 
-1. **Nouveau store lead-enabled** : écrire les dates à venir dans un store neuf
-   (`exceedance-zarr-lead`), servir les deux le temps de la transition, basculer le
-   dashboard quand la couverture est suffisante. Le plus sûr, zéro risque sur
-   l'existant.
-2. **Réécriture ponctuelle** : recalculer/réécrire le store (`append=False`) avec
-   `emit_lead_dimension: true` pour intégrer la nouvelle variable, puis reprendre
-   l'append quotidien. Implique un backfill (coût runner, par sous-plages).
+- `configs/default.yaml` : `emit_lead_dimension: true` (hérité par `configs/realtime.yaml`,
+  utilisé à la fois par `daily_update.yaml` et `backfill.yaml`).
+- Procédure : (1) supprimer les zarrs de prod ; (2) redispatcher `backfill.yaml` sur
+  toute la plage (shards → `merge_exceedance_shards.py`, déjà lead-aware) ; (3) le daily
+  reprend l'append en portant la variable.
 
-Une fois un store lead-enabled disponible, activer `emit_lead_dimension: true` dans
-`configs/realtime.yaml` (daily) et brancher le dashboard (dependency/COG lead déjà
-prêts). Tant que ce store n'existe pas, le flag reste `false` : toute la plomberie
-est gracieuse et sans effet.
+Le dashboard s'auto-active : dès que `dependency.json` porte `gev_by_lead`, le sélecteur
+d'échéance apparaît (aucune bascule web à faire).
 
 ## Sémantique & calibration (à trancher avant remplacement)
 
@@ -85,9 +86,8 @@ remplacement de la vue par défaut imposerait de re-valider AUC/precision/recall
 
 ## Backfill
 
-Bascule **forward-only** : le daily écrit la dimension lead à J+0. L'historique
-(1264 dates) n'est pas recalculé par défaut — un store écrit sans la variable
-doit être **réécrit** (append refuse d'introduire une variable absente, par
-sécurité). À planifier seulement si les storyboards **historiques** doivent
-afficher le lead par carte. RP=50 de l'échelle de Jessica dépend d'un refit GEV
-(bloqué sur les secrets Earthdata, cf. `docs/LEAD_TIME_10D.md`).
+Recompute **complet** : les deux stores par ère sont vidés puis recalculés sur
+toute la plage (2023-01-18 →), chaque date portant `exceedance_prob_by_lead`.
+Couvre donc aussi les storyboards historiques (lead par carte disponible). RP=50 de
+l'échelle de Jessica reste hors périmètre (refit GEV, bloqué sur les secrets
+Earthdata, cf. `docs/LEAD_TIME_10D.md`).

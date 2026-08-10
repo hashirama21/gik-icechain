@@ -75,7 +75,8 @@ class TestLeadDimension:
         assert "lead" not in ds["exceedance_prob"].dims
         assert "lead" in ds["exceedance_prob_by_lead"].dims
         assert list(ds["lead"].values) == [0, 1, 2]
-        assert float(ds["exceedance_prob_by_lead"].sel(date="2024-01-01").mean()) == pytest.approx(0.7)
+        mean_d1 = float(ds["exceedance_prob_by_lead"].sel(date="2024-01-01").mean())
+        assert mean_d1 == pytest.approx(0.7)
 
     def test_appended(self, tmp_path):
         uri = str(tmp_path / "exc.zarr")
@@ -90,7 +91,8 @@ class TestLeadDimension:
         )
         ds = xr.open_zarr(uri, consolidated=False)
         assert ds["exceedance_prob_by_lead"].sizes["date"] == 2
-        assert float(ds["exceedance_prob_by_lead"].sel(date="2024-01-02").mean()) == pytest.approx(0.8)
+        mean_d2 = float(ds["exceedance_prob_by_lead"].sel(date="2024-01-02").mean())
+        assert mean_d2 == pytest.approx(0.8)
 
     def test_append_without_lead_pads_it(self, tmp_path):
         uri = str(tmp_path / "exc.zarr")

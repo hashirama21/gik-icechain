@@ -57,7 +57,11 @@ component2:
   step_buffer: 1
   skip_subresolution_windows: true
 
-  emit_lead_dimension: false
+  # Per-lead-day exceedance view (exceedance_prob_by_lead, adds a `lead` dim)
+  # written next to the max-over-horizon exceedance_prob. Enabled: stores are
+  # wiped and fully recomputed (mode=w) so each carries the lead view from
+  # creation - no append onto a legacy store. See docs/LEAD_TIME_DIMENSION.md.
+  emit_lead_dimension: true
 
   windows_h: [3, 6, 12, 24, 48, 72, 168]
   return_periods: [2, 5, 10, 20, 40, 100]
