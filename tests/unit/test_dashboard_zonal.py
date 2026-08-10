@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 import xarray as xr
-from dashboard.data_pipeline.pipeline import _zonal
+from dashboard.data_pipeline.pipeline import _zonal, dependency
 
 _BOUNDARIES = {
     "type": "FeatureCollection",
@@ -114,6 +114,63 @@ class TestZonalLead:
 
         r = _zonal(boundaries, "2024-11-04", store, None, lead=9)
         assert r["KEN_Turkana"]["gev"]["24h"]["5"] == pytest.approx(0.1)
+
+    def test_with_leads_emits_all_leads(self, tmp_path):
+        store = _write_store_with_lead(
+            tmp_path, [24], [5], leads=[0, 1, 2], horizon_val=0.1, lead_vals=[0.2, 0.9, 0.3]
+        )
+        boundaries = tmp_path / "b.geojson"
+        boundaries.write_text(json.dumps(_BOUNDARIES))
+
+        r = _zonal(boundaries, "2024-11-04", store, None, with_leads=True)
+        gbl = r["KEN_Turkana"]["gev_by_lead"]
+        assert set(gbl) == {"0", "1", "2"}
+        assert gbl["1"]["24h"]["5"] == 0.9
+        # The max-horizon gev is still the default view.
+        assert r["KEN_Turkana"]["gev"]["24h"]["5"] == pytest.approx(0.1)
+
+    def test_with_leads_absent_when_store_lacks_variable(self, tmp_path):
+        store = _write_store(tmp_path, [24], [5])
+        boundaries = tmp_path / "b.geojson"
+        boundaries.write_text(json.dumps(_BOUNDARIES))
+
+        r = _zonal(boundaries, "2024-11-04", store, None, with_leads=True)
+        assert "gev_by_lead" not in r["KEN_Turkana"]
+
+
+class TestDependencyContract:
+    """dependency.json is what the web DependencyPanel lead selector consumes."""
+
+    def _boundaries(self, tmp_path):
+        b = tmp_path / "b.geojson"
+        b.write_text(json.dumps(_BOUNDARIES))
+        return b
+
+    def test_gev_by_lead_lands_in_contract(self, tmp_path):
+        store = _write_store_with_lead(
+            tmp_path, [24], [5], leads=[0, 1, 2], horizon_val=0.1, lead_vals=[0.2, 0.9, 0.3]
+        )
+        boundaries = self._boundaries(tmp_path)
+        scores = {"units": {"KEN_Turkana": {"risk_state": 2, "rp_years": 5}}}
+        data_dir = tmp_path / "data"
+
+        dependency(scores, boundaries, data_dir, "2024-11-04", store, None)
+
+        dep = json.loads((data_dir / "2024-11-04" / "dependency.json").read_text())
+        gbl = dep["KEN_Turkana"]["gev_by_lead"]
+        assert set(gbl) == {"0", "1", "2"}
+        assert gbl["1"]["24h"]["5"] == 0.9
+
+    def test_no_gev_by_lead_when_store_lacks_variable(self, tmp_path):
+        store = _write_store(tmp_path, [24], [5])
+        boundaries = self._boundaries(tmp_path)
+        scores = {"units": {"KEN_Turkana": {"risk_state": 1, "rp_years": 5}}}
+        data_dir = tmp_path / "data"
+
+        dependency(scores, boundaries, data_dir, "2024-11-04", store, None)
+
+        dep = json.loads((data_dir / "2024-11-04" / "dependency.json").read_text())
+        assert "gev_by_lead" not in dep["KEN_Turkana"]
 
 
 class TestZonal:

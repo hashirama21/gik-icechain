@@ -33,22 +33,45 @@ Mapping pas → lead : `lead_day = floor((forecast_hour - 1) / 24)`.
   `effective_max_lead_days`. Flag exposé dans `configs/default.yaml`.
 - **Pipeline quotidien** : `cli._process_exceedance_day` calcule aussi la vue par
   lead quand le flag est actif, et `_run_exceedance` la persiste.
-- **Read-side dashboard** : `data_pipeline.pipeline._zonal(..., lead=L)` extrait
-  l'échéance demandée, avec repli propre sur `exceedance_prob` si la variable ou
-  l'échéance est absente (défaut `lead=None` = comportement actuel).
+- **Read-side dashboard** :
+  - `_zonal(..., lead=L)` extrait une échéance ; `_zonal(..., with_leads=True)` émet
+    en un seul passage un bloc `gev_by_lead` par unité (réutilise les masques
+    polygonaux). `dependency()` l'attache à `dependency.json` **quand le store
+    porte la variable** (0 coût / 0 sortie sinon).
+  - `exceedance_cogs(..., lead=L)` écrit `exceedance_{date}_{w}_{rp}_L{lead}.tif`
+    (repli propre sur le max-horizon si la variable/échéance est absente).
+- **Sélecteur d'échéance web** : `DependencyPanel` affiche une sous-sélection
+  d'échéance (étape ① : « Max » + L0…Ln) **seulement** quand `gev_by_lead` est
+  présent ; « Max » (max-horizon) est le défaut. La sévérité par fenêtre (③) et
+  le panneau GEV (④) suivent l'échéance choisie (`sevFromGev` réplique `_sev`).
+  `LEAD_MAX`/`LeadChoice` dans `config.ts`, `gev_by_lead?` dans `api.ts`.
+- **Scripts** : `merge_exceedance_shards.py` propage `exceedance_prob_by_lead`
+  (sinon la variable serait droppée au merge d'un shard).
+  `repair_exceedance_store.py` est déjà générique (il pade toute variable ayant un
+  axe `date`) — aucun changement nécessaire.
 
-## Reste à faire (activation)
+## Activation en production (⚠ pas un simple flip de flag)
 
-Ces étapes se font au moment de la bascule (forward-only), quand un store
-lead-enabled existe à servir :
+Le store de prod (`exceedance-zarr`, deux ères) contient déjà ~1264 dates **sans**
+la variable `exceedance_prob_by_lead`. Or l'append refuse d'introduire une variable
+absente du store (garde-fou anti-corruption, cf. `writer._align_append_schema` et
+`test_introducing_lead_on_legacy_store_raises`). **Activer `emit_lead_dimension: true`
+tel quel casserait le job quotidien** à l'étape append.
 
-1. **Sélecteur d'échéance web** (Step 1) : état `lead` dans `DashboardApp.tsx`,
-   contrôle dans `MapTab.tsx`, `LEADS` dans `config.ts`, avec « horizon (max) »
-   comme option par défaut ; émettre un `region_risks` par lead dans le contrat.
-2. **COG par lead** : `exceedance_cogs` prend un paramètre `lead` (même repli).
-3. **Workflow** : activer `emit_lead_dimension: true` dans `daily_update.yaml`.
-4. **Scripts** : rendre `merge_exceedance_shards.py` / `repair_exceedance_store.py`
-   lead-aware avant tout backfill historique.
+Chemin sûr (forward-only), au choix :
+
+1. **Nouveau store lead-enabled** : écrire les dates à venir dans un store neuf
+   (`exceedance-zarr-lead`), servir les deux le temps de la transition, basculer le
+   dashboard quand la couverture est suffisante. Le plus sûr, zéro risque sur
+   l'existant.
+2. **Réécriture ponctuelle** : recalculer/réécrire le store (`append=False`) avec
+   `emit_lead_dimension: true` pour intégrer la nouvelle variable, puis reprendre
+   l'append quotidien. Implique un backfill (coût runner, par sous-plages).
+
+Une fois un store lead-enabled disponible, activer `emit_lead_dimension: true` dans
+`configs/realtime.yaml` (daily) et brancher le dashboard (dependency/COG lead déjà
+prêts). Tant que ce store n'existe pas, le flag reste `false` : toute la plomberie
+est gracieuse et sans effet.
 
 ## Sémantique & calibration (à trancher avant remplacement)
 

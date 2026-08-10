@@ -112,13 +112,15 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
     zonal = None
     if store:
         try:
-            zonal = _zonal(boundaries, day, store, endpoint)
+            zonal = _zonal(boundaries, day, store, endpoint, with_leads=True)
         except Exception as exc:
             log.warning("dependency_store_fallback", error=str(exc)[:120])
     out = {}
     for pcode, u in scores.get("units", {}).items():
+        gev_by_lead = None
         if zonal and pcode in zonal:
             gev, conf_m = zonal[pcode]["gev"], zonal[pcode]["conf_m"]
+            gev_by_lead = zonal[pcode].get("gev_by_lead")
         else:
             gev = {lbl: {} for lbl in WINDOW_LABELS.values()}
             rp = str(u.get("rp_years", 5))
@@ -129,20 +131,47 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
             conf_m = round(float(u.get("spatial_coverage", 0.0)) * N_MEMBERS)
         win = {lbl: _sev(max((gev.get(lbl, {}) or {}).values(), default=0.0))
                for lbl in WINDOW_LABELS.values()}
-        out[pcode] = {"win": win, "gev": gev,
-                      "confidence": {"m": conf_m, "label": _conf(conf_m)}}
+        entry = {"win": win, "gev": gev,
+                 "confidence": {"m": conf_m, "label": _conf(conf_m)}}
+        if gev_by_lead:
+            entry["gev_by_lead"] = gev_by_lead
+        out[pcode] = entry
     (data_dir / day).mkdir(parents=True, exist_ok=True)
     (data_dir / day / "dependency.json").write_text(json.dumps(out, separators=(",", ":")))
 
 
+def _gev_from_masked(exc, sj, si):
+    """GEV exceedance dict {window_label: {rp: pmax}} over a polygon's cells."""
+    import numpy as np
+
+    gev = {}
+    for wh in WINDOWS_H:
+        gev[WINDOW_LABELS[wh]] = {}
+        if wh not in exc["window"].values:
+            continue  # window not (yet) in this store, e.g. 240h pre-activation
+        for rp in RETURN_PERIODS:
+            if rp not in exc["return_period"].values:
+                continue
+            vmax = float(np.nanmax(exc.sel(window=wh, return_period=rp).values[sj, si]))
+            if not np.isnan(vmax):
+                gev[WINDOW_LABELS[wh]][str(rp)] = round(vmax, 4)
+    return gev
+
+
 def _zonal(
-    boundaries: Path, day: str, store: str, endpoint: str | None, lead: int | None = None
+    boundaries: Path, day: str, store: str, endpoint: str | None,
+    lead: int | None = None, with_leads: bool = False,
 ) -> dict[str, dict]:
     """Max exceedance per admin-1 polygon, per (window, RP), from the Zarr store.
 
     When *lead* is given and the store carries the per-lead variable, extract that
     forecast lead day; otherwise fall back to the max-over-horizon ``exceedance_prob``
     (also when the requested lead is absent), so callers degrade gracefully.
+
+    When *with_leads* is set and the store carries the per-lead variable, each unit
+    also gets a ``gev_by_lead`` block ({lead: {window_label: {rp: p}}}) computed in
+    the same pass (reusing the polygon masks), so the dashboard can offer a
+    lead-time sub-selection without a per-lead refetch.
     """
     import numpy as np
     import shapely
@@ -154,11 +183,20 @@ def _zonal(
     if "date" in ds.dims:
         ds = ds.sel(date=day)
     exc_var = ds["exceedance_prob"]
-    if lead is not None and "exceedance_prob_by_lead" in ds.data_vars:
-        by_lead = ds["exceedance_prob_by_lead"]
-        if "lead" in by_lead.dims and lead in by_lead["lead"].values:
-            exc_var = by_lead.sel(lead=lead)
+    has_lead = "exceedance_prob_by_lead" in ds.data_vars and "lead" in ds["exceedance_prob_by_lead"].dims
+    if lead is not None and has_lead and lead in ds["exceedance_prob_by_lead"]["lead"].values:
+        exc_var = ds["exceedance_prob_by_lead"].sel(lead=lead)
     exc = exc_var.transpose("latitude", "longitude", "window", "return_period").load()
+
+    exc_leads = None
+    if with_leads and has_lead:
+        exc_leads = {
+            int(lv): ds["exceedance_prob_by_lead"].sel(lead=int(lv)).transpose(
+                "latitude", "longitude", "window", "return_period"
+            ).load()
+            for lv in ds["exceedance_prob_by_lead"]["lead"].values
+        }
+
     conf = ds.get("ensemble_confidence")
     conf = conf.transpose("latitude", "longitude").load() if conf is not None else None
     lon2d, lat2d = np.meshgrid(exc["longitude"].values, exc["latitude"].values)
@@ -177,21 +215,15 @@ def _zonal(
             inside = np.zeros(jj.shape, dtype=bool)
             inside[len(jj) // 2] = True
         sj, si = jj[inside], ii[inside]
-        gev = {}
-        for wh in WINDOWS_H:
-            gev[WINDOW_LABELS[wh]] = {}
-            if wh not in exc["window"].values:
-                continue  # window not (yet) in this store, e.g. 240h pre-activation
-            for rp in RETURN_PERIODS:
-                if rp not in exc["return_period"].values:
-                    continue
-                vmax = float(np.nanmax(exc.sel(window=wh, return_period=rp).values[sj, si]))
-                if not np.isnan(vmax):
-                    gev[WINDOW_LABELS[wh]][str(rp)] = round(vmax, 4)
         conf_m = 0
         if conf is not None:
             conf_m = round(float(np.nanmax(conf.values[sj, si])) / 2.0 * N_MEMBERS)
-        result[pcode] = {"gev": gev, "conf_m": conf_m}
+        entry = {"gev": _gev_from_masked(exc, sj, si), "conf_m": conf_m}
+        if exc_leads is not None:
+            entry["gev_by_lead"] = {
+                str(lv): _gev_from_masked(arr, sj, si) for lv, arr in exc_leads.items()
+            }
+        result[pcode] = entry
     return result
 
 
@@ -222,7 +254,7 @@ def update_index(data_dir: Path, day: str, scores: dict) -> None:
 
 #  rasters (COG)
 def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
-                    windows: list[int], rps: list[int]) -> int:
+                    windows: list[int], rps: list[int], lead: int | None = None) -> int:
     import rioxarray  # noqa: F401
     import xarray as xr
 
@@ -231,6 +263,12 @@ def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
     if "date" in ds.dims:
         ds = ds.sel(date=day)
     exc = ds["exceedance_prob"]
+    suffix = ""
+    if lead is not None and "exceedance_prob_by_lead" in ds.data_vars:
+        by_lead = ds["exceedance_prob_by_lead"]
+        if "lead" in by_lead.dims and lead in by_lead["lead"].values:
+            exc = by_lead.sel(lead=lead)
+            suffix = f"_L{lead}"
     out.mkdir(parents=True, exist_ok=True)
     n = 0
     for wh in windows:
@@ -238,7 +276,7 @@ def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
             da = exc.sel(window=wh, return_period=rp)
             da = da.rio.set_spatial_dims(x_dim="longitude", y_dim="latitude")
             da = da.rio.write_crs("EPSG:4326")
-            da.rio.to_raster(out / f"exceedance_{day}_{wh}_{rp}.tif",
+            da.rio.to_raster(out / f"exceedance_{day}_{wh}_{rp}{suffix}.tif",
                              driver="COG", compress="deflate")
             n += 1
     return n

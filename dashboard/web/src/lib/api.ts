@@ -50,8 +50,11 @@ export function getRegionRisks(date: string): Promise<Record<string, UnitRisk>> 
 /** Per-window severity + GEV exceedance + ensemble confidence, per unit. */
 export interface UnitDependency {
   win: Record<string, RiskState>;          // severity class per window
-  gev: Record<string, Record<string, number>>; // gev[window][rp] = P(exceed)
+  gev: Record<string, Record<string, number>>; // gev[window][rp] = P(exceed), max over horizon
   confidence: { m: number; label: string };    // m/51 members converging
+  // Optional per-lead-day GEV, present only when the store carries the per-lead
+  // view. gev_by_lead[leadDay][window][rp] = P(exceed) for that valid day.
+  gev_by_lead?: Record<string, Record<string, Record<string, number>>>;
 }
 
 export function getDependency(date: string): Promise<Record<string, UnitDependency>> {

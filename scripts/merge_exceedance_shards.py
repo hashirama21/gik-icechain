@@ -29,6 +29,7 @@ _OPTIONAL_VARS = {
     "ensemble_confidence": "confidence_dict",
     "tail_ratio": "tail_dict",
     "median_ratio": "median_dict",
+    "exceedance_prob_by_lead": "lead_dict",
 }
 
 
@@ -82,6 +83,7 @@ def merge_shard(shard_uri: str, out_0p25: str, out_0p4: str, skip: dict[str, set
         confidence_dict=optional["confidence_dict"] or None,
         tail_dict=optional["tail_dict"] or None,
         median_dict=optional["median_dict"] or None,
+        lead_dict=optional["lead_dict"] or None,
         source_grid_deg=grids or None,
     )
     skip[target].update(fresh)

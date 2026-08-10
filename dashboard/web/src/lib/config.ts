@@ -23,6 +23,11 @@ export const WINDOW_HOURS: Record<string, number> = {
 /** Return periods in years (component2.return_periods). */
 export const RETURN_PERIODS = [2, 5, 10, 20, 40, 100] as const;
 
+/** Forecast lead days offered in Step 1 when the store carries the per-lead view.
+ *  `"max"` = the default max-over-horizon view (worst step anywhere in the horizon). */
+export const LEAD_MAX = "max" as const;
+export type LeadChoice = number | typeof LEAD_MAX;
+
 /** RPs the risk engine produces risk_state for (component3 rp_signal_options). */
 export const RISK_RETURN_PERIODS = ["2", "5"] as const;
 
