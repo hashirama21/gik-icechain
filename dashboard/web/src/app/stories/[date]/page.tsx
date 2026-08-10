@@ -29,6 +29,27 @@ function readIndex(): Record<string, IndexEntry> {
   }
 }
 
+type LeadEntry = { n: number; recall_yellow: number; recall_orange: number; recall_red: number };
+type LeadSkill = {
+  max_lead: number;
+  n_events: number;
+  curve: Record<string, LeadEntry>;
+  events: {
+    admin1_pcode: string;
+    onset: string;
+    first_detection_lead: { yellow: number | null; orange: number | null; red: number | null };
+  }[];
+};
+
+function readLeadSkill(): LeadSkill | null {
+  try {
+    const p = path.join(process.cwd(), "public", "data", "lead_time_skill.json");
+    return JSON.parse(fs.readFileSync(p, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 function mdxDates(): Set<string> {
   try {
     const dir = path.join(process.cwd(), "src", "app", "stories");
@@ -116,9 +137,79 @@ function MapPanel({
   );
 }
 
+function LeadTimeSection({ skill, date }: { skill: LeadSkill; date: string }) {
+  const eventsToday = skill.events.filter((e) => e.onset === date);
+  const leads = Object.keys(skill.curve)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  return (
+    <section className="story">
+      <h2>Lead time: how many days ahead?</h2>
+      {eventsToday.length > 0 ? (
+        <p>
+          {eventsToday.map((e, i) => {
+            const d = e.first_detection_lead;
+            const best = d.red ?? d.orange ?? d.yellow;
+            const tier = d.red != null ? "Red" : d.orange != null ? "Orange" : d.yellow != null ? "Yellow" : null;
+            return (
+              <span key={e.admin1_pcode}>
+                {i > 0 && " "}
+                <strong>{e.admin1_pcode}</strong>:{" "}
+                {best != null && tier
+                  ? `flagged ${tier} up to ${best} day${best === 1 ? "" : "s"} ahead.`
+                  : "not flagged in advance within the horizon."}
+              </span>
+            );
+          })}
+        </p>
+      ) : (
+        <p>
+          As-of-date early-warning skill against EM-DAT onsets: the share of past flood events already
+          flagged as a function of forecast lead time. Every daily score is a versioned snapshot, so
+          each lead uses only the information available that day (no future leakage).
+        </p>
+      )}
+      <MapPanel
+        eyebrow={`EARLY-WARNING SKILL · RECALL vs LEAD · ${skill.n_events} EM-DAT ONSETS`}
+        caption="Share of events already flagged (risk ≥ Yellow) by the forecast issued L days before onset."
+      >
+        <div className="px-4 py-3 space-y-1.5">
+          {leads.map((lead) => {
+            const pct = Math.round((skill.curve[String(lead)]?.recall_yellow ?? 0) * 100);
+            return (
+              <div key={lead} className="flex items-center gap-2 text-[11px]">
+                <span className="w-10 font-mono" style={{ color: "var(--ts)" }}>
+                  L{lead}
+                </span>
+                <div
+                  className="flex-1 h-[9px] rounded overflow-hidden"
+                  style={{ background: "var(--bg)", border: "1px solid var(--brd)" }}
+                >
+                  <div
+                    className="h-full rounded"
+                    style={{ width: `${pct}%`, background: "var(--teal)" }}
+                  />
+                </div>
+                <span
+                  className="w-9 text-right font-mono tabular-nums"
+                  style={{ color: "var(--td)" }}
+                >
+                  {pct}%
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </MapPanel>
+    </section>
+  );
+}
+
 export default async function StoryPage({ params }: { params: Promise<{ date: string }> }) {
   const { date } = await params;
   const entry = readIndex()[date];
+  const leadSkill = readLeadSkill();
   const riskColor = entry ? RISK_COLOR[entry.worst_risk as RiskState] : "var(--td)";
 
   return (
@@ -276,6 +367,8 @@ export default async function StoryPage({ params }: { params: Promise<{ date: st
         >
           <StoryMap layer="confidence" date={date} center={[38, 2]} zoom={5} />
         </MapPanel>
+
+        {leadSkill && <LeadTimeSection skill={leadSkill} date={date} />}
       </div>
 
       <footer className="max-w-[68ch] mx-auto px-5 mt-12">

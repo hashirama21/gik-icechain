@@ -107,6 +107,46 @@ def lead_time_skill(
     return curve
 
 
+def first_detection_lead(
+    risk_df: pd.DataFrame,
+    pcode: str,
+    onset: str,
+    max_lead: int = 7,
+) -> dict[str, int | None]:
+    """Largest lead at which one event was already flagged, per tier.
+
+    Answers the per-storyboard question *"how many days ahead was this event
+    forecast?"* For the given ``(pcode, onset)`` it walks leads from ``max_lead``
+    down to 0 and, per tier, returns the first (largest) lead ``L`` whose forecast
+    issued ``L`` days earlier already carried ``risk_state >= tier``.
+
+    Args:
+        risk_df:  Per-day risk rows (same schema as :func:`lead_time_skill`).
+        pcode:    admin-1 pcode of the event.
+        onset:    Event onset date (ISO string).
+        max_lead: Maximum lead time in days to look back.
+
+    Returns:
+        ``{tier_name: lead}`` for each tier; ``None`` when never flagged at that
+        tier within ``0…max_lead``.
+    """
+    df = risk_df.copy()
+    df["date"] = df["date"].astype(str)
+    by_key = {(row["date"], row["admin1_pcode"]): row for _, row in df.iterrows()}
+
+    detection: dict[str, int | None] = {name: None for name in _TIER_NAMES.values()}
+    for lead in range(max_lead, -1, -1):
+        d = (date.fromisoformat(onset) - timedelta(days=lead)).isoformat()
+        row = by_key.get((d, pcode))
+        if row is None:
+            continue
+        state = int(row.get("risk_state", 0))
+        for tier, name in _TIER_NAMES.items():
+            if detection[name] is None and state >= tier:
+                detection[name] = lead
+    return detection
+
+
 def lead_time_skill_from_risk_dir(
     risk_dir: Path,
     emdat_records: list[EMDATFloodRecord],

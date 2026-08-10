@@ -352,6 +352,73 @@ def stac_catalog(out: Path, cog_base: str) -> tuple[int, int]:
     return len(risk), len(exc)
 
 
+def lead_curve_json(results: Path, out: Path, emdat_csv: Path, max_lead: int = 7) -> int:
+    """Emit the lead-time skill curve + per-event first-detection to the contract.
+
+    Writes ``data/lead_time_skill.json`` so the storyboards can show *how many
+    days ahead* an event was flagged. Reuses the pure functions in
+    :mod:`gik_icechain.risk.lead_time_skill`; the per-day ``*_risk_scores.json``
+    files are the same as-of-date snapshots the dashboard already serves.
+
+    Returns the number of EM-DAT events with an onset (0 if inputs are missing).
+    """
+    import pandas as pd
+
+    from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+    from gik_icechain.risk.lead_time_skill import (
+        event_onsets,
+        first_detection_lead,
+        lead_time_skill,
+    )
+
+    if not emdat_csv.exists():
+        log.warning("lead_curve_no_emdat", path=str(emdat_csv))
+        return 0
+
+    rows: list[dict] = []
+    for scores_path in sorted(results.glob("*_risk_scores.json")):
+        data = json.loads(scores_path.read_text())
+        date_str = data.get("date", scores_path.stem[:10])
+        for pcode, score in data.get("units", {}).items():
+            rows.append(
+                {
+                    "date": date_str,
+                    "admin1_pcode": pcode,
+                    "risk_state": int(score.get("risk_state", 0)),
+                    "p_yellow": float(score.get("p_yellow", 0.0)),
+                    "p_orange": float(score.get("p_orange", 0.0)),
+                    "p_red": float(score.get("p_red", 0.0)),
+                }
+            )
+    if not rows:
+        log.warning("lead_curve_no_scores", results=str(results))
+        return 0
+
+    df = pd.DataFrame(rows)
+    records = load_emdat_east_africa(emdat_csv)
+    curve = lead_time_skill(df, records, max_lead=max_lead)
+    events = [
+        {
+            "admin1_pcode": pcode,
+            "onset": onset,
+            "first_detection_lead": first_detection_lead(df, pcode, onset, max_lead=max_lead),
+        }
+        for pcode, onset in event_onsets(records)
+    ]
+
+    payload = {
+        "max_lead": max_lead,
+        "n_events": len(events),
+        "curve": {str(lead): entry for lead, entry in curve.items()},
+        "events": events,
+    }
+    data_dir = _data(out)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "lead_time_skill.json").write_text(json.dumps(payload, separators=(",", ":")))
+    log.info("lead_curve_done", n_events=len(events), max_lead=max_lead)
+    return len(events)
+
+
 # CLI
 def _scores(results: Path, day: str) -> tuple[dict, Path]:
     p = results / f"{day}_risk_scores.json"
@@ -486,6 +553,15 @@ def stac(out: Out, cog_base: Annotated[str, typer.Option()] = _DEFAULT_COG_BASE)
     log.info("stac_done", risk=r, exceedance=e)
 
 
+@app.command("lead-curve")
+def lead_curve(results: Results, out: Out,
+               emdat_csv: Annotated[Path, typer.Option("--emdat")] = _EMDAT_CSV,
+               max_lead: Annotated[int, typer.Option()] = 7) -> None:
+    """Lead-time skill curve + per-event first-detection (data/lead_time_skill.json)."""
+    n = lead_curve_json(results, out, emdat_csv, max_lead)
+    log.info("lead_curve_cmd_done", events=n)
+
+
 @app.command(name="all")
 def build_all(results: Results, out: Out, date: Date,
               exceedance_store: Store = None, endpoint_url: Endpoint = None,
@@ -501,6 +577,7 @@ def build_all(results: Results, out: Out, date: Date,
             risk_cog(results / f"{date}_risk_scores.json", boundaries, date, _cogs(out)))),
         ("gpm", lambda: gpm_cog(gpm_dir, date, _cogs(out))),
         ("emdat", lambda: emdat_geojson(emdat_csv, boundaries, _data(out), date, 30)),
+        ("lead_curve", lambda: lead_curve_json(results, out, emdat_csv)),
         ("stac", lambda: stac_catalog(out, cog_base)),
     ):
         try:

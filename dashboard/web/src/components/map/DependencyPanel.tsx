@@ -40,7 +40,11 @@ export default function DependencyPanel({
           <span style={{ color: "var(--ts)" }}> · {risk.risk_label} · {rp}yr</span>
         </div>
         <div className="font-mono text-[8px]" style={{ color: "var(--td)" }}>
-          {unit.country} · {date} · IFS ENS 00z
+          {unit.country} · init {date} · IFS ENS 00z
+        </div>
+        <div className="font-mono text-[8px] mt-0.5 leading-tight" style={{ color: "var(--td)" }}>
+          Forecast initialisation date. Severity = worst case anywhere in the
+          forecast horizon (max over lead time).
         </div>
       </div>
 
@@ -55,7 +59,7 @@ export default function DependencyPanel({
       </div>
 
       {/* ③ Windows */}
-      <Section title="③ Accumulation Windows  severity per window">
+      <Section title="③ Accumulation Windows  worst over forecast horizon">
         <div className="grid grid-cols-4 gap-1">
           {WINDOWS.map((w) => {
             const sev = (dep?.win?.[w] ?? 0) as RiskState;
