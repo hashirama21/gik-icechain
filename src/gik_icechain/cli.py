@@ -462,9 +462,12 @@ def _process_exceedance_day(args: dict) -> dict:
     tail_enabled = args.get("tail_enabled", True)
     tail_quantile = float(args.get("tail_quantile", 0.95))
 
+    emit_lead = bool(args.get("emit_lead_dimension", False))
+
     day_results: dict[tuple[int, int], xr.DataArray] = {}
     tail_results: dict[tuple[int, int], xr.DataArray] = {}
     median_results: dict[tuple[int, int], xr.DataArray] = {}
+    lead_results: dict[tuple[int, int], xr.DataArray] = {}
     for w in args["windows_h"]:
         for rp in args["return_periods"]:
             try:
@@ -480,6 +483,16 @@ def _process_exceedance_day(args: dict) -> dict:
                     member_dim=member_dim,
                     flood_floor_mm=floor,
                 )
+                if emit_lead:
+                    lead_results[(w, rp)] = compute_exceedance_probabilities(
+                        acc_ds,
+                        thr_ds,
+                        window_h=w,
+                        return_period=rp,
+                        member_dim=member_dim,
+                        flood_floor_mm=floor,
+                        by_lead=True,
+                    )
                 if tail_enabled:
                     # Storyline ladder: p95 = worst world (tail-aware hazard),
                     # p50 = median world (storyline central case).
@@ -540,6 +553,17 @@ def _process_exceedance_day(args: dict) -> dict:
             log.warning("median_ratio_failed", date=date_str, exc_info=True)
             median_path = None
 
+    lead_path = None
+    if lead_results:
+        try:
+            lead_da = build_exceedance_dataset(lead_results, day)
+            lead_out = str(Path(args["tmp_dir"]) / f"{date_str}_lead.zarr")
+            _robust_to_zarr(lead_da.to_dataset(name="exceedance_prob_by_lead"), lead_out)
+            lead_path = lead_out
+        except Exception:
+            log.warning("exceedance_by_lead_failed", date=date_str, exc_info=True)
+            lead_path = None
+
     conf_path = None
     try:
         conf_da = compute_ensemble_confidence(acc_ds, window_h=24, member_dim=member_dim)
@@ -558,6 +582,7 @@ def _process_exceedance_day(args: dict) -> dict:
         "conf_path": conf_path,
         "tail_path": tail_path,
         "median_path": median_path,
+        "lead_path": lead_path,
         "source_grid_deg": day_ds.attrs.get("source_grid_deg"),
     }
 
@@ -678,6 +703,7 @@ def _run_exceedance(
             "flood_floor_mm": dict(c2.flood_floor_mm),
             "tail_enabled": c2.tail_enabled,
             "tail_quantile": c2.tail_quantile,
+            "emit_lead_dimension": c2.emit_lead_dimension,
             "tmp_dir": tmp_dir,
             # Manifest-aware params
             "manifest_aware_enabled": ma.enabled,
@@ -747,6 +773,7 @@ def _run_exceedance(
     confidence_results: dict[date, xr.DataArray] = {}
     tail_results: dict[date, xr.DataArray] = {}
     median_results: dict[date, xr.DataArray] = {}
+    lead_results: dict[date, xr.DataArray] = {}
     grid_results: dict[date, float] = {}
     for r in sorted(succeeded, key=lambda x: x["date_str"]):
         day = date.fromisoformat(r["date_str"])
@@ -761,6 +788,9 @@ def _run_exceedance(
         if r.get("median_path"):
             mds = xr.open_zarr(r["median_path"], consolidated=False)
             median_results[day] = mds["median_ratio"]
+        if r.get("lead_path"):
+            lds = xr.open_zarr(r["lead_path"], consolidated=False)
+            lead_results[day] = lds["exceedance_prob_by_lead"]
         if r.get("source_grid_deg") is not None:
             grid_results[day] = float(r["source_grid_deg"])
 
@@ -772,6 +802,7 @@ def _run_exceedance(
         confidence_dict=confidence_results or None,
         tail_dict=tail_results or None,
         median_dict=median_results or None,
+        lead_dict=lead_results or None,
         source_grid_deg=grid_results or None,
         endpoint_url=cfg.outputs.endpoint_url or None,
     )

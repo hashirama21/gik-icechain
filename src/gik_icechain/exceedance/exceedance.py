@@ -19,6 +19,36 @@ from gik_icechain.shared.xarray_utils import find_step_dim
 log = structlog.get_logger(__name__)
 
 
+def reduce_over_horizon(da: xr.DataArray, mode: str = "max_horizon") -> xr.DataArray:
+    """Collapse the forecast-step dimension of *da*.
+
+    ``max_horizon`` keeps the single worst step over the whole forecast horizon
+    (the historical behaviour). ``by_lead`` groups steps into valid-day buckets -
+    lead day ``L`` holds the steps whose forecast hour falls in
+    ``(24·L, 24·(L+1)]`` - and keeps the worst step within each, yielding a
+    ``lead`` dimension (0 = the first 24 h after initialisation).
+
+    Args:
+        da:   DataArray with a forecast-step dimension whose coordinate values
+              are forecast hours.
+        mode: ``"max_horizon"`` or ``"by_lead"``.
+
+    Returns:
+        For ``max_horizon`` the step dimension is dropped; for ``by_lead`` it is
+        replaced by an integer ``lead`` dimension.
+    """
+    step_dim = find_step_dim(da)
+    if mode == "max_horizon":
+        return da.max(dim=step_dim)
+    if mode != "by_lead":
+        raise ValueError(f"unknown reduce mode {mode!r} (expected 'max_horizon' or 'by_lead')")
+
+    hours = np.asarray(da[step_dim].values)
+    lead = np.clip(((hours - 1) // 24).astype(int), 0, None)
+    da = da.assign_coords(lead=(step_dim, lead))
+    return da.groupby("lead").max()
+
+
 def _align_threshold_to_forecast(
     threshold: xr.DataArray, forecast: xr.DataArray
 ) -> xr.DataArray:
@@ -67,11 +97,12 @@ def compute_exceedance_probabilities(
     return_period: int,
     member_dim: str = "number",
     flood_floor_mm: float = 0.0,
+    by_lead: bool = False,
 ) -> xr.DataArray:
     """Compute empirical exceedance probability for a given window and return period.
 
     P(X > threshold) = fraction of members whose worst-case window accumulation
-    over the forecast horizon exceeds the GEV threshold.
+    exceeds the GEV threshold.
 
     Args:
         acc_ds:        xr.Dataset produced by ``compute_rolling_accumulations``,
@@ -83,9 +114,14 @@ def compute_exceedance_probabilities(
         window_h:      Accumulation window in hours; selects ``tp_{window_h}h``.
         return_period: Return period in years; selects ``rp_{return_period}y``.
         member_dim:    Name of the ensemble member dimension.
+        by_lead:       When False (default), collapse the whole forecast horizon
+                       to its worst step. When True, keep a per-lead-day view
+                       (adds a ``lead`` dimension) - the worst step within each
+                       valid day rather than anywhere in the horizon.
 
     Returns:
-        xr.DataArray (latitude × longitude) of exceedance probabilities in [0, 1].
+        xr.DataArray (latitude × longitude[, lead]) of exceedance probabilities
+        in [0, 1].
     """
     var_name = f"tp_{window_h}h"
     if var_name not in acc_ds:
@@ -97,8 +133,7 @@ def compute_exceedance_probabilities(
     threshold = thresholds_ds[f"rp_{return_period}y"]
     tp = acc_ds[var_name]
 
-    step_dim = find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim)
+    tp_worst = reduce_over_horizon(tp, mode="by_lead" if by_lead else "max_horizon")
 
     threshold = _align_threshold_to_forecast(threshold, tp_worst)
 
@@ -170,8 +205,7 @@ def compute_member_ratio(
     threshold = thresholds_ds[f"rp_{return_period}y"]
     tp = acc_ds[var_name]
 
-    step_dim = find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim)
+    tp_worst = reduce_over_horizon(tp, mode="max_horizon")
 
     threshold = _align_threshold_to_forecast(threshold, tp_worst)
     if flood_floor_mm > 0:
@@ -255,8 +289,7 @@ def compute_ensemble_confidence(
         )
 
     tp = acc_ds[var_name]
-    step_dim = find_step_dim(tp)
-    tp_worst = tp.max(dim=step_dim)
+    tp_worst = reduce_over_horizon(tp, mode="max_horizon")
 
     q25 = tp_worst.quantile(0.25, dim=member_dim)
     q75 = tp_worst.quantile(0.75, dim=member_dim)

@@ -3,6 +3,7 @@
 import json
 
 import numpy as np
+import pytest
 import xarray as xr
 from dashboard.data_pipeline.pipeline import _zonal
 
@@ -50,6 +51,69 @@ def _write_store(tmp_path, windows_h, return_periods):
     store = str(tmp_path / "exceedance.zarr")
     ds.to_zarr(store, mode="w")
     return store
+
+
+def _write_store_with_lead(tmp_path, windows_h, return_periods, leads, horizon_val, lead_vals):
+    """Store with a constant max-horizon field and a per-lead field (constant per lead)."""
+    lats = np.array([4.5, 3.5, 2.5, 1.5], dtype="float64")
+    lons = np.array([33.5, 34.5, 35.5, 36.5], dtype="float64")
+    nw, nr, nl = len(windows_h), len(return_periods), len(leads)
+    by_lead = np.stack(
+        [np.full((4, 4, nw, nr), v, dtype="float32") for v in lead_vals], axis=0
+    )
+    ds = xr.Dataset(
+        {
+            "exceedance_prob": (
+                ["latitude", "longitude", "window", "return_period"],
+                np.full((4, 4, nw, nr), horizon_val, dtype="float32"),
+            ),
+            "exceedance_prob_by_lead": (
+                ["lead", "latitude", "longitude", "window", "return_period"],
+                by_lead,
+            ),
+        },
+        coords={
+            "latitude": lats, "longitude": lons,
+            "window": windows_h, "return_period": return_periods, "lead": leads,
+        },
+    )
+    store = str(tmp_path / "exceedance_lead.zarr")
+    ds.to_zarr(store, mode="w")
+    return store
+
+
+class TestZonalLead:
+    def test_selects_requested_lead(self, tmp_path):
+        store = _write_store_with_lead(
+            tmp_path, [24], [5], leads=[0, 1, 2], horizon_val=0.1, lead_vals=[0.2, 0.9, 0.3]
+        )
+        boundaries = tmp_path / "b.geojson"
+        boundaries.write_text(json.dumps(_BOUNDARIES))
+
+        r1 = _zonal(boundaries, "2024-11-04", store, None, lead=1)
+        assert r1["KEN_Turkana"]["gev"]["24h"]["5"] == 0.9
+        r0 = _zonal(boundaries, "2024-11-04", store, None, lead=0)
+        assert r0["KEN_Turkana"]["gev"]["24h"]["5"] == 0.2
+
+    def test_default_is_max_horizon(self, tmp_path):
+        store = _write_store_with_lead(
+            tmp_path, [24], [5], leads=[0, 1], horizon_val=0.1, lead_vals=[0.2, 0.9]
+        )
+        boundaries = tmp_path / "b.geojson"
+        boundaries.write_text(json.dumps(_BOUNDARIES))
+
+        r = _zonal(boundaries, "2024-11-04", store, None)
+        assert r["KEN_Turkana"]["gev"]["24h"]["5"] == pytest.approx(0.1)
+
+    def test_absent_lead_falls_back_to_horizon(self, tmp_path):
+        store = _write_store_with_lead(
+            tmp_path, [24], [5], leads=[0, 1], horizon_val=0.1, lead_vals=[0.2, 0.9]
+        )
+        boundaries = tmp_path / "b.geojson"
+        boundaries.write_text(json.dumps(_BOUNDARIES))
+
+        r = _zonal(boundaries, "2024-11-04", store, None, lead=9)
+        assert r["KEN_Turkana"]["gev"]["24h"]["5"] == pytest.approx(0.1)
 
 
 class TestZonal:

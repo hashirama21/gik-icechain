@@ -2,9 +2,12 @@
 
 Output Zarr schema::
 
-    dimensions: (date, latitude, longitude, window, return_period)
+    dimensions: (date, latitude, longitude, window, return_period[, lead])
     variables:
-        exceedance_prob      - float32 in [0, 1]
+        exceedance_prob      - float32 in [0, 1], max over the whole horizon
+        exceedance_prob_by_lead - float32 in [0, 1], per valid-day view; adds a
+                               `lead` dimension. Optional (opt-in), written
+                               alongside exceedance_prob without replacing it.
         ensemble_confidence  - int8 in {0=Low, 1=Medium, 2=High}
                                derived from inter-member IQR/median (24h window)
         tail_ratio           - float32, pXX member accumulation / GEV return level
@@ -17,6 +20,7 @@ Output Zarr schema::
         longitude     - float32, degrees E
         window        - int16, accumulation window in hours
         return_period - int16, return period in years
+        lead          - int16, forecast lead day (0 = first 24 h after init)
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ _DEFAULT_CHUNKS: dict[str, int | None] = {
     "longitude": 100,
     "window": None,
     "return_period": None,
+    "lead": None,
 }
 
 
@@ -48,6 +53,7 @@ def write_exceedance_store(
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
     median_dict: dict[date, xr.DataArray] | None = None,
+    lead_dict: dict[date, xr.DataArray] | None = None,
     source_grid_deg: dict[date, float] | None = None,
     endpoint_url: str | None = None,
     allow_grid_reset: bool = False,
@@ -73,6 +79,12 @@ def write_exceedance_store(
         median_dict:     Optional mapping forecast date → median_ratio DataArray
                          (same dims). Written as ``median_ratio`` - the p50
                          member world for the per-member storyline.
+        lead_dict:       Optional mapping forecast date → exceedance DataArray
+                         carrying an extra ``lead`` dimension (per valid-day view,
+                         from ``compute_exceedance_probabilities(by_lead=True)``).
+                         Written as the variable ``exceedance_prob_by_lead``
+                         alongside - not replacing - the max-over-horizon
+                         ``exceedance_prob``.
         source_grid_deg: Optional mapping forecast date → the native ECMWF grid
                          step (0.25, or 0.4 for pre-2024-02 ``0p4-beta`` dates).
                          Written as the ``(date,)`` variable ``source_grid_deg``
@@ -92,7 +104,9 @@ def write_exceedance_store(
     effective_chunks = chunks or _DEFAULT_CHUNKS
     storage_options = {"endpoint_url": endpoint_url} if endpoint_url else None
 
-    ds = _build_dataset(exceedance_dict, confidence_dict, tail_dict, median_dict, source_grid_deg)
+    ds = _build_dataset(
+        exceedance_dict, confidence_dict, tail_dict, median_dict, lead_dict, source_grid_deg
+    )
     ds = ds.chunk({k: v for k, v in effective_chunks.items() if k in ds.dims})
 
     zarr_kw: dict = {}
@@ -131,6 +145,7 @@ def write_exceedance_store(
                 _subset_by_date(confidence_dict, keep),
                 _subset_by_date(tail_dict, keep),
                 _subset_by_date(median_dict, keep),
+                _subset_by_date(lead_dict, keep),
                 _subset_by_date(source_grid_deg, keep),
             )
             new_ds = _align_append_schema(new_ds, existing)
@@ -239,7 +254,7 @@ def _align_append_schema(new_ds: xr.Dataset, existing: xr.Dataset) -> xr.Dataset
     ``exceedance_prob`` at 24). Store variables the run did not produce are
     fill-value-padded; variables the store cannot represent fail loudly.
     """
-    for dim in ("window", "return_period"):
+    for dim in ("window", "return_period", "lead"):
         if dim not in existing.dims or dim not in new_ds.dims:
             continue
         existing_coord = existing[dim].values
@@ -319,6 +334,12 @@ _OPTIONAL_VAR_ATTRS: dict[str, dict] = {
         "units": "1",
         "definition": "median-world storyline signal - see exceedance.compute_member_ratio",
     },
+    "exceedance_prob_by_lead": {
+        "long_name": "Exceedance probability per forecast lead day",
+        "units": "1",
+        "definition": "per valid-day view (lead 0 = first 24 h after init); worst "
+        "step within each day, vs the max-over-horizon exceedance_prob",
+    },
     "ensemble_confidence": {
         "long_name": "Ensemble confidence level (24h window)",
         "flag_values": [0, 1, 2],
@@ -339,6 +360,7 @@ def _build_dataset(
     confidence_dict: dict[date, xr.DataArray] | None = None,
     tail_dict: dict[date, xr.DataArray] | None = None,
     median_dict: dict[date, xr.DataArray] | None = None,
+    lead_dict: dict[date, xr.DataArray] | None = None,
     source_grid_deg: dict[date, float] | None = None,
 ) -> xr.Dataset:
     sorted_dates = sorted(exceedance_dict)
@@ -363,6 +385,7 @@ def _build_dataset(
     optional: dict[str, tuple[dict[date, xr.DataArray] | None, np.dtype]] = {
         "tail_ratio": (tail_dict, np.dtype(np.float32)),
         "median_ratio": (median_dict, np.dtype(np.float32)),
+        "exceedance_prob_by_lead": (lead_dict, np.dtype(np.float32)),
         "ensemble_confidence": (confidence_dict, np.dtype(np.int8)),
     }
     for name, (var_dict, dtype) in optional.items():

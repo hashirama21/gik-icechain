@@ -135,8 +135,15 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
     (data_dir / day / "dependency.json").write_text(json.dumps(out, separators=(",", ":")))
 
 
-def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict[str, dict]:
-    """Max exceedance per admin-1 polygon, per (window, RP), from the Zarr store."""
+def _zonal(
+    boundaries: Path, day: str, store: str, endpoint: str | None, lead: int | None = None
+) -> dict[str, dict]:
+    """Max exceedance per admin-1 polygon, per (window, RP), from the Zarr store.
+
+    When *lead* is given and the store carries the per-lead variable, extract that
+    forecast lead day; otherwise fall back to the max-over-horizon ``exceedance_prob``
+    (also when the requested lead is absent), so callers degrade gracefully.
+    """
     import numpy as np
     import shapely
     import xarray as xr
@@ -146,7 +153,12 @@ def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict
     ds = xr.open_zarr(store, consolidated=False, storage_options=so)
     if "date" in ds.dims:
         ds = ds.sel(date=day)
-    exc = ds["exceedance_prob"].transpose("latitude", "longitude", "window", "return_period").load()
+    exc_var = ds["exceedance_prob"]
+    if lead is not None and "exceedance_prob_by_lead" in ds.data_vars:
+        by_lead = ds["exceedance_prob_by_lead"]
+        if "lead" in by_lead.dims and lead in by_lead["lead"].values:
+            exc_var = by_lead.sel(lead=lead)
+    exc = exc_var.transpose("latitude", "longitude", "window", "return_period").load()
     conf = ds.get("ensemble_confidence")
     conf = conf.transpose("latitude", "longitude").load() if conf is not None else None
     lon2d, lat2d = np.meshgrid(exc["longitude"].values, exc["latitude"].values)

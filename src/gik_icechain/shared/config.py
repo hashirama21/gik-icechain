@@ -283,6 +283,12 @@ class Component2Config(BaseModel):
     # with a warning (graceful), False = raise an error and abort the day.
     skip_subresolution_windows: bool = True
 
+    # Opt-in per-lead-day exceedance view. When True, the daily run also writes
+    # `exceedance_prob_by_lead` (a `lead` dimension) alongside the max-over-horizon
+    # `exceedance_prob`. Off by default: no schema change until deliberately
+    # enabled (forward-only rollout), mirroring the extended_10d window profile.
+    emit_lead_dimension: bool = False
+
     # Possible-worlds tail signal: the upper member-quantile of accumulation /
     # GEV threshold, persisted as the `tail_ratio` variable alongside
     # `exceedance_prob` and consumed by the tail-aware Forecast_Hazard node.
@@ -390,6 +396,11 @@ class Component2Config(BaseModel):
     def max_steps_needed(self) -> int:
         """Number of steps to load based on effective max forecast and resolution."""
         return (self.effective_max_forecast_h // self.step_resolution_h) + self.step_buffer + 1
+
+    @property
+    def effective_max_lead_days(self) -> int:
+        """Number of lead days the horizon spans (lead 0 = first 24 h)."""
+        return (self.effective_max_forecast_h + 23) // 24
 
 
 #  Component 3 - CRMA model parameters

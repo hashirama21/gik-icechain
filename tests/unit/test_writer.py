@@ -35,6 +35,86 @@ def _exc_da(
     return build_exceedance_dataset(results, day)
 
 
+def _exc_lead_da(
+    windows: list[int],
+    rps: list[int],
+    day: date,
+    leads: tuple[int, ...] = (0, 1, 2),
+    value: float = 0.5,
+):
+    """Build an exceedance-by-lead DataArray (date, lead, lat, lon, window, rp)."""
+    lat = np.array([0.0, 1.0], dtype=np.float32)
+    lon = np.array([10.0, 11.0], dtype=np.float32)
+    results = {
+        (w, rp): xr.DataArray(
+            np.full((len(leads), lat.size, lon.size), value, dtype=np.float32),
+            dims=("lead", "latitude", "longitude"),
+            coords={"lead": list(leads), "latitude": lat, "longitude": lon},
+        )
+        for w in windows
+        for rp in rps
+    }
+    return build_exceedance_dataset(results, day)
+
+
+class TestLeadDimension:
+    """exceedance_prob_by_lead persists alongside exceedance_prob without
+    touching it, on initial write and on append."""
+
+    def test_written_alongside_max_horizon(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        d1 = date(2024, 1, 1)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1, value=0.1)},
+            uri,
+            append=False,
+            lead_dict={d1: _exc_lead_da([24], [5], d1, value=0.7)},
+        )
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert "exceedance_prob" in ds and "exceedance_prob_by_lead" in ds
+        assert "lead" not in ds["exceedance_prob"].dims
+        assert "lead" in ds["exceedance_prob_by_lead"].dims
+        assert list(ds["lead"].values) == [0, 1, 2]
+        assert float(ds["exceedance_prob_by_lead"].sel(date="2024-01-01").mean()) == pytest.approx(0.7)
+
+    def test_appended(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1, value=0.1)}, uri, append=False,
+            lead_dict={d1: _exc_lead_da([24], [5], d1, value=0.7)},
+        )
+        write_exceedance_store(
+            {d2: _exc_da([24], [5], d2, value=0.2)}, uri, append=True,
+            lead_dict={d2: _exc_lead_da([24], [5], d2, value=0.8)},
+        )
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert ds["exceedance_prob_by_lead"].sizes["date"] == 2
+        assert float(ds["exceedance_prob_by_lead"].sel(date="2024-01-02").mean()) == pytest.approx(0.8)
+
+    def test_append_without_lead_pads_it(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store(
+            {d1: _exc_da([24], [5], d1)}, uri, append=False,
+            lead_dict={d1: _exc_lead_da([24], [5], d1, value=0.7)},
+        )
+        write_exceedance_store({d2: _exc_da([24], [5], d2)}, uri, append=True)
+        ds = xr.open_zarr(uri, consolidated=False)
+        assert ds["exceedance_prob_by_lead"].sizes["date"] == 2
+        assert bool(np.isnan(ds["exceedance_prob_by_lead"].sel(date="2024-01-02")).all())
+
+    def test_introducing_lead_on_legacy_store_raises(self, tmp_path):
+        uri = str(tmp_path / "exc.zarr")
+        d1, d2 = date(2024, 1, 1), date(2024, 1, 2)
+        write_exceedance_store({d1: _exc_da([24], [5], d1)}, uri, append=False)
+        with pytest.raises(ValueError, match="variables"):
+            write_exceedance_store(
+                {d2: _exc_da([24], [5], d2)}, uri, append=True,
+                lead_dict={d2: _exc_lead_da([24], [5], d2, value=0.7)},
+            )
+
+
 class TestStorylineVariables:
     """tail_ratio (worst world) and median_ratio (median world) persist alongside
     exceedance_prob, on initial write and on append."""
