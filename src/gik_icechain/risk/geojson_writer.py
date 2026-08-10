@@ -12,7 +12,7 @@ Output layout::
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -140,21 +140,38 @@ def build_score(
     return pcode, score
 
 
+_DEFAULT_HORIZON_DAYS = 7  # longest accumulation window in the default profile (168 h)
+
+
 def export_eahw_format(
     scores_path: Path,
     boundaries_path: Path,
     output_path: Path,
+    horizon_days: int | None = None,
 ) -> None:
     """Combine daily scores + shared boundaries into EAHW portal GeoJSON.
+
+    A score is issued on the forecast **initialisation** date and expresses the
+    worst-case hazard found anywhere in the forecast horizon (``max`` over lead
+    time). Its validity therefore spans ``[issue_date, issue_date + horizon]``
+    rather than a single day, so ``issue_date`` and the validity window are
+    emitted as distinct fields instead of the same value.
 
     Args:
         scores_path:     Path to a ``{date}_risk_scores.json`` file.
         boundaries_path: Path to the shared ``admin1_boundaries.geojson`` file.
         output_path:     Destination path for the EAHW-formatted output.
+        horizon_days:    Forecast horizon in days for the validity window. When
+                         ``None``, taken from the scores file's
+                         ``meta.forecast_horizon_days``, else the default profile.
     """
     scores_data = json.loads(scores_path.read_text())
     boundaries_data = json.loads(boundaries_path.read_text())
-    valid_date = scores_data["date"]
+    issue_date = scores_data["date"]
+    if horizon_days is None:
+        meta = scores_data.get("meta", {})
+        horizon_days = int(meta.get("forecast_horizon_days", _DEFAULT_HORIZON_DAYS))
+    valid_end = (date.fromisoformat(issue_date) + timedelta(days=horizon_days)).isoformat()
     units_by_pcode = scores_data["units"]
 
     eahw_features: list[dict[str, Any]] = []
@@ -171,8 +188,11 @@ def export_eahw_format(
                 "geometry": feat["geometry"],
                 "properties": {
                     "hazard_type": _EAHW_HAZARD_TYPE,
-                    "issue_date": valid_date,
-                    "valid_date": valid_date,
+                    "issue_date": issue_date,
+                    "valid_date": valid_end,
+                    "valid_period_start": issue_date,
+                    "valid_period_end": valid_end,
+                    "lead_time_aggregation": "max_over_forecast_horizon",
                     "admin1_pcode": pcode,
                     "admin1_name": feat["properties"].get("admin1_name", ""),
                     "country_code": feat["properties"].get("country", ""),

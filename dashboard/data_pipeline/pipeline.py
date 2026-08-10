@@ -112,13 +112,15 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
     zonal = None
     if store:
         try:
-            zonal = _zonal(boundaries, day, store, endpoint)
+            zonal = _zonal(boundaries, day, store, endpoint, with_leads=True)
         except Exception as exc:
             log.warning("dependency_store_fallback", error=str(exc)[:120])
     out = {}
     for pcode, u in scores.get("units", {}).items():
+        gev_by_lead = None
         if zonal and pcode in zonal:
             gev, conf_m = zonal[pcode]["gev"], zonal[pcode]["conf_m"]
+            gev_by_lead = zonal[pcode].get("gev_by_lead")
         else:
             gev = {lbl: {} for lbl in WINDOW_LABELS.values()}
             rp = str(u.get("rp_years", 5))
@@ -129,14 +131,48 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
             conf_m = round(float(u.get("spatial_coverage", 0.0)) * N_MEMBERS)
         win = {lbl: _sev(max((gev.get(lbl, {}) or {}).values(), default=0.0))
                for lbl in WINDOW_LABELS.values()}
-        out[pcode] = {"win": win, "gev": gev,
-                      "confidence": {"m": conf_m, "label": _conf(conf_m)}}
+        entry = {"win": win, "gev": gev,
+                 "confidence": {"m": conf_m, "label": _conf(conf_m)}}
+        if gev_by_lead:
+            entry["gev_by_lead"] = gev_by_lead
+        out[pcode] = entry
     (data_dir / day).mkdir(parents=True, exist_ok=True)
     (data_dir / day / "dependency.json").write_text(json.dumps(out, separators=(",", ":")))
 
 
-def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict[str, dict]:
-    """Max exceedance per admin-1 polygon, per (window, RP), from the Zarr store."""
+def _gev_from_masked(exc, sj, si):
+    """GEV exceedance dict {window_label: {rp: pmax}} over a polygon's cells."""
+    import numpy as np
+
+    gev = {}
+    for wh in WINDOWS_H:
+        gev[WINDOW_LABELS[wh]] = {}
+        if wh not in exc["window"].values:
+            continue  # window not (yet) in this store, e.g. 240h pre-activation
+        for rp in RETURN_PERIODS:
+            if rp not in exc["return_period"].values:
+                continue
+            vmax = float(np.nanmax(exc.sel(window=wh, return_period=rp).values[sj, si]))
+            if not np.isnan(vmax):
+                gev[WINDOW_LABELS[wh]][str(rp)] = round(vmax, 4)
+    return gev
+
+
+def _zonal(
+    boundaries: Path, day: str, store: str, endpoint: str | None,
+    lead: int | None = None, with_leads: bool = False,
+) -> dict[str, dict]:
+    """Max exceedance per admin-1 polygon, per (window, RP), from the Zarr store.
+
+    When *lead* is given and the store carries the per-lead variable, extract that
+    forecast lead day; otherwise fall back to the max-over-horizon ``exceedance_prob``
+    (also when the requested lead is absent), so callers degrade gracefully.
+
+    When *with_leads* is set and the store carries the per-lead variable, each unit
+    also gets a ``gev_by_lead`` block ({lead: {window_label: {rp: p}}}) computed in
+    the same pass (reusing the polygon masks), so the dashboard can offer a
+    lead-time sub-selection without a per-lead refetch.
+    """
     import numpy as np
     import shapely
     import xarray as xr
@@ -146,7 +182,24 @@ def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict
     ds = xr.open_zarr(store, consolidated=False, storage_options=so)
     if "date" in ds.dims:
         ds = ds.sel(date=day)
-    exc = ds["exceedance_prob"].transpose("latitude", "longitude", "window", "return_period").load()
+    exc_var = ds["exceedance_prob"]
+    has_lead = (
+        "exceedance_prob_by_lead" in ds.data_vars
+        and "lead" in ds["exceedance_prob_by_lead"].dims
+    )
+    if lead is not None and has_lead and lead in ds["exceedance_prob_by_lead"]["lead"].values:
+        exc_var = ds["exceedance_prob_by_lead"].sel(lead=lead)
+    exc = exc_var.transpose("latitude", "longitude", "window", "return_period").load()
+
+    exc_leads = None
+    if with_leads and has_lead:
+        exc_leads = {
+            int(lv): ds["exceedance_prob_by_lead"].sel(lead=int(lv)).transpose(
+                "latitude", "longitude", "window", "return_period"
+            ).load()
+            for lv in ds["exceedance_prob_by_lead"]["lead"].values
+        }
+
     conf = ds.get("ensemble_confidence")
     conf = conf.transpose("latitude", "longitude").load() if conf is not None else None
     lon2d, lat2d = np.meshgrid(exc["longitude"].values, exc["latitude"].values)
@@ -165,21 +218,15 @@ def _zonal(boundaries: Path, day: str, store: str, endpoint: str | None) -> dict
             inside = np.zeros(jj.shape, dtype=bool)
             inside[len(jj) // 2] = True
         sj, si = jj[inside], ii[inside]
-        gev = {}
-        for wh in WINDOWS_H:
-            gev[WINDOW_LABELS[wh]] = {}
-            if wh not in exc["window"].values:
-                continue  # window not (yet) in this store, e.g. 240h pre-activation
-            for rp in RETURN_PERIODS:
-                if rp not in exc["return_period"].values:
-                    continue
-                vmax = float(np.nanmax(exc.sel(window=wh, return_period=rp).values[sj, si]))
-                if not np.isnan(vmax):
-                    gev[WINDOW_LABELS[wh]][str(rp)] = round(vmax, 4)
         conf_m = 0
         if conf is not None:
             conf_m = round(float(np.nanmax(conf.values[sj, si])) / 2.0 * N_MEMBERS)
-        result[pcode] = {"gev": gev, "conf_m": conf_m}
+        entry = {"gev": _gev_from_masked(exc, sj, si), "conf_m": conf_m}
+        if exc_leads is not None:
+            entry["gev_by_lead"] = {
+                str(lv): _gev_from_masked(arr, sj, si) for lv, arr in exc_leads.items()
+            }
+        result[pcode] = entry
     return result
 
 
@@ -210,7 +257,7 @@ def update_index(data_dir: Path, day: str, scores: dict) -> None:
 
 #  rasters (COG)
 def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
-                    windows: list[int], rps: list[int]) -> int:
+                    windows: list[int], rps: list[int], lead: int | None = None) -> int:
     import rioxarray  # noqa: F401
     import xarray as xr
 
@@ -219,6 +266,12 @@ def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
     if "date" in ds.dims:
         ds = ds.sel(date=day)
     exc = ds["exceedance_prob"]
+    suffix = ""
+    if lead is not None and "exceedance_prob_by_lead" in ds.data_vars:
+        by_lead = ds["exceedance_prob_by_lead"]
+        if "lead" in by_lead.dims and lead in by_lead["lead"].values:
+            exc = by_lead.sel(lead=lead)
+            suffix = f"_L{lead}"
     out.mkdir(parents=True, exist_ok=True)
     n = 0
     for wh in windows:
@@ -226,7 +279,7 @@ def exceedance_cogs(store: str, endpoint: str | None, day: str, out: Path,
             da = exc.sel(window=wh, return_period=rp)
             da = da.rio.set_spatial_dims(x_dim="longitude", y_dim="latitude")
             da = da.rio.write_crs("EPSG:4326")
-            da.rio.to_raster(out / f"exceedance_{day}_{wh}_{rp}.tif",
+            da.rio.to_raster(out / f"exceedance_{day}_{wh}_{rp}{suffix}.tif",
                              driver="COG", compress="deflate")
             n += 1
     return n
@@ -350,6 +403,73 @@ def stac_catalog(out: Path, cog_base: str) -> tuple[int, int]:
         "links": [],
     }, indent=1))
     return len(risk), len(exc)
+
+
+def lead_curve_json(results: Path, out: Path, emdat_csv: Path, max_lead: int = 7) -> int:
+    """Emit the lead-time skill curve + per-event first-detection to the contract.
+
+    Writes ``data/lead_time_skill.json`` so the storyboards can show *how many
+    days ahead* an event was flagged. Reuses the pure functions in
+    :mod:`gik_icechain.risk.lead_time_skill`; the per-day ``*_risk_scores.json``
+    files are the same as-of-date snapshots the dashboard already serves.
+
+    Returns the number of EM-DAT events with an onset (0 if inputs are missing).
+    """
+    import pandas as pd
+
+    from gik_icechain.risk.cpt_refinement import load_emdat_east_africa
+    from gik_icechain.risk.lead_time_skill import (
+        event_onsets,
+        first_detection_lead,
+        lead_time_skill,
+    )
+
+    if not emdat_csv.exists():
+        log.warning("lead_curve_no_emdat", path=str(emdat_csv))
+        return 0
+
+    rows: list[dict] = []
+    for scores_path in sorted(results.glob("*_risk_scores.json")):
+        data = json.loads(scores_path.read_text())
+        date_str = data.get("date", scores_path.stem[:10])
+        for pcode, score in data.get("units", {}).items():
+            rows.append(
+                {
+                    "date": date_str,
+                    "admin1_pcode": pcode,
+                    "risk_state": int(score.get("risk_state", 0)),
+                    "p_yellow": float(score.get("p_yellow", 0.0)),
+                    "p_orange": float(score.get("p_orange", 0.0)),
+                    "p_red": float(score.get("p_red", 0.0)),
+                }
+            )
+    if not rows:
+        log.warning("lead_curve_no_scores", results=str(results))
+        return 0
+
+    df = pd.DataFrame(rows)
+    records = load_emdat_east_africa(emdat_csv)
+    curve = lead_time_skill(df, records, max_lead=max_lead)
+    events = [
+        {
+            "admin1_pcode": pcode,
+            "onset": onset,
+            "first_detection_lead": first_detection_lead(df, pcode, onset, max_lead=max_lead),
+        }
+        for pcode, onset in event_onsets(records)
+    ]
+
+    payload = {
+        "max_lead": max_lead,
+        "n_events": len(events),
+        "curve": {str(lead): entry for lead, entry in curve.items()},
+        "events": events,
+    }
+    data_dir = _data(out)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "lead_time_skill.json").write_text(json.dumps(payload, separators=(",", ":")))
+    log.info("lead_curve_done", n_events=len(events), max_lead=max_lead)
+    return len(events)
 
 
 # CLI
@@ -486,6 +606,15 @@ def stac(out: Out, cog_base: Annotated[str, typer.Option()] = _DEFAULT_COG_BASE)
     log.info("stac_done", risk=r, exceedance=e)
 
 
+@app.command("lead-curve")
+def lead_curve(results: Results, out: Out,
+               emdat_csv: Annotated[Path, typer.Option("--emdat")] = _EMDAT_CSV,
+               max_lead: Annotated[int, typer.Option()] = 7) -> None:
+    """Lead-time skill curve + per-event first-detection (data/lead_time_skill.json)."""
+    n = lead_curve_json(results, out, emdat_csv, max_lead)
+    log.info("lead_curve_cmd_done", events=n)
+
+
 @app.command(name="all")
 def build_all(results: Results, out: Out, date: Date,
               exceedance_store: Store = None, endpoint_url: Endpoint = None,
@@ -501,6 +630,7 @@ def build_all(results: Results, out: Out, date: Date,
             risk_cog(results / f"{date}_risk_scores.json", boundaries, date, _cogs(out)))),
         ("gpm", lambda: gpm_cog(gpm_dir, date, _cogs(out))),
         ("emdat", lambda: emdat_geojson(emdat_csv, boundaries, _data(out), date, 30)),
+        ("lead_curve", lambda: lead_curve_json(results, out, emdat_csv)),
         ("stac", lambda: stac_catalog(out, cog_base)),
     ):
         try:

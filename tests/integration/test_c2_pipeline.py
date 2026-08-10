@@ -151,6 +151,51 @@ class TestExceedanceWriter:
         }
         assert conf_vals.issubset({0, 1, 2})
 
+    def test_by_lead_end_to_end_store_roundtrip(self, forecast_ds, thresholds, tmp_path):
+        """Opt-in per-lead view flows compute -> build -> store -> read, alongside
+        the unchanged max-over-horizon exceedance_prob."""
+        from gik_icechain.exceedance.accumulations import compute_rolling_accumulations
+        from gik_icechain.exceedance.exceedance import compute_exceedance_probabilities
+        from gik_icechain.exceedance.thresholds import ClimateMode, ENSOPhase, IODPhase, Season
+        from gik_icechain.exceedance.writer import build_exceedance_dataset, write_exceedance_store
+
+        acc = compute_rolling_accumulations(forecast_ds, windows_h=WINDOWS_H)
+        mode = ClimateMode(Season.OND, ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
+
+        horizon_results, lead_results = {}, {}
+        for w in WINDOWS_H:
+            for rp in RETURN_PERIODS:
+                thr = xr.Dataset({f"rp_{rp}y": thresholds.get(w, rp, mode)})
+                horizon_results[(w, rp)] = compute_exceedance_probabilities(
+                    acc, thr, w, rp, member_dim="member",
+                )
+                lead_results[(w, rp)] = compute_exceedance_probabilities(
+                    acc, thr, w, rp, member_dim="member", by_lead=True,
+                )
+
+        exc_da = build_exceedance_dataset(horizon_results, TEST_DATE)
+        lead_da = build_exceedance_dataset(lead_results, TEST_DATE)
+
+        output_uri = str(tmp_path / "exceedance.zarr")
+        write_exceedance_store(
+            {TEST_DATE: exc_da}, output_uri, lead_dict={TEST_DATE: lead_da},
+        )
+
+        ds = xr.open_zarr(output_uri, consolidated=False)
+        assert "exceedance_prob" in ds and "exceedance_prob_by_lead" in ds
+        assert "lead" not in ds["exceedance_prob"].dims
+        assert "lead" in ds["exceedance_prob_by_lead"].dims
+        # STEPS span 0..42h -> lead days 0 and 1.
+        assert list(ds["lead"].values) == [0, 1]
+
+        p = ds["exceedance_prob_by_lead"].values
+        p_finite = p[np.isfinite(p)]
+        assert p_finite.min() >= 0.0 and p_finite.max() <= 1.0
+        # The max-over-horizon value dominates each per-lead value (same window/rp/cell).
+        h = ds["exceedance_prob"].sel(window=24, return_period=5)
+        per_lead_max = ds["exceedance_prob_by_lead"].sel(window=24, return_period=5).max("lead")
+        assert float((h + 1e-6 >= per_lead_max).mean()) == pytest.approx(1.0)
+
     def test_zarr_threshold_roundtrip(self, thresholds, tmp_path):
         from gik_icechain.exceedance.thresholds import (
             AdaptiveGEVThresholds,

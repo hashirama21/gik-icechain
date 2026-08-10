@@ -6,7 +6,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { BarChart3, BookOpen, Check } from "lucide-react";
-import { N_MEMBERS, RETURN_PERIODS, WINDOWS } from "@/lib/config";
+import { LEAD_MAX, N_MEMBERS, RETURN_PERIODS, WINDOWS, type LeadChoice } from "@/lib/config";
 import {
   DISPLAY_BORDER_VAR, DISPLAY_LABEL, DISPLAY_TEXT_VAR, DISPLAY_VAR, displayClass,
   riskForRp, type DisplayClass, type RiskState, type UnitRisk,
@@ -16,11 +16,25 @@ import type { UnitDependency } from "@/lib/api";
 const SEV_LABEL = ["", "Low", "Moderate", "High"];
 const SEV_CLASS: DisplayClass[] = ["normal", "low", "moderate", "high"];
 
+/** Client-side mirror of the pipeline's _sev(p) for the per-lead view. */
+function sevFromGev(g: Record<string, number>): RiskState {
+  const p = Math.max(0, ...Object.values(g), 0);
+  return (p >= 0.5 ? 3 : p >= 0.3 ? 2 : p >= 0.15 ? 1 : 0) as RiskState;
+}
+
 export default function DependencyPanel({
   date, unit, dep, rp,
 }: { date: string; unit: UnitRisk; dep: UnitDependency | undefined; rp: string }) {
   const [win, setWin] = useState("24h");
-  const gev = dep?.gev?.[win] ?? {};
+  const [lead, setLead] = useState<LeadChoice>(LEAD_MAX);
+  const byLead = dep?.gev_by_lead;
+  const leadKeys = byLead ? Object.keys(byLead).map(Number).sort((a, b) => a - b) : [];
+
+  // GEV source for a window: the chosen lead day, or the max-over-horizon view.
+  const gevForWin = (w: string): Record<string, number> =>
+    lead === LEAD_MAX ? (dep?.gev?.[w] ?? {}) : (byLead?.[String(lead)]?.[w] ?? {});
+
+  const gev = gevForWin(win);
   const risk = riskForRp(unit, rp);
   const cls = displayClass(risk);
   const topRp = RETURN_PERIODS.find((r) => (gev[String(r)] ?? 0) >= 0.15) ?? 5;
@@ -40,7 +54,11 @@ export default function DependencyPanel({
           <span style={{ color: "var(--ts)" }}> · {risk.risk_label} · {rp}yr</span>
         </div>
         <div className="font-mono text-[8px]" style={{ color: "var(--td)" }}>
-          {unit.country} · {date} · IFS ENS 00z
+          {unit.country} · init {date} · IFS ENS 00z
+        </div>
+        <div className="font-mono text-[8px] mt-0.5 leading-tight" style={{ color: "var(--td)" }}>
+          Forecast initialisation date. Severity = worst case anywhere in the
+          forecast horizon (max over lead time).
         </div>
       </div>
 
@@ -54,12 +72,39 @@ export default function DependencyPanel({
         </span>
       </div>
 
+      {/* Lead-time sub-selection (only when the store carries the per-lead view) */}
+      {leadKeys.length > 0 && (
+        <Section title="① Forecast lead time  which valid day">
+          <div className="flex flex-wrap gap-1">
+            {[LEAD_MAX as LeadChoice, ...leadKeys].map((l) => {
+              const active = lead === l;
+              const label = l === LEAD_MAX ? "Max" : `L${l}`;
+              return (
+                <button key={String(l)} onClick={() => setLead(l)}
+                  className="font-mono text-[9px] font-bold px-2 py-1 rounded-[4px] transition-colors"
+                  style={active
+                    ? { background: "var(--blue)", color: "#fff" }
+                    : { background: "var(--sur)", color: "var(--ts)", border: "1px solid var(--brd)" }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="font-mono text-[8px] mt-1.5 leading-tight" style={{ color: "var(--td)" }}>
+            {lead === LEAD_MAX
+              ? "Worst step anywhere in the forecast horizon."
+              : `Valid day ${lead} (${(lead as number) * 24}–${((lead as number) + 1) * 24} h after init).`}
+          </div>
+        </Section>
+      )}
+
       {/* ③ Windows */}
-      <Section title="③ Accumulation Windows  severity per window">
+      <Section title="③ Accumulation Windows  worst over forecast horizon">
         <div className="grid grid-cols-4 gap-1">
           {WINDOWS.map((w) => {
-            const sev = (dep?.win?.[w] ?? 0) as RiskState;
-            const s = Math.max(0, sev);
+            const s = lead === LEAD_MAX
+              ? Math.max(0, dep?.win?.[w] ?? 0)
+              : sevFromGev(gevForWin(w));
             return (
               <button key={w} onClick={() => setWin(w)}
                 className="rounded-md py-[7px] px-[3px] text-center transition-all"

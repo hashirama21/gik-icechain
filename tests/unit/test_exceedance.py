@@ -16,6 +16,7 @@ from gik_icechain.exceedance.exceedance import (
     compute_exceedance_probabilities,
     compute_member_ratio,
     compute_tail_ratio,
+    reduce_over_horizon,
 )
 
 
@@ -277,6 +278,65 @@ class TestComputeExceedanceProbabilities:
             acc, thr, window_h=24, return_period=5, member_dim="member", flood_floor_mm=30.0)
         assert float(no_floor.mean()) > 0.9
         assert float(floored.mean()) == pytest.approx(0.0, abs=0.01)
+
+
+class TestReduceOverHorizon:
+    @staticmethod
+    def _acc(step_hours: list[int], values: list[float]) -> xr.Dataset:
+        n = len(step_hours)
+        da = xr.DataArray(
+            np.array(values, dtype=np.float32).reshape(1, n, 1, 1),
+            dims=["member", "step", "latitude", "longitude"],
+            coords={"member": [0], "step": step_hours, "latitude": [0.0], "longitude": [35.0]},
+        )
+        return xr.Dataset({"tp_24h": da})
+
+    @staticmethod
+    def _threshold(value: float) -> xr.Dataset:
+        return xr.Dataset({"rp_5y": xr.DataArray(
+            [[value]], dims=["latitude", "longitude"],
+            coords={"latitude": [0.0], "longitude": [35.0]},
+        )})
+
+    def test_max_horizon_matches_step_max(self):
+        acc = self._acc([24, 48, 72], [5, 50, 5])
+        out = reduce_over_horizon(acc["tp_24h"], mode="max_horizon")
+        assert "step" not in out.dims and "lead" not in out.dims
+        assert float(out.isel(member=0, latitude=0, longitude=0)) == pytest.approx(50)
+
+    def test_by_lead_one_step_per_day(self):
+        acc = self._acc([24, 48, 72], [5, 50, 5])
+        out = reduce_over_horizon(acc["tp_24h"], mode="by_lead")
+        assert "lead" in out.dims
+        assert list(out["lead"].values) == [0, 1, 2]
+        assert list(out.isel(member=0, latitude=0, longitude=0).values) == [5, 50, 5]
+
+    def test_by_lead_takes_worst_within_day(self):
+        # hours 6 and 24 both fall in lead day 0; hour 48 is lead day 1.
+        acc = self._acc([6, 24, 48], [3, 9, 50])
+        out = reduce_over_horizon(acc["tp_24h"], mode="by_lead")
+        assert list(out["lead"].values) == [0, 1]
+        assert list(out.isel(member=0, latitude=0, longitude=0).values) == [9, 50]
+
+    def test_by_lead_exceedance_isolates_the_lead(self):
+        acc = self._acc([24, 48, 72], [5, 50, 5])
+        thr = self._threshold(10.0)
+        p = compute_exceedance_probabilities(
+            acc, thr, window_h=24, return_period=5, member_dim="member", by_lead=True
+        )
+        assert "lead" in p.dims
+        assert list(p.isel(latitude=0, longitude=0).values) == [0.0, 1.0, 0.0]
+        # The default max-horizon view flags the whole initialisation date.
+        p0 = compute_exceedance_probabilities(
+            acc, thr, window_h=24, return_period=5, member_dim="member"
+        )
+        assert "lead" not in p0.dims
+        assert float(p0.isel(latitude=0, longitude=0)) == pytest.approx(1.0)
+
+    def test_unknown_mode_raises(self):
+        acc = self._acc([24], [5])
+        with pytest.raises(ValueError):
+            reduce_over_horizon(acc["tp_24h"], mode="nope")
 
 
 class TestComputeEnsembleConfidence:

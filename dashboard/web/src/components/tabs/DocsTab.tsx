@@ -9,7 +9,7 @@ import {
 
 const GEV_ROWS: [string, string, string, DisplayClass][] = [
   ["100 years", "≥ 5%", "≥ 3", "critical"],
-  ["50 years", "≥ 10%", "≥ 6", "very_high"],
+  ["40 years", "≥ 10%", "≥ 6", "very_high"],
   ["20 years", "≥ 20%", "≥ 11", "high"],
   ["10 years", "≥ 30%", "≥ 16", "significant"],
   ["5 years", "≥ 40%", "≥ 21", "moderate"],
@@ -34,15 +34,36 @@ export default function DocsTab() {
         <div className="font-mono text-[10px] leading-loose p-3 rounded-lg"
           style={{ background: "var(--ele)", border: "1px solid var(--brd)", color: "var(--ts)" }}>
           {[
-            ["①", "Date selected", "IFS ENS forecast cycle (00z)"],
+            ["①", "Initialisation date", "IFS ENS base date / forecast cycle (00z)"],
             ["②", "Country + Admin-1", `${COUNTRIES.length} East African countries, 238 admin-1`],
-            ["③", "Max severity per window", `${WINDOWS.length} windows (${WINDOWS[0]}…${WINDOWS[WINDOWS.length - 1]})`],
+            ["③", "Severity per window", `${WINDOWS.length} windows (${WINDOWS[0]}…${WINDOWS[WINDOWS.length - 1]}), worst over horizon`],
             ["④", "GEV results for window", "100y → 2y hierarchical evaluation"],
             ["⑤", "Ensemble chart", `${N_MEMBERS} members, binary comparison`],
           ].map(([n, a, b]) => (
             <div key={n}><span style={{ color: "var(--teal)" }}>{n}</span> <strong>{a}</strong>  {b}</div>
           ))}
         </div>
+      </Doc>
+
+      <Doc title="Forecast Time Axes  Initialisation Date vs Lead Time">
+        <p className="text-[11px] mb-2" style={{ color: "var(--ts)" }}>
+          A forecast has two time dimensions. The <strong>initialisation date</strong> (base date,
+          Step ①) is when the IFS ENS run was issued. The <strong>valid date / lead time</strong> is
+          the future period the forecast describes: one run issued on 1 July carries ~15 days of lead
+          time, so several runs cover the same valid day at different leads.
+        </p>
+        <p className="text-[11px] mb-2" style={{ color: "var(--ts)" }}>
+          The current severity and return-period assessment aggregates <strong>over the whole
+          forecast horizon</strong>: for each window it takes the <strong>maximum accumulation found
+          anywhere in the horizon</strong> (max over lead time), not a single valid day nor the first
+          period after initialisation. The exceedance probability is therefore the fraction of the
+          {" "}{N_MEMBERS} members whose worst window accumulation over the horizon exceeds the GEV
+          threshold.
+        </p>
+        <p className="text-[11px]" style={{ color: "var(--ts)" }}>
+          The storyboards additionally report, from the versioned as-of-date record, <strong>how many
+          days ahead</strong> an event was already flagged — an explicit per-event lead time.
+        </p>
       </Doc>
 
       <Doc title="GEV Thresholds  Minimum Operational Probabilities">

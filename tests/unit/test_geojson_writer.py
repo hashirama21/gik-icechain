@@ -102,7 +102,36 @@ class TestExportEahwFormat:
         assert by_pcode["AA1"]["risk_level"] == 3
         assert by_pcode["AA1"]["risk_label"] == "Orange"
         assert by_pcode["AA1"]["probability"] == 55
-        assert by_pcode["AA1"]["valid_date"] == "2024-11-15"
+        # issue_date = initialisation date; validity spans the forecast horizon
+        # (default 7 days) and is no longer collapsed onto the issue date.
+        assert by_pcode["AA1"]["issue_date"] == "2024-11-15"
+        assert by_pcode["AA1"]["valid_period_start"] == "2024-11-15"
+        assert by_pcode["AA1"]["valid_period_end"] == "2024-11-22"
+        assert by_pcode["AA1"]["valid_date"] == "2024-11-22"
+        assert by_pcode["AA1"]["issue_date"] != by_pcode["AA1"]["valid_date"]
+        assert by_pcode["AA1"]["lead_time_aggregation"] == "max_over_forecast_horizon"
         # BB2 has no score: defaults to Green / level 1.
         assert by_pcode["BB2"]["risk_level"] == 1
         assert by_pcode["BB2"]["risk_label"] == "Green"
+
+    def test_horizon_from_meta_and_override(self, tmp_path, square_admin_gdf, make_evidence):
+        day = date(2024, 11, 15)
+        boundaries = Path(write_boundaries(square_admin_gdf, str(tmp_path)))
+        _, score = build_score(
+            pd.Series({"admin1_pcode": "AA1"}), _result(), make_evidence()
+        )
+        scores_path = Path(
+            write_risk_scores(
+                day, {"AA1": score}, str(tmp_path), meta={"forecast_horizon_days": 10}
+            )
+        )
+        out = tmp_path / "eahw10.geojson"
+        export_eahw_format(scores_path, boundaries, out)
+        props = json.loads(out.read_text())["features"][0]["properties"]
+        assert props["valid_period_end"] == "2024-11-25"
+
+        # An explicit argument wins over the meta value.
+        out2 = tmp_path / "eahw3.geojson"
+        export_eahw_format(scores_path, boundaries, out2, horizon_days=3)
+        props2 = json.loads(out2.read_text())["features"][0]["properties"]
+        assert props2["valid_period_end"] == "2024-11-18"

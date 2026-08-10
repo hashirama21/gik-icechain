@@ -542,6 +542,9 @@ def _process_day(
     day_meta = dict(meta or {})
     if "source_grid_deg" in exc_day:
         day_meta["source_grid_deg"] = float(exc_day["source_grid_deg"])
+    if "window" in exc_day.coords:
+        max_window_h = int(exc_day["window"].max())
+        day_meta["forecast_horizon_days"] = (max_window_h + 23) // 24
 
     out_path = write_risk_scores(
         day, scores, output_dir, meta=day_meta, storage_options=storage_options

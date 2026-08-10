@@ -6,7 +6,11 @@ import pandas as pd
 import pytest
 
 from gik_icechain.risk.cpt_refinement import EMDATFloodRecord
-from gik_icechain.risk.lead_time_skill import event_onsets, lead_time_skill
+from gik_icechain.risk.lead_time_skill import (
+    event_onsets,
+    first_detection_lead,
+    lead_time_skill,
+)
 
 
 def _event(pcode: str, onset: str, end: str | None = None) -> EMDATFloodRecord:
@@ -92,3 +96,32 @@ class TestLeadTimeSkill:
         for entry in curve.values():
             for name in ("yellow", "orange", "red"):
                 assert f"recall_{name}" in entry and f"mean_p_{name}" in entry
+
+
+class TestFirstDetectionLead:
+    def test_returns_largest_lead_per_tier(self):
+        # Flagged Yellow 3 days ahead, Orange 2 days ahead, Red only on onset day.
+        df = pd.DataFrame(
+            [
+                _row("2024-04-07", "KE001", 1, p_yellow=0.3),  # lead 3 → Yellow
+                _row("2024-04-08", "KE001", 2, p_orange=0.5),  # lead 2 → Orange
+                _row("2024-04-09", "KE001", 2, p_orange=0.5),  # lead 1 → Orange
+                _row("2024-04-10", "KE001", 3, p_red=0.6),  # lead 0 → Red
+            ]
+        )
+        det = first_detection_lead(df, "KE001", "2024-04-10", max_lead=5)
+        assert det["yellow"] == 3
+        assert det["orange"] == 2
+        assert det["red"] == 0
+
+    def test_none_when_never_flagged(self):
+        df = pd.DataFrame([_row("2024-04-10", "KE001", 0)])
+        det = first_detection_lead(df, "KE001", "2024-04-10", max_lead=3)
+        assert det == {"yellow": None, "orange": None, "red": None}
+
+    def test_missing_rows_are_skipped(self):
+        # Only the lead-2 forecast exists; lead 1 and 0 rows are absent.
+        df = pd.DataFrame([_row("2024-04-08", "KE001", 1, p_yellow=0.3)])
+        det = first_detection_lead(df, "KE001", "2024-04-10", max_lead=4)
+        assert det["yellow"] == 2
+        assert det["orange"] is None
