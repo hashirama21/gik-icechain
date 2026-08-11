@@ -1,0 +1,119 @@
+name: Rebuild Dashboard Contract (bulk)
+
+# Bulk-rebuild the dashboard data contract for the whole archive (or a date
+# range), then publish + redeploy. Use after a store recompute changes the
+# per-date contract - e.g. the lead-time dimension, which makes dependency.json
+# carry `gev_by_lead` (the Step 1 lead-time selector) for every date instead of
+# only the latest daily one.
+#
+# Manual only (workflow_dispatch). Era-routed: dates before 2024-02-29 read the
+# 0.4 deg store, later dates the 0.25 deg store. Sequential over ~1.2k dates;
+# if it approaches the 6 h job cap, dispatch it twice with start_date/end_date
+# halves - publishing is a sync, so partial reruns are safe and idempotent.
+#
+# Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (required);
+# GIK_BUCKET, GIK_EXCEEDANCE_STORE_URI (optional, default to production).
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First date YYYY-MM-DD (inclusive). Empty = earliest."
+        required: false
+        default: ""
+      end_date:
+        description: "Last date YYYY-MM-DD (inclusive). Empty = latest."
+        required: false
+        default: ""
+      redeploy_pages:
+        description: "Redeploy GitHub Pages after publishing"
+        type: boolean
+        default: true
+
+# Serialise against the daily's dashboard publish so the two never interleave
+# writes to the dashboard-data contract.
+concurrency:
+  group: dashboard-data
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: eu-north-1
+  GIK_BUCKET: ${{ secrets.GIK_BUCKET || 'gik-icechain' }}
+  GIK_EXCEEDANCE_STORE_URI: ${{ secrets.GIK_EXCEEDANCE_STORE_URI || 's3://gik-icechain/exceedance-zarr' }}
+
+jobs:
+  rebuild:
+    name: "Rebuild dashboard contract for all dates"
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: viz
+
+      - name: Sync existing contract + risk scores from S3
+        run: |
+          set -euo pipefail
+          # Existing contract first so index.json history is preserved (merge).
+          aws s3 sync "s3://$GIK_BUCKET/dashboard-data/" dashboard/web/public/data/ || true
+          aws s3 sync "s3://$GIK_BUCKET/admin1_risk/" results/admin1_risk/
+
+      - name: Rebuild per-date contract (era-routed)
+        run: |
+          set -euo pipefail
+          START="${{ inputs.start_date }}"
+          END="${{ inputs.end_date }}"
+          STORE_0P25="$GIK_EXCEEDANCE_STORE_URI"
+          STORE_0P4="s3://$GIK_BUCKET/exceedance-zarr-0p4"
+          n=0; skipped=0
+          for f in results/admin1_risk/*_risk_scores.json; do
+            [ -e "$f" ] || continue
+            d="$(basename "$f" | cut -c1-10)"
+            if [ -n "$START" ] && [[ "$d" < "$START" ]]; then continue; fi
+            if [ -n "$END" ] && [[ "$d" > "$END" ]]; then continue; fi
+            # Era boundary 2024-02-29: earlier dates live in the 0.4 deg store.
+            if [[ "$d" < "2024-02-29" ]]; then STORE="$STORE_0P4"; else STORE="$STORE_0P25"; fi
+            if python -m dashboard.data_pipeline.pipeline contract \
+                 --exceedance-store "$STORE" \
+                 --results results/admin1_risk \
+                 --out dashboard/web/public \
+                 --date "$d"; then
+              n=$((n + 1))
+            else
+              echo "::warning::contract failed for $d (store $STORE)"
+              skipped=$((skipped + 1))
+            fi
+          done
+          echo "Rebuilt $n date(s), $skipped skipped."
+
+      - name: Rebuild per-country geojson + lead-time skill curve
+        run: |
+          set -euo pipefail
+          python -m dashboard.data_pipeline.pipeline geojson \
+            --boundaries results/admin1_risk/admin1_boundaries.geojson \
+            --out dashboard/web/public
+          python -m dashboard.data_pipeline.pipeline lead-curve \
+            --results results/admin1_risk \
+            --out dashboard/web/public \
+          || echo "::warning::lead-curve failed"
+
+      - name: Publish to the dashboard-data store
+        run: |
+          bash scripts/publish_dashboard_data.sh \
+            dashboard/web/public/data "s3://$GIK_BUCKET/dashboard-data"
+
+  redeploy-pages:
+    name: "Redeploy Pages with rebuilt contract"
+    needs: rebuild
+    if: ${{ inputs.redeploy_pages }}
+    uses: ./.github/workflows/deploy-web.yaml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    secrets: inherit
