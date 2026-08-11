@@ -33,6 +33,17 @@ log = structlog.get_logger(__name__)
 # IFS ENS forecast horizon: 3-hourly to 144 h, then 6-hourly to 360 h.
 INDEX_STEP_HOURS = [*range(0, 145, 3), *range(150, 361, 6)]
 
+
+def _steps_for_horizon(max_step_h: int) -> list[int]:
+    """Published forecast hours to fetch to cover windows up to ``max_step_h``.
+
+    Selects by actual forecast hour, not by a count: ``INDEX_STEP_HOURS`` is
+    3-hourly to 144 h then 6-hourly, so a count derived from a nominal step
+    resolution under-selects (a 168 h horizon resolved to only 87 h of steps,
+    silently truncating the 7-day window to the cumulative at 87 h).
+    """
+    return [h for h in INDEX_STEP_HOURS if h <= max_step_h]
+
 # The bucket serves 0.4 deg data under 0p4-beta/ before the 2024-02-29
 # schema change, 0.25 deg under ifs/0p25/ from it. Same file naming and
 # .index format in both eras.
@@ -153,8 +164,7 @@ def load_day_ecmwf_direct(
         ValueError: If no references are found (date not yet published) or
             fewer than *min_members* members decode.
     """
-    max_steps = (max_step_h // step_resolution_h) + step_buffer + 1
-    step_hours = INDEX_STEP_HOURS[:max_steps]
+    step_hours = _steps_for_horizon(max_step_h)
 
     byte_ranges = _fetch_index_refs(date_str, run_hour, step_hours, variables, s3_region)
     if not byte_ranges:
