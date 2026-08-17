@@ -9,6 +9,7 @@ import pytest
 from gik_icechain.exceedance.ecmwf_direct import (
     INDEX_STEP_HOURS,
     _step_file_uri,
+    _steps_for_horizon,
     load_day_ecmwf_direct,
     parse_index_lines,
 )
@@ -42,6 +43,28 @@ class TestStepHours:
         assert INDEX_STEP_HOURS[48] == 144
         assert INDEX_STEP_HOURS[49] == 150
         assert INDEX_STEP_HOURS[-1] == 360
+
+
+class TestStepsForHorizon:
+    def test_168h_horizon_is_fully_covered(self):
+        # Regression: the old count-based slice stopped at 87h for a 168h horizon
+        # because INDEX_STEP_HOURS is 3-hourly early. Hour-based selection reaches 168h.
+        steps = _steps_for_horizon(168)
+        assert steps[-1] == 168
+        assert 168 in steps
+        assert len(steps) == 53
+
+    def test_full_15day_horizon(self):
+        steps = _steps_for_horizon(360)
+        assert steps == INDEX_STEP_HOURS
+        assert steps[-1] == 360
+
+    def test_short_horizon_keeps_3hourly_head(self):
+        # Preserves the small-horizon behaviour relied on elsewhere (0,3,6).
+        assert _steps_for_horizon(6) == [0, 3, 6]
+
+    def test_non_aligned_horizon_clips_to_last_published_step(self):
+        assert _steps_for_horizon(170)[-1] == 168  # next index step is 174h
 
 
 class TestStepFileUri:
