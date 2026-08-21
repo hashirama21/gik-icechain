@@ -1,15 +1,19 @@
 name: Rebuild Dashboard Contract (bulk)
 
-# Bulk-rebuild the dashboard data contract for the whole archive (or a date
-# range), then publish + redeploy. Use after a store recompute changes the
-# per-date contract - e.g. the lead-time dimension, which makes dependency.json
-# carry `gev_by_lead` (the Step 1 lead-time selector) for every date instead of
-# only the latest daily one.
+# Bulk-rebuild the dashboard data contract for the whole archive, PARALLELISED.
 #
-# Manual only (workflow_dispatch). Era-routed: dates before 2024-02-29 read the
-# 0.4 deg store, later dates the 0.25 deg store. Sequential over ~1.2k dates;
-# if it approaches the 6 h job cap, dispatch it twice with start_date/end_date
-# halves - publishing is a sync, so partial reruns are safe and idempotent.
+#   plan -> build (matrix, N chunks in parallel) -> finalize -> redeploy Pages
+#
+# Each build chunk renders the per-date contract (region_risks + dependency) for
+# its own date range and publishes ONLY those date directories (never index.json
+# or geojson), so chunks touch disjoint keys and cannot race. The finalize job
+# then rebuilds index.json from every risk-score file (index entries are a pure
+# function of the daily scores, see update_index), splits the per-country
+# geojson, computes the lead-time skill curve, publishes them, and triggers the
+# Pages redeploy. Idempotent: reruns overwrite the same per-date/index objects.
+#
+# Era-routed: dates before 2024-02-29 read the 0.4 deg store, later dates the
+# 0.25 deg store.
 #
 # Repo secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (required);
 # GIK_BUCKET, GIK_EXCEEDANCE_STORE_URI (optional, default to production).
@@ -17,6 +21,10 @@ name: Rebuild Dashboard Contract (bulk)
 on:
   workflow_dispatch:
     inputs:
+      chunks:
+        description: "Number of parallel build chunks"
+        required: false
+        default: "12"
       start_date:
         description: "First date YYYY-MM-DD (inclusive). Empty = earliest."
         required: false
@@ -30,8 +38,8 @@ on:
         type: boolean
         default: true
 
-# Serialise against the daily's dashboard publish so the two never interleave
-# writes to the dashboard-data contract.
+# Serialise the whole run against the daily's dashboard publish so the two never
+# interleave writes to the dashboard-data contract.
 concurrency:
   group: dashboard-data
   cancel-in-progress: false
@@ -45,38 +53,68 @@ env:
   GIK_EXCEEDANCE_STORE_URI: ${{ secrets.GIK_EXCEEDANCE_STORE_URI || 's3://gik-icechain/exceedance-zarr' }}
 
 jobs:
-  rebuild:
-    name: "Rebuild dashboard contract for all dates"
+  plan:
+    name: "Plan date chunks"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: plan
+        env:
+          NCHUNKS: ${{ inputs.chunks }}
+          START: ${{ inputs.start_date }}
+          END: ${{ inputs.end_date }}
+        run: |
+          set -euo pipefail
+          aws s3 ls "s3://$GIK_BUCKET/admin1_risk/" \
+            | grep _risk_scores.json | awk '{print $NF}' | cut -c1-10 | sort -u > /tmp/dates.txt
+          MATRIX=$(python3 - <<'PY'
+          import json, math, os
+          dates = [d.strip() for d in open("/tmp/dates.txt") if d.strip()]
+          s, e = os.environ.get("START",""), os.environ.get("END","")
+          if s: dates = [d for d in dates if d >= s]
+          if e: dates = [d for d in dates if d <= e]
+          n = max(1, int(os.environ.get("NCHUNKS", "12")))
+          k = math.ceil(len(dates) / n) if dates else 1
+          chunks = []
+          for i in range(0, len(dates), k):
+              grp = dates[i:i+k]
+              chunks.append({"id": f"{grp[0]}..{grp[-1]}", "start": grp[0], "end": grp[-1]})
+          print(json.dumps(chunks))
+          PY
+          )
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX" | python3 -m json.tool
+
+  build:
+    name: "Build ${{ matrix.chunk.id }}"
+    needs: plan
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 350
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        chunk: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
         with:
           extras: viz
-
-      - name: Sync existing contract + risk scores from S3
+      - name: Sync risk scores + boundaries
+        run: aws s3 sync --only-show-errors "s3://$GIK_BUCKET/admin1_risk/" results/admin1_risk/
+      - name: Render per-date contract for this chunk (era-routed)
         run: |
-          set -euo pipefail
-          # Existing contract first so index.json history is preserved (merge).
-          aws s3 sync "s3://$GIK_BUCKET/dashboard-data/" dashboard/web/public/data/ || true
-          aws s3 sync "s3://$GIK_BUCKET/admin1_risk/" results/admin1_risk/
-
-      - name: Rebuild per-date contract (era-routed)
-        run: |
-          set -euo pipefail
-          START="${{ inputs.start_date }}"
-          END="${{ inputs.end_date }}"
+          set -uo pipefail
           STORE_0P25="$GIK_EXCEEDANCE_STORE_URI"
           STORE_0P4="s3://$GIK_BUCKET/exceedance-zarr-0p4"
           n=0; skipped=0
           for f in results/admin1_risk/*_risk_scores.json; do
             [ -e "$f" ] || continue
             d="$(basename "$f" | cut -c1-10)"
-            if [ -n "$START" ] && [[ "$d" < "$START" ]]; then continue; fi
-            if [ -n "$END" ] && [[ "$d" > "$END" ]]; then continue; fi
-            # Era boundary 2024-02-29: earlier dates live in the 0.4 deg store.
+            if [[ "$d" < "${{ matrix.chunk.start }}" ]] || [[ "$d" > "${{ matrix.chunk.end }}" ]]; then continue; fi
             if [[ "$d" < "2024-02-29" ]]; then STORE="$STORE_0P4"; else STORE="$STORE_0P25"; fi
             if python -m dashboard.data_pipeline.pipeline contract \
                  --exceedance-store "$STORE" \
@@ -85,15 +123,47 @@ jobs:
                  --date "$d"; then
               n=$((n + 1))
             else
-              echo "::warning::contract failed for $d (store $STORE)"
-              skipped=$((skipped + 1))
+              echo "::warning::contract failed for $d (store $STORE)"; skipped=$((skipped + 1))
             fi
           done
-          echo "Rebuilt $n date(s), $skipped skipped."
-
-      - name: Rebuild per-country geojson + lead-time skill curve
+          echo "chunk ${{ matrix.chunk.id }}: built $n date(s), $skipped skipped."
+      - name: Publish this chunk's per-date directories only
         run: |
-          set -euo pipefail
+          aws s3 sync --only-show-errors dashboard/web/public/data "s3://$GIK_BUCKET/dashboard-data" \
+            --exclude "index.json" --exclude "geojson/*" \
+            --cache-control "public, max-age=3600"
+
+  finalize:
+    name: "Rebuild index + geojson, publish"
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: viz
+      - name: Sync risk scores + boundaries
+        run: aws s3 sync --only-show-errors "s3://$GIK_BUCKET/admin1_risk/" results/admin1_risk/
+      - name: Rebuild index.json from all scores (pure function of daily scores)
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from dashboard.data_pipeline.pipeline import update_index
+          data = Path("dashboard/web/public/data"); data.mkdir(parents=True, exist_ok=True)
+          # start clean so the index reflects exactly the current archive
+          (data / "index.json").unlink(missing_ok=True)
+          rk = Path("results/admin1_risk")
+          files = sorted(rk.glob("*_risk_scores.json"))
+          for f in files:
+              update_index(data, f.name[:10], json.loads(f.read_text()))
+          print("index.json dates:", len(json.loads((data / 'index.json').read_text())))
+          PY
+      - name: Per-country geojson + lead-time skill curve
+        run: |
+          set -uo pipefail
           python -m dashboard.data_pipeline.pipeline geojson \
             --boundaries results/admin1_risk/admin1_boundaries.geojson \
             --out dashboard/web/public
@@ -101,15 +171,24 @@ jobs:
             --results results/admin1_risk \
             --out dashboard/web/public \
           || echo "::warning::lead-curve failed"
-
-      - name: Publish to the dashboard-data store
+      - name: Publish index.json, geojson, lead curve
         run: |
-          bash scripts/publish_dashboard_data.sh \
-            dashboard/web/public/data "s3://$GIK_BUCKET/dashboard-data"
+          set -euo pipefail
+          aws s3 sync --only-show-errors dashboard/web/public/data/geojson \
+            "s3://$GIK_BUCKET/dashboard-data/geojson" \
+            --cache-control "public, max-age=604800"
+          aws s3 cp --only-show-errors dashboard/web/public/data/index.json \
+            "s3://$GIK_BUCKET/dashboard-data/index.json" \
+            --cache-control "public, max-age=300, must-revalidate"
+          if [ -f dashboard/web/public/data/lead_time_skill.json ]; then
+            aws s3 cp --only-show-errors dashboard/web/public/data/lead_time_skill.json \
+              "s3://$GIK_BUCKET/dashboard-data/lead_time_skill.json" \
+              --cache-control "public, max-age=3600"
+          fi
 
   redeploy-pages:
     name: "Redeploy Pages with rebuilt contract"
-    needs: rebuild
+    needs: finalize
     if: ${{ inputs.redeploy_pages }}
     uses: ./.github/workflows/deploy-web.yaml
     permissions:
