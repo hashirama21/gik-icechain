@@ -37,6 +37,10 @@ on:
         description: "Redeploy GitHub Pages after publishing"
         type: boolean
         default: true
+      finalize_only:
+        description: "Skip plan+build; only rebuild index/geojson and publish (per-date dirs already on S3)"
+        type: boolean
+        default: false
 
 # Serialise the whole run against the daily's dashboard publish so the two never
 # interleave writes to the dashboard-data contract.
@@ -49,12 +53,15 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: eu-north-1
+  AWS_MAX_ATTEMPTS: "5"
+  AWS_RETRY_MODE: standard
   GIK_BUCKET: ${{ secrets.GIK_BUCKET || 'gik-icechain' }}
   GIK_EXCEEDANCE_STORE_URI: ${{ secrets.GIK_EXCEEDANCE_STORE_URI || 's3://gik-icechain/exceedance-zarr' }}
 
 jobs:
   plan:
     name: "Plan date chunks"
+    if: ${{ !inputs.finalize_only }}
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
@@ -90,6 +97,7 @@ jobs:
   build:
     name: "Build ${{ matrix.chunk.id }}"
     needs: plan
+    if: ${{ !inputs.finalize_only }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 300
@@ -136,9 +144,10 @@ jobs:
   finalize:
     name: "Rebuild index + geojson, publish"
     needs: [plan, build]
+    if: ${{ always() && (inputs.finalize_only || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/pipeline-setup
@@ -174,22 +183,24 @@ jobs:
       - name: Publish index.json, geojson, lead curve
         run: |
           set -euo pipefail
-          aws s3 sync --only-show-errors dashboard/web/public/data/geojson \
-            "s3://$GIK_BUCKET/dashboard-data/geojson" \
-            --cache-control "public, max-age=604800"
-          aws s3 cp --only-show-errors dashboard/web/public/data/index.json \
-            "s3://$GIK_BUCKET/dashboard-data/index.json" \
-            --cache-control "public, max-age=300, must-revalidate"
+          # Bound every aws call to 5 min and retry: a stalled aws s3 command
+          # (no built-in wall-clock timeout) once hung this step for ~1 h.
+          retry() { local n=0; until timeout 300 "$@"; do n=$((n+1)); \
+            [ "$n" -ge 4 ] && { echo "::error::giving up: $*"; return 1; }; \
+            echo "::warning::retry $n: $*"; sleep 15; done; }
+          retry aws s3 sync --only-show-errors dashboard/web/public/data/geojson \
+            "s3://$GIK_BUCKET/dashboard-data/geojson" --cache-control "public, max-age=604800"
+          retry aws s3 cp --only-show-errors dashboard/web/public/data/index.json \
+            "s3://$GIK_BUCKET/dashboard-data/index.json" --cache-control "public, max-age=300, must-revalidate"
           if [ -f dashboard/web/public/data/lead_time_skill.json ]; then
-            aws s3 cp --only-show-errors dashboard/web/public/data/lead_time_skill.json \
-              "s3://$GIK_BUCKET/dashboard-data/lead_time_skill.json" \
-              --cache-control "public, max-age=3600"
+            retry aws s3 cp --only-show-errors dashboard/web/public/data/lead_time_skill.json \
+              "s3://$GIK_BUCKET/dashboard-data/lead_time_skill.json" --cache-control "public, max-age=3600"
           fi
 
   redeploy-pages:
     name: "Redeploy Pages with rebuilt contract"
     needs: finalize
-    if: ${{ inputs.redeploy_pages }}
+    if: ${{ always() && inputs.redeploy_pages && needs.finalize.result == 'success' }}
     uses: ./.github/workflows/deploy-web.yaml
     permissions:
       contents: read
