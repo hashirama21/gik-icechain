@@ -48,8 +48,22 @@ _EULER = 0.5772156649015329  # Euler-Mascheroni, Gumbel mean offset
 _MIN_YEARS_PER_BIN = 6
 
 
-def _urlopen(url: str, timeout: int):
-    return urlopen(Request(url, headers={"User-Agent": "gik-icechain/2.0"}), timeout=timeout)
+def _urlopen(url: str, timeout: int, retries: int = 3, backoff: float = 5.0):
+    """urlopen with retries: reference sources (NOAA, geoBoundaries, HF) time out
+    transiently and must not fail a daily run on a single hiccup."""
+    import time
+
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return urlopen(Request(url, headers={"User-Agent": "gik-icechain/2.0"}), timeout=timeout)
+        except Exception as exc:
+            last = exc
+            log.warning("urlopen_retry", url=url, attempt=attempt + 1, error=str(exc)[:120])
+            if attempt < retries - 1:
+                time.sleep(backoff * (attempt + 1))
+    assert last is not None
+    raise last
 
 
 def ensure_admin_boundaries(path: Path) -> Path:
