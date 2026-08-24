@@ -53,10 +53,11 @@ def _urlopen(url: str, timeout: int, retries: int = 3, backoff: float = 5.0):
     transiently and must not fail a daily run on a single hiccup."""
     import time
 
+    req = Request(url, headers={"User-Agent": "gik-icechain/2.0"})
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            return urlopen(Request(url, headers={"User-Agent": "gik-icechain/2.0"}), timeout=timeout)
+            return urlopen(req, timeout=timeout)
         except Exception as exc:
             last = exc
             log.warning("urlopen_retry", url=url, attempt=attempt + 1, error=str(exc)[:120])
