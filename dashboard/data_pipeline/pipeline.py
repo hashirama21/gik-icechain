@@ -188,7 +188,14 @@ def _zonal(
     from shapely.geometry import shape
 
     so = {"endpoint_url": endpoint} if endpoint else None
-    ds = xr.open_zarr(store, consolidated=False, storage_options=so)
+    # Read via the consolidated metadata index: a non-consolidated open scans the
+    # store's per-variable metadata and, under the concurrent parallel rebuild,
+    # intermittently fails to list exceedance_prob_by_lead, silently dropping the
+    # lead-time view. The consolidated index is a single atomic read.
+    try:
+        ds = xr.open_zarr(store, consolidated=True, storage_options=so)
+    except Exception:
+        ds = xr.open_zarr(store, consolidated=False, storage_options=so)
     if "date" in ds.dims:
         ds = ds.sel(date=day)
     exc_var = ds["exceedance_prob"]
