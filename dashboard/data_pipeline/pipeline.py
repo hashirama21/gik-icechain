@@ -111,10 +111,19 @@ def dependency(scores: dict, boundaries: Path, data_dir: Path, day: str,
                store: str | None, endpoint: str | None) -> None:
     zonal = None
     if store:
-        try:
-            zonal = _zonal(boundaries, day, store, endpoint, with_leads=True)
-        except Exception as exc:
-            log.warning("dependency_store_fallback", error=str(exc)[:120])
+        import time
+        for attempt in range(4):
+            try:
+                zonal = _zonal(boundaries, day, store, endpoint, with_leads=True)
+                break
+            except Exception as exc:
+                # Transient S3 throttling under the parallel rebuild would silently
+                # drop gev_by_lead for a date; retry before degrading.
+                log.warning("dependency_store_retry", day=day, attempt=attempt + 1,
+                            error=str(exc)[:120])
+                time.sleep(3 * (attempt + 1))
+        if zonal is None:
+            log.warning("dependency_store_fallback", day=day)
     out = {}
     for pcode, u in scores.get("units", {}).items():
         gev_by_lead = None
