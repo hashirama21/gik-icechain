@@ -441,10 +441,20 @@ def _process_exceedance_day(args: dict) -> dict:
         return {"date_str": date_str, "success": False, "error": str(exc)[:200]}
 
     thresholds = AdaptiveGEVThresholds.load(Path(args["thresholds_path"]))
-    enso_iod = (
-        pd.read_csv(args["enso_iod_path"], parse_dates=["date"]).set_index("date").sort_index()
-    )
-    mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
+    if args.get("adaptive", True):
+        enso_iod = (
+            pd.read_csv(args["enso_iod_path"], parse_dates=["date"]).set_index("date").sort_index()
+        )
+        mode = _resolve_climate_mode(day, enso_iod, args["enso_thr"], args["iod_thr"])
+    else:
+        from gik_icechain.exceedance.thresholds import (
+            ClimateMode,
+            ENSOPhase,
+            IODPhase,
+            get_season,
+        )
+
+        mode = ClimateMode(get_season(day.month), ENSOPhase.NEUTRAL, IODPhase.NEUTRAL)
 
     # IFS tp is decoded in metres; CMORPH thresholds are in mm. Scale the precip
     # variable to mm so accumulations/exceedance compare in consistent units.
@@ -693,6 +703,7 @@ def _run_exceedance(
             "enso_iod_path": c2.thresholds.enso_iod_index_path,
             "enso_thr": c2.thresholds.enso_nino34_threshold,
             "iod_thr": c2.thresholds.iod_dmi_threshold,
+            "adaptive": c2.thresholds.adaptive,
             "windows_h": effective_windows,
             "return_periods": effective_rps,
             "max_steps": max_steps,
@@ -894,6 +905,9 @@ def _run_risk(
         emdat_aliases_path=emdat_aliases_path,
         cpt_source="refined" if use_refined else "default",
         riverine_feed=riverine_feed,
+        enso_iod_path=Path(cfg.component2.thresholds.enso_iod_index_path),
+        enso_nino34_threshold=cfg.component2.thresholds.enso_nino34_threshold,
+        iod_dmi_threshold=cfg.component2.thresholds.iod_dmi_threshold,
     )
 
 
@@ -973,7 +987,7 @@ def convert_aifs(
         _exit_on_error("convert-aifs", exc)
 
     typer.echo(
-        f"AIFS convert complete: {s} → {e}  commit={commit_hash[:12] if commit_hash else 'none'}"
+        f"AIFS convert complete: {s} -> {e}  commit={commit_hash[:12] if commit_hash else 'none'}"
     )
 
 
@@ -1060,6 +1074,13 @@ def exceedance(
     thresholds: Annotated[
         str | None, typer.Option("--thresholds", help="Override CMORPH thresholds URI/path.")
     ] = None,
+    static_thresholds: Annotated[
+        bool,
+        typer.Option(
+            "--static-thresholds",
+            help="Use season-only (phase-neutral) thresholds instead of ENSO/IOD-stratified GEV.",
+        ),
+    ] = False,
     profile: Annotated[
         str | None,
         typer.Option("--profile", help="Window profile name."),
@@ -1069,6 +1090,8 @@ def exceedance(
     cfg = _bootstrap(config)
     if thresholds:
         cfg.component2.thresholds.cmorph_path = thresholds
+    if static_thresholds:
+        cfg.component2.thresholds.adaptive = False
     if profile is not None:
         cfg.component2.active_profile = profile
     if workers is not None:

@@ -355,3 +355,96 @@ the `default.yaml` compound pathway is well-calibrated.
 | **C1 storage** | 11.7 MB | ~2 GB manifests |
 | **C2 storage** | ~20 KB | ~3.4 MB compressed Zarr |
 | **C3 storage** | 16.4 MB | **62 MB** (vs 19.3 GB old format - **311×**) |
+
+---
+
+## Proposal gap-closure (2026-09-03)
+
+Work targeting the self-imposed evaluation framework (proposal section 7) and the
+innovations that were coded but never exercised. All runs use the published E4DRR
+IceChunk store (Source Cooperative, anonymous) over a Deyr-peak validation window
+**2024-11-16 -> 2024-11-22 (7 days)**, scored against the FAO/VIIRS satellite
+flood panel (105 admin-1 units, 91 flooded, real dry-unit negatives).
+
+### Fetch reliability - byte-range retry
+
+The ECMWF S3 byte-range fetch was losing most files under WAN congestion (16
+parallel multi-range requests timing out at ~8-13 s). An application-level retry
+with backoff was added to `fetch_coalesced_ranges` (`shared/byte_range.py`).
+
+| | before | after |
+|---|---|---|
+| Failed files / day (2024-11-18, 30 files) | **25 / 30** | **0 / 30** |
+| Chunks fetched | 255 / 1530 | **1530 / 1530** |
+
+This is what makes the retrospective recompute reproducible on a non-cloud WAN.
+
+### Innovation - Climate_Mode ENSO/IOD node (proposal 4.3)
+
+The ENSO/IOD Climate Mode node the proposal promised inside the Bayesian network
+(previously ENSO/IOD only fed the GEV thresholds) now exists as a centred parent
+of `Compound_Risk` (Suppressing / Neutral / Enhancing), derived per forecast date
+from `data/enso_iod_index.csv`. Neutral contributes exactly 0, so the legacy
+calibration is preserved bit-for-bit; a compound El Nino + positive IOD state
+escalates, a La Nina + negative IOD state dampens. Lookup table 3888 -> 11664
+combinations. 108 risk unit tests pass (3 new).
+
+| Climate_Mode | risk label | p_red |
+|---|---|---|
+| Suppressing | Yellow | 0.179 |
+| Neutral (legacy) | Red | 0.392 |
+| Enhancing | Red | 0.392 |
+
+### Ablation - API node benefit (proposal 7.3)
+
+`scripts/ablation_study.py api` runs C3 with the API_State node active vs its
+cluster weight neutralised to 0, same exceedance store, and scores both against
+FAO/VIIRS.
+
+| metric | with API | no API | delta |
+|---|---:|---:|---:|
+| AUC (max p_red vs VIIRS) | **0.734** | 0.728 | +0.006 |
+| Precision @ Orange+ | 0.931 | 0.929 | +0.002 |
+| Recall @ Orange+ | **0.297** | 0.286 | +0.011 |
+
+The API node gives a small positive lift at constant precision on this window.
+Absolute recall is below the production figure because the ablation isolates the
+API node and runs without the riverine feed; both arms are identical otherwise,
+so the delta is clean.
+
+### CPT refinement (proposal innovation 3)
+
+`refine_cpts.py` builds the EM-DAT x GPM training set and refines the Risk_State
+CPD, producing `results/validation/refined_cpts.json`.
+
+| | value |
+|---|---|
+| Training rows | 876 |
+| EM-DAT events | 358 |
+| pcodes | 116 |
+| Risk_State distribution | {Yellow: 42, Orange: 225, Red: 609} |
+| Negatives | **0** |
+
+The training set has zero negatives: the local GPM IMERG archive is too sparse
+(157 files over 2015-2023) for non-event days to supply GPM-present negatives, so
+every non-flood day is dropped as missing. Refined CPTs trained on positives only
+would over-escalate; `use_refined_cpts` is therefore kept `false` in production -
+a data-driven decision, not a coding gap. Dense GPM (or an in-region GPM mirror)
+is the prerequisite to activate it.
+
+### Adaptive vs static GEV thresholds (proposal 7.2)
+
+`exceedance --static-thresholds` (wires the dormant `thresholds.adaptive` flag,
+forcing a season-only phase-neutral climatology) produces a static exceedance
+store; `scripts/ablation_study.py gev` scores it against the adaptive store on the
+same window. Result pending the static C2 recompute (in progress).
+
+### Still WAN-bound / infra (not run here)
+
+- **AIFS track** - blockers fixed (`aifs_track.enabled: true`, ecCodes on PATH,
+  cp1252 arrow in `cli.py`); discovery returns 122 URIs and scan succeeds, but the
+  kerchunk `scan_grib` convert path is ~1.5-2 h/date over WAN and is not covered
+  by the byte-range retry. Runnable on the AWS Batch/Lithops path.
+- **Public AWS Open Data store, TiTiler Lambda, ensemble_member persistence,
+  OND-corrected threshold regeneration** - unchanged; infra or heavy-recompute
+  bound.

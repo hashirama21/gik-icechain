@@ -671,6 +671,11 @@ class CRMAModelConfig(BaseModel):
     # IMERG 7-day slope into the three states (cf. mentor's ±2 mm/day).
     weight_rainfall_trend: float = 1.0
     rainfall_trend_threshold_mmday: float = 2.0
+    # Climate_Mode (Suppressing/Neutral/Enhancing, from ENSO+IOD phase)
+    # contributes a *centred* (state-1)*weight term so Neutral is exactly neutral
+    # (preserves the legacy calibration): a compound El Nino + positive IOD state
+    # raises the score by one weight, a La Nina + negative IOD state lowers it.
+    weight_climate_mode: float = 1.0
 
     # CPT parameters
     compound_score_thresholds: CompoundScoreThresholdsConfig = Field(

@@ -38,6 +38,8 @@ class CoalescedRange:
 
 _DEFAULT_MAX_GAP = 65_536  # 64 KB
 _DEFAULT_MAX_MERGED = 5_242_880  # 5 MB
+_FETCH_ATTEMPTS = 4
+_FETCH_BACKOFF_S = 3.0
 
 
 def coalesce_byte_ranges(
@@ -205,26 +207,31 @@ def fetch_coalesced_ranges(
     n_original = sum(len(cr.original_ranges) for cr in coalesced)
 
     def _fetch_file(item: tuple[str, list[CoalescedRange]]) -> list[tuple[tuple, bytes]]:
+        import time
+
         uri, crs = item
         bucket, key = _parse_s3_uri(uri)
         store = _get_store(bucket)
-        try:
-            buffers = obs.get_ranges(
-                store,
-                key,
-                starts=[cr.offset for cr in crs],
-                ends=[cr.offset + cr.length for cr in crs],
-            )
-        except Exception as exc:
-            log.warning(
-                "fetch_file_failed",
-                uri=uri,
-                n_ranges=len(crs),
-                n_chunks=sum(len(cr.original_ranges) for cr in crs),
-                error=str(exc)[:160],
-            )
-            return []
-        return _demux_buffers(crs, list(buffers))
+        starts = [cr.offset for cr in crs]
+        ends = [cr.offset + cr.length for cr in crs]
+        last_exc: Exception | None = None
+        for attempt in range(_FETCH_ATTEMPTS):
+            try:
+                buffers = obs.get_ranges(store, key, starts=starts, ends=ends)
+                return _demux_buffers(crs, list(buffers))
+            except Exception as exc:
+                last_exc = exc
+                if attempt + 1 < _FETCH_ATTEMPTS:
+                    time.sleep(_FETCH_BACKOFF_S * (attempt + 1))
+        log.warning(
+            "fetch_file_failed",
+            uri=uri,
+            n_ranges=len(crs),
+            n_chunks=sum(len(cr.original_ranges) for cr in crs),
+            attempts=_FETCH_ATTEMPTS,
+            error=str(last_exc)[:160],
+        )
+        return []
 
     result: dict[tuple, bytes] = {}
     items = list(by_uri.items())

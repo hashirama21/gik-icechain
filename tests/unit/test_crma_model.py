@@ -570,10 +570,11 @@ class TestEscalationLevers:
         """Forecast_Hazard axis of the O(1) lookup table is 4 states (Extreme).
 
         Axes: Forecast_Hazard, Obs_Antecedent, Temporal_Persist, Spatial_Coverage,
-        Data_Confidence, API_State, Soil_Memory, Rainfall_Trend, Risk_State.
+        Data_Confidence, API_State, Soil_Memory, Rainfall_Trend, Climate_Mode,
+        Risk_State.
         """
         assert built_model._lookup_table.shape[0] == 4
-        assert built_model._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 3, 4)
+        assert built_model._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 3, 3, 4)
 
     def test_decoupling_boundary_diverges(self, make_evidence):
         """At a bucket boundary, a strong forecast under missing GPM (Low
@@ -653,3 +654,52 @@ class TestCPTPersistence:
         unbuilt = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
         with pytest.raises(RuntimeError):
             unbuilt.load_cpts({})
+
+
+class TestClimateModeNode:
+    """Climate_Mode (ENSO + IOD) is a centred parent of Compound_Risk."""
+
+    @staticmethod
+    def _model():
+        pytest.importorskip("pgmpy", reason="pgmpy not installed")
+        m = CRMAModel(cluster=EastAfricaCluster.EQUATORIAL_EAST)
+        m.build()
+        return m
+
+    def _ev(self, m, cmv):
+        return m.make_evidence(
+            rp=5,
+            exceedance_prob_24h=0.5,
+            exceedance_prob_72h=0.5,
+            exceedance_prob_7d=0.4,
+            gpm_obs_24h=20.0,
+            api_mm=40.0,
+            spatial_coverage_fraction=0.3,
+            consecutive_signal_days=2,
+            climate_mode_value=cmv,
+        )
+
+    def test_climate_mode_is_a_compound_parent(self):
+        m = self._model()
+        assert m._lookup_table.shape == (4, 3, 2, 3, 3, 3, 2, 3, 3, 4)
+        assert "Climate_Mode" in m.get_pgmpy_model().nodes()
+
+    def test_neutral_is_between_suppress_and_enhance(self):
+        m = self._model()
+        p = {c: m.infer(self._ev(m, c)) for c in (0, 1, 2)}
+        assert p[0]["p_red"] <= p[1]["p_red"] <= p[2]["p_red"]
+
+    def test_default_state_is_neutral(self):
+        m = self._model()
+        default = m.make_evidence(
+            rp=5,
+            exceedance_prob_24h=0.5,
+            exceedance_prob_72h=0.5,
+            exceedance_prob_7d=0.4,
+            gpm_obs_24h=20.0,
+            api_mm=40.0,
+            spatial_coverage_fraction=0.3,
+            consecutive_signal_days=2,
+        )
+        assert default.climate_mode_state == 1
+        assert m.infer(default)["p_red"] == m.infer(self._ev(m, 1))["p_red"]

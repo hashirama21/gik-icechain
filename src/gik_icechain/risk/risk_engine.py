@@ -38,6 +38,12 @@ import pandas as pd
 import structlog
 import xarray as xr
 
+from gik_icechain.exceedance.thresholds import (
+    ENSOPhase,
+    IODPhase,
+    classify_enso,
+    classify_iod,
+)
 from gik_icechain.risk.aggregator import aggregate_to_admin1, coverage_fraction
 from gik_icechain.risk.crma_model import CRMAEvidence, CRMAModel, EastAfricaCluster
 from gik_icechain.risk.dynamic_bn import DynamicBNState, init_state
@@ -78,6 +84,43 @@ def _build_pcode_cluster_map(admin: gpd.GeoDataFrame) -> dict[str, EastAfricaClu
     return result
 
 
+def _load_enso_iod_index(path: Path | None) -> Any:
+    if path is None or not Path(path).exists():
+        return None
+    return pd.read_csv(path, parse_dates=["date"]).set_index("date").sort_index()
+
+
+def _climate_mode_value_for_date(
+    day: date, enso_iod: Any, enso_thr: float, iod_thr: float
+) -> int:
+    """0=Suppressing, 1=Neutral, 2=Enhancing from the ENSO + IOD phase.
+
+    El Nino and positive IOD each push toward Enhancing, La Nina and negative
+    IOD toward Suppressing; the net sign selects the state (0 net -> Neutral),
+    so a neutral climate leaves the compound score unchanged.
+    """
+    if enso_iod is None:
+        return 1
+    try:
+        row = enso_iod.loc[enso_iod.index.asof(pd.Timestamp(day))]
+        nino = float(row["nino34_anom"] if "nino34_anom" in row else row["nino34"])
+        dmi = float(row["dmi"])
+    except (KeyError, TypeError, ValueError):
+        return 1
+    net = 0
+    enso = classify_enso(nino, threshold=enso_thr)
+    if enso == ENSOPhase.EL_NINO:
+        net += 1
+    elif enso == ENSOPhase.LA_NINA:
+        net -= 1
+    iod = classify_iod(dmi, threshold=iod_thr)
+    if iod == IODPhase.POSITIVE:
+        net += 1
+    elif iod == IODPhase.NEGATIVE:
+        net -= 1
+    return 2 if net > 0 else (0 if net < 0 else 1)
+
+
 def run_risk_batch(
     exceedance_store_uri: str,
     gpm_dir: Path,
@@ -100,6 +143,9 @@ def run_risk_batch(
     cpt_source: str = "default",
     config_path: Path | None = None,
     riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
+    enso_iod_path: Path | None = None,
+    enso_nino34_threshold: float = 0.5,
+    iod_dmi_threshold: float = 0.4,
 ) -> list[str]:
     """Run CRMA risk inference for all days in [start, end].
 
@@ -139,6 +185,8 @@ def run_risk_batch(
 
     pcode_cluster = _build_pcode_cluster_map(admin)
     unit_by_pcode: dict[str, Any] = {str(row["admin1_pcode"]): row for _, row in admin.iterrows()}
+
+    enso_iod = _load_enso_iod_index(enso_iod_path)
 
     rp_options = list(dict.fromkeys([rp_signal, *(rp_signal_options or [])]))
 
@@ -200,6 +248,9 @@ def run_risk_batch(
             n_members=n_members,
             riverine_feed=riverine_feed,
             storage_options=out_so,
+            climate_mode_value=_climate_mode_value_for_date(
+                current, enso_iod, enso_nino34_threshold, iod_dmi_threshold
+            ),
         )
         if path is not None:
             written.append(path)
@@ -236,6 +287,7 @@ def _spinup_api_from_gpm(
     api_decay: float,
     signal_threshold: float,
     rp_options: list[int],
+    climate_mode_value: int = 1,
 ) -> None:
     """Advance API / soil-moisture state from GPM observations for a day with no
     forecast exceedance (spin-up / lead-in).
@@ -263,6 +315,7 @@ def _spinup_api_from_gpm(
                 spatial_coverage_fraction=0.0,
                 consecutive_signal_days=state.consecutive_days,
                 sat_consecutive_days=state.sat_consecutive_days,
+                climate_mode_value=climate_mode_value,
                 gpm_quality=2,
                 gpm_missing=gpm_missing,
                 rp_years=rp,
@@ -299,6 +352,7 @@ def _process_day(
     n_members: int = 51,
     riverine_feed: tuple[dict[str, list[str]], float, str] | None = None,
     storage_options: dict | None = None,
+    climate_mode_value: int = 1,
 ) -> str | None:
     rp_options = rp_options or [rp_signal]
     try:
@@ -319,6 +373,7 @@ def _process_day(
             api_decay,
             signal_threshold,
             rp_options,
+            climate_mode_value,
         )
         log.info("exceedance_date_missing_apispinup", date=day)
         return None
@@ -451,6 +506,7 @@ def _process_day(
                 sat_consecutive_days=state.sat_consecutive_days,
                 forecast_tail_ratio=tail_ratio,
                 riverine_ratio=riverine_ratio,
+                climate_mode_value=climate_mode_value,
                 gpm_quality=quality,
                 gpm_missing=gpm_missing,
                 rp_years=rp,

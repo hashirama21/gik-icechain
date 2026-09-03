@@ -73,12 +73,13 @@ NODE_CARDS: dict[str, int] = {
     "API_State": 3,  # Dry / Normal / Saturated
     "Soil_Memory": 2,  # Recent (<N days sat) / Prolonged (≥N days sat)
     "Rainfall_Trend": 3,  # Decreasing / Stable / Increasing (7-day IMERG slope)
+    "Climate_Mode": 3,  # Suppressing / Neutral / Enhancing (ENSO + IOD phase)
     "Compound_Risk": 4,  # None / Low / Moderate / High
     "Risk_State": 4,  # Green / Yellow / Orange / Red
 }
 
 # Ordered parent dimensions of Compound_Risk - defines the lookup table axis order.
-# Rainfall_Trend is appended last so the legacy axis order is unchanged.
+# New centred parents are appended so the legacy axis order is unchanged.
 _COMPOUND_PARENTS = [
     "Forecast_Hazard",
     "Obs_Antecedent",
@@ -88,6 +89,7 @@ _COMPOUND_PARENTS = [
     "API_State",
     "Soil_Memory",
     "Rainfall_Trend",
+    "Climate_Mode",
 ]
 _PARENT_CARDS = [NODE_CARDS[p] for p in _COMPOUND_PARENTS]
 
@@ -100,6 +102,7 @@ _INTRA_EDGES = [
     ("API_State", "Compound_Risk"),
     ("Soil_Memory", "Compound_Risk"),
     ("Rainfall_Trend", "Compound_Risk"),
+    ("Climate_Mode", "Compound_Risk"),
     ("Compound_Risk", "Risk_State"),
 ]
 
@@ -322,6 +325,8 @@ class CRMAEvidence:
     # 7-day IMERG accumulation linear slope (mm/day). 0.0 = Stable (neutral):
     # an intensifying antecedent trend escalates risk, a weakening one dampens.
     rainfall_trend_slope: float = 0.0
+    # ENSO + IOD phase: 0=Suppressing, 1=Neutral (default), 2=Enhancing.
+    climate_mode_value: int = 1
     gpm_quality: int = 2
     gpm_missing: bool = False
     rp_years: int = 5
@@ -457,6 +462,11 @@ class CRMAEvidence:
             return 0
         return 1
 
+    @property
+    def climate_mode_state(self) -> int:
+        """0=Suppressing, 1=Neutral, 2=Enhancing (from ENSO + IOD phase)."""
+        return max(0, min(2, self.climate_mode_value))
+
     def to_obs_dict(self) -> dict[str, int]:
         """Discretised evidence as a plain dict keyed by BN node name."""
         return {
@@ -468,6 +478,7 @@ class CRMAEvidence:
             "API_State": self.api_state,
             "Soil_Memory": self.soil_memory_state,
             "Rainfall_Trend": self.rainfall_trend_state,
+            "Climate_Mode": self.climate_mode_state,
         }
 
     # --- Soft (virtual) evidence: probability vector per node ---------------
@@ -558,6 +569,7 @@ class CRMAEvidence:
             "API_State": self.api_state_dist(),
             "Soil_Memory": self._onehot(self.soil_memory_state, 2),
             "Rainfall_Trend": self.rainfall_trend_dist(),
+            "Climate_Mode": self._onehot(self.climate_mode_state, 3),
         }
 
 
@@ -565,7 +577,7 @@ class CRMAModel:
     """ICPAC CRMA Bayesian Network for East Africa flood risk.
 
     Single-step inference uses a pre-computed lookup table (O(1) per call).
-    Shape: (4, 3, 2, 3, 3, 3, 2, 3, 4) → 3888 parent combos × 4 risk states.
+    Shape: (4, 3, 2, 3, 3, 3, 2, 3, 3, 4) → 11664 parent combos × 4 risk states.
 
     All CPT parameters are driven by CRMAModelConfig (no hardcoded numerics).
     """
@@ -748,6 +760,7 @@ class CRMAModel:
             obs["API_State"],
             obs["Soil_Memory"],
             obs["Rainfall_Trend"],
+            obs["Climate_Mode"],
         ]
         sev = self._severity(evidence)
         risk_state = self._decide_risk_state(probs, sev)
@@ -799,6 +812,7 @@ class CRMAModel:
                 "Data_Confidence",
                 "Soil_Memory",
                 "Rainfall_Trend",
+                "Climate_Mode",
             ):
                 dbn_evidence[(node, t)] = obs[node]
 
@@ -905,6 +919,8 @@ class CRMAModel:
         cpd_soil_memory = TabularCPD("Soil_Memory", 2, [[0.80], [0.20]])
         # Rainfall_Trend prior: Stable most likely, symmetric tails.
         cpd_trend = TabularCPD("Rainfall_Trend", 3, [[0.25], [0.50], [0.25]])
+        # Climate_Mode prior: Neutral most likely, symmetric tails.
+        cpd_climate = TabularCPD("Climate_Mode", 3, [[0.25], [0.50], [0.25]])
 
         cpd_compound = self._build_compound_risk_cpd(cfg)
         cpd_risk = TabularCPD(
@@ -928,6 +944,7 @@ class CRMAModel:
             cpd_api,
             cpd_soil_memory,
             cpd_trend,
+            cpd_climate,
             cpd_compound,
             cpd_risk,
         ]
@@ -944,7 +961,7 @@ class CRMAModel:
         Rainfall_Trend contributes a *centred* (state-1)*weight term, so the
         Stable state (1) is exactly neutral and the legacy calibration is
         preserved; Increasing adds one weight, Decreasing subtracts one.
-        4×3×2×3×3×3×2×3 = 3888 parent state combinations.
+        4×3×2×3×3×3×2×3×3 = 11664 parent state combinations.
         """
         n_combinations = 1
         for c in _PARENT_CARDS:
@@ -976,10 +993,12 @@ class CRMAModel:
                 api,
                 soil_mem,
                 trend,
+                climate,
             ) = self._idx_to_states(idx, _PARENT_CARDS)
 
             # Data_Confidence dampens only the observation branch, not forecast.
-            # Rainfall_Trend is centred on Stable (state 1 → 0 contribution).
+            # Rainfall_Trend and Climate_Mode are centred on their neutral state
+            # (1 → 0 contribution), preserving the legacy calibration.
             score_forecast = f_haz * w["forecast"]
             score_obs = (
                 obs_ant * w["obs"]
@@ -987,6 +1006,7 @@ class CRMAModel:
                 + spatial * cfg.weight_spatial_coverage
                 + api * w["api"]
                 + (trend - 1) * cfg.weight_rainfall_trend
+                + (climate - 1) * cfg.weight_climate_mode
             )
             if self._cfg.confidence_damps_forecast:
                 score = (score_forecast + score_obs) * damping[confidence]

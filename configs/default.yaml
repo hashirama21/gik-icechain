@@ -144,11 +144,11 @@ component2:
     window: -1
     return_period: -1
 
-# Innovation 4. OFF here so the daily run stays single-track; enable via
-# configs/aifs_comparison.yaml. AIFS ENS exists on s3://ecmwf-forecasts only
-# from ~2025-07-05 (earlier dates 404); IFS goes back to ~2024-03-01.
+# Innovation 4. AIFS ENS parallel track + IFS comparison. AIFS ENS exists on
+# s3://ecmwf-forecasts only from ~2025-07-05 (earlier dates 404); IFS goes back
+# to ~2024-03-01. Run over an OND-2025 window where both are present.
 aifs_track:
-  enabled: false
+  enabled: true
   aifs_store_uri: "s3://gik-icechain/aifs-icechain-store"
   exceedance_store_uri: "s3://gik-icechain/aifs-exceedance-zarr"
   variables: ["tp"]
