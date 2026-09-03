@@ -48,7 +48,7 @@ GIK-IceChain v2.0 solves this in three components:
 ## Architecture
 
 <details open>
-<summary><b>Pipeline diagram</b> — horizontal flow, scroll sideways</summary>
+<summary><b>Pipeline diagram</b> - horizontal flow, scroll sideways</summary>
 
 <div style="overflow-x:auto;">
 
@@ -184,7 +184,7 @@ in `configs/default.yaml`. When disabled, C2 falls back to the standard
 ### Component 3 - Admin-1 Risk Assessment (CRMA-Live)
 
 Integrates ICPAC's [CRMA prototype](https://meetingorganizer.copernicus.org/EGU24/EGU24-6843.html)
-(Bayesian Network, pgmpy) with two innovations:
+(Bayesian Network, pgmpy) with three innovations:
 
 **Innovation 5 - Dynamic BN with API persistence**: adds an Antecedent
 Precipitation Index (API) node that carries soil moisture state across days,
@@ -194,6 +194,11 @@ capturing multi-day compound flood risk.
 to refine the Bayesian Network Conditional Probability Tables via maximum
 likelihood estimation.
 
+**Innovation 7 - Climate-Mode node**: an ENSO/IOD phase node (Suppressing /
+Neutral / Enhancing), fed per forecast date from the Niño-3.4 and DMI indices,
+modulates Compound_Risk; the neutral state contributes zero, preserving the
+prior calibration.
+
 Output: daily admin-1 GeoJSON risk files, integrated directly into the
 calendar-map storymaps and exportable to the
 [East Africa Hazard Watch Portal](https://www.icpac.net/hazard-watch/).
@@ -202,7 +207,7 @@ Risk is produced per return period (`rp_signal_options`, default 2yr + 5yr),
 each with its own hazard calibration (`hazard_thresholds_by_rp`) and its own
 dynamic BN state. The CRMA CPTs were elicited against 5yr exceedance
 semantics; the 2yr view is calibrated at the discretization level and should
-be read as a sensitivity view (see RESULT.md, "Dual return-period risk").
+be read as a sensitivity view.
 
 ## Quick Start
 
@@ -298,23 +303,24 @@ python -m gik_icechain convert --start 2024-10-01 --end 2024-10-01 --config conf
 | 4 | **AIFS vs IFS ENS Parallel** | Same pipeline applied to AIFS ENS (via ICPAC SEWAA-forecasts) | First systematic AI-NWP flood signal evaluation in East Africa |
 | 5 | **CRMA-Live Dynamic BN** | API persistence node in Bayesian Network | Captures multi-day compound flood risk |
 | 6 | **EM-DAT CPT Refinement** | Learn CPTs from historical EM-DAT events | Data-driven improvement of risk model over time |
+| 7 | **Climate-Mode BN node** | ENSO/IOD phase as a centred parent of Compound_Risk, fed from Niño-3.4 and DMI | Modulates risk by climate regime; neutral preserves the prior calibration |
 
 ## Benchmarks
 
-Order-of-magnitude reference figures (not yet an empirical run - see ISSUE-18):
-
-| Approach | Storage | Time-to-first-byte | Full-scan (30 days) | S3 egress cost |
-|----------|---------|--------------------|---------------------|---------------|
-| GIK + IceChunk | **18.5 GB** (metadata) | < 2 s | ~45 min (32 vCPU) | ~$0.02/day |
-| dynamical.org full copy | ~242 TB | < 1 s | ~20 min (32 vCPU) | ~$0.02/day |
-| Herbie (on-the-fly) | 0 | > 60 s | Not feasible | High |
-
-`python scripts/tools.py benchmark` runs `conversion/benchmark.py` for real
+`python scripts/tools.py benchmark` measures the GIK + IceChunk side for real
 against a live store and writes CSVs to
-[`results/benchmarks/`](results/benchmarks/) (currently empty - no run has
-been recorded yet). The dynamical.org row is the storage figure the project
-advertises for its public IFS ENS full-copy Zarr, not an independently
-measured number.
+[`results/benchmarks/`](results/benchmarks/). A recorded East Africa run
+(`benchmark_east_africa_3days.csv`) gives, for a 3-day subset: virtual store
+0.41 GB, time-to-first-byte 5.6 s, full-scan 0.9 s. The dynamical.org storage
+figure is the number that project advertises for its public IFS ENS full-copy
+Zarr, not an independently measured value.
+
+| Approach | Storage | Duplication |
+|----------|---------|-------------|
+| GIK + IceChunk | **~18.5 GB** (byte-range metadata) | none |
+| dynamical.org full copy | ~242 TB | full |
+| Herbie (on-the-fly) | transient | none |
+
 Benchmark walkthrough: [`notebooks/gik_icechain_walkthrough.ipynb`](notebooks/gik_icechain_walkthrough.ipynb)
 
 ## Dashboard
