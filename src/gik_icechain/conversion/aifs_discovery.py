@@ -36,6 +36,8 @@ _AIFS_PF_FILENAME = "{date_str}{run_hour:02d}0000-{step}h-enfo-pf.grib2"
 _AIFS_CF_FILENAME = "{date_str}{run_hour:02d}0000-{step}h-enfo-cf.grib2"
 _DEFAULT_S3_REGION = "eu-central-1"
 _VALID_RUN_HOURS = (0, 12)
+_SCAN_ATTEMPTS = 4
+_SCAN_BACKOFF_S = 3.0
 
 
 def discover_aifs_files(
@@ -116,13 +118,25 @@ def scan_aifs_grib(
     Returns:
         List of kerchunk reference dicts (one per GRIB message group).
     """
+    import time
+
     from kerchunk.grib2 import scan_grib
 
     so: dict[str, Any] = {"anon": True, "default_fill_cache": False}
     if s3_region:
         so["client_kwargs"] = {"region_name": s3_region}
 
-    refs = scan_grib(uri, storage_options=so)
+    last_exc: Exception | None = None
+    for attempt in range(_SCAN_ATTEMPTS):
+        try:
+            refs = scan_grib(uri, storage_options=so)
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt + 1 < _SCAN_ATTEMPTS:
+                time.sleep(_SCAN_BACKOFF_S * (attempt + 1))
+    else:
+        raise last_exc if last_exc else RuntimeError(f"scan_grib failed: {uri}")
 
     if variables:
         var_set = set(variables)
@@ -139,7 +153,7 @@ def aifs_to_virtual_dataset(
     max_step_h: int = 360,
     step_resolution_h: int = 6,
     n_members: int = 51,
-    n_workers: int = 10,
+    n_workers: int = 4,
     s3_region: str = _DEFAULT_S3_REGION,
 ) -> xr.Dataset:
     """Build a ManifestArray-backed virtual xarray Dataset from AIFS GRIB2.
