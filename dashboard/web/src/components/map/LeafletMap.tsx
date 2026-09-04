@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { COUNTRIES, EA_BOUNDS } from "@/lib/config";
+import { BASEMAP_ATTRIBUTION, BASEMAP_LEAFLET_URL, BASEMAP_SUBDOMAINS } from "@/lib/basemap";
 import { getGeoJson } from "@/lib/api";
 import { DISPLAY_VAR, displayClass, riskForRp, type UnitRisk } from "@/lib/risk";
 
@@ -35,10 +36,10 @@ export default function LeafletMap({ risks, rp, selected, onSelect }: LeafletMap
     const map = L.map(ref.current, {
       zoomControl: false, attributionControl: false, minZoom: 3, maxZoom: 12,
     });
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
-      { subdomains: "abcd", maxZoom: 19 }).addTo(map);
+    L.tileLayer(BASEMAP_LEAFLET_URL,
+      { subdomains: BASEMAP_SUBDOMAINS, maxZoom: 19 }).addTo(map);
     L.control.attribution({ position: "bottomright", prefix: false })
-      .addAttribution("© CARTO · © OpenStreetMap · GADM/HDX").addTo(map);
+      .addAttribution(BASEMAP_ATTRIBUTION).addTo(map);
     L.control.zoom({ position: "topright" }).addTo(map);
     map.fitBounds(EA_BOUNDS as L.LatLngBoundsExpression);
     mapRef.current = map;

@@ -134,6 +134,7 @@ jobs:
           NEXT_PUBLIC_TITILER_BASE: ${{ vars.TITILER_BASE }}
           NEXT_PUBLIC_COG_BASE: ${{ vars.COG_BASE }}
           NEXT_PUBLIC_DATA_BASE: ${{ vars.DATA_BASE }}
+          NEXT_PUBLIC_CARTO_KEY: ${{ vars.CARTO_KEY }}
         run: npm run build
       - name: Disable Jekyll
         run: touch out/.nojekyll

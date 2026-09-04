@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { COUNTRIES, EA_BOUNDS, N_MEMBERS } from "@/lib/config";
+import { BASEMAP_ATTRIBUTION, BASEMAP_LEAFLET_URL, BASEMAP_SUBDOMAINS } from "@/lib/basemap";
 import { getDependency, getGeoJson, getOverlays, getRegionRisks, overlayUrl } from "@/lib/api";
 import { RISK_COLOR, type RiskState } from "@/lib/risk";
 
@@ -92,10 +93,10 @@ export default function StoryChoropleth({
       zoomControl: false, attributionControl: false,
       minZoom: 3, maxZoom: 10, scrollWheelZoom: false,
     });
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png",
-      { subdomains: "abcd", maxZoom: 19 }).addTo(map);
+    L.tileLayer(BASEMAP_LEAFLET_URL,
+      { subdomains: BASEMAP_SUBDOMAINS, maxZoom: 19 }).addTo(map);
     L.control.attribution({ position: "bottomright", prefix: false })
-      .addAttribution("© CARTO · © OpenStreetMap · GADM/HDX").addTo(map);
+      .addAttribution(BASEMAP_ATTRIBUTION).addTo(map);
     L.control.zoom({ position: "topright" }).addTo(map);
     map.fitBounds(EA_BOUNDS as L.LatLngBoundsExpression);
 

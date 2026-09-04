@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { BASEMAP_ATTRIBUTION, BASEMAP_MAPLIBRE_URL } from "@/lib/basemap";
 
 export interface MapWidgetProps {
   /** TiTiler XYZ tile template (see lib/titiler.ts). */
@@ -30,9 +31,9 @@ export default function MapWidget({
         sources: {
           osm: {
             type: "raster",
-            tiles: ["https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png"],
+            tiles: [BASEMAP_MAPLIBRE_URL],
             tileSize: 256,
-            attribution: "© OpenStreetMap, © CARTO",
+            attribution: BASEMAP_ATTRIBUTION,
           },
           raster: { type: "raster", tiles: [tiles], tileSize: 256 },
         },
