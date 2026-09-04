@@ -10,6 +10,13 @@ export const DATA_BASE =
 export const TITILER_BASE =
   process.env.NEXT_PUBLIC_TITILER_BASE || "http://localhost:8000";
 
+/** Whether a real TiTiler endpoint is configured. When it is unset (or left at
+ *  the localhost dev default), raster COG layers have no valid backend, so
+ *  consumers render the basemap only instead of requesting error tiles. */
+export const TITILER_ENABLED =
+  !!process.env.NEXT_PUBLIC_TITILER_BASE &&
+  !process.env.NEXT_PUBLIC_TITILER_BASE.includes("localhost");
+
 /** Public bucket holding the COGs TiTiler reads (s3:// or https://). */
 export const COG_BASE =
   process.env.NEXT_PUBLIC_COG_BASE || "https://gik-icechain-cogs.s3.eu-west-1.amazonaws.com/cogs";
