@@ -1,0 +1,132 @@
+name: AIFS vs IFS Comparison (Innovation 4)
+
+# Runs the AIFS ENS track and its IFS comparison on a GitHub-hosted runner.
+# Cloud-to-cloud bandwidth makes the AIFS kerchunk scan + byte-range fetch fast
+# and reliable, unlike a high-latency local WAN link (where the scan alone takes
+# ~1.5 h). Produces results/aifs_comparison/ and uploads it as an artifact.
+#
+# Manual trigger only. AIFS ENS exists on s3://ecmwf-forecasts from ~2025-07-05.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "First forecast date YYYY-MM-DD (>= 2025-07-05, in retention)"
+        required: true
+        default: "2025-11-19"
+      end_date:
+        description: "Last forecast date YYYY-MM-DD (>= start)"
+        required: false
+        default: ""
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  aifs:
+    name: "convert-aifs -> exceedance (IFS + AIFS) -> compare"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/pipeline-setup
+        with:
+          extras: dev
+
+      - name: Install eccodes system library (GRIB2 decode)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeccodes0 libeccodes-tools
+
+      - name: Download reference data (admin, thresholds, ENSO/IOD)
+        run: python scripts/tools.py download --component all
+
+      - name: Download pre-fitted GEV thresholds
+        run: python scripts/tools.py download-thresholds
+
+      - name: Resolve date range
+        id: range
+        run: |
+          START="${{ inputs.start_date }}"
+          END="${{ inputs.end_date }}"
+          [ -z "$END" ] && END="$START"
+          echo "start=$START" >> "$GITHUB_OUTPUT"
+          echo "end=$END" >> "$GITHUB_OUTPUT"
+          echo "AIFS range: $START -> $END"
+
+      - name: Convert AIFS ENS to IceChunk virtual store
+        env:
+          ECCODES_PYTHON_USE_FINDLIBS: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          python -m gik_icechain convert-aifs \
+            --start "${{ steps.range.outputs.start }}" \
+            --end   "${{ steps.range.outputs.end }}" \
+            --output-store s3://gik-icechain/aifs-icechain-store
+
+      - name: Exceedance - IFS (published store)
+        env:
+          ECCODES_PYTHON_USE_FINDLIBS: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          python -m gik_icechain exceedance \
+            --config configs/published_store.yaml \
+            --store "" \
+            --output s3://gik-icechain/aifs-cmp-ifs-exceedance \
+            --start "${{ steps.range.outputs.start }}" \
+            --end   "${{ steps.range.outputs.end }}"
+
+      - name: Exceedance - AIFS
+        env:
+          ECCODES_PYTHON_USE_FINDLIBS: "1"
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          python -m gik_icechain exceedance \
+            --store s3://gik-icechain/aifs-icechain-store \
+            --output s3://gik-icechain/aifs-exceedance-zarr \
+            --start "${{ steps.range.outputs.start }}" \
+            --end   "${{ steps.range.outputs.end }}"
+
+      - name: Compare AIFS vs IFS (delta + seasonal)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: eu-north-1
+        run: |
+          python -m gik_icechain compare \
+            --ifs-store  s3://gik-icechain/aifs-cmp-ifs-exceedance \
+            --aifs-store s3://gik-icechain/aifs-exceedance-zarr \
+            --output results/aifs_comparison
+
+      - name: Comparison summary
+        if: always()
+        run: |
+          python - <<'EOF'
+          import glob, xarray as xr, numpy as np
+          stores = glob.glob("results/aifs_comparison/*.zarr")
+          if not stores:
+              print("No comparison store produced."); raise SystemExit(0)
+          for s in stores:
+              ds = xr.open_zarr(s, consolidated=False)
+              print(s, "->", dict(ds.sizes), list(ds.data_vars))
+              if "delta_prob" in ds:
+                  v = ds["delta_prob"].values
+                  print(f"  delta_prob: mean {np.nanmean(v):+.4f} | "
+                        f"AIFS>IFS frac {np.nanmean(v>0):.3f}")
+          EOF
+
+      - name: Upload comparison artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aifs-comparison-${{ steps.range.outputs.start }}
+          path: results/aifs_comparison/
+          retention-days: 14
+          if-no-files-found: warn
