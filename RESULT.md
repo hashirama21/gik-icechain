@@ -107,9 +107,21 @@ precision.
 
 ### 5.2 Adaptive vs static GEV thresholds
 
-<!-- GEV_ABLATION_RESULT: to be completed from the static-threshold recompute -->
 Adaptive (season × ENSO/IOD stratified) vs static (season-only, phase-neutral)
 climatology, identical pipeline otherwise.
+
+| Metric | Adaptive | Static | Δ |
+|---|---:|---:|---:|
+| AUC | 0.734 | 0.734 | 0.000 |
+| Precision @ Orange+ | 0.931 | 0.931 | 0.000 |
+| Recall @ Orange+ | 0.297 | 0.297 | 0.000 |
+
+The two arms are indistinguishable on this window, with identical confusion
+counts (27/2/64): November 2024 sits in a near-neutral ENSO/IOD regime, so the
+stratified thresholds coincide with the phase-neutral baseline by construction.
+The adaptive benefit is therefore only exercised in strong-phase windows
+(El Niño / La Niña, positive / negative IOD); quantifying it requires a
+strong-phase validation window.
 
 ### 5.3 Climate-mode node
 
